@@ -3,18 +3,18 @@
  * Front-end integration layer for calling the backend agent service
  */
 
-const API_BASE_URL = process.env.VITE_AGENT_API_URL || 'http://localhost:3001';
+const BASE_URL = import.meta.env.VITE_BLOSSOM_AGENT_URL || 'http://localhost:3001';
 
 export interface ChatRequest {
   userMessage: string;
   venue: 'hyperliquid' | 'event_demo';
-  clientPortfolio?: Partial<BlossomPortfolioSnapshot>;
+  clientPortfolio?: any; // keep flexible for now
 }
 
 export interface ChatResponse {
   assistantMessage: string;
-  actions: BlossomAction[];
-  portfolio: BlossomPortfolioSnapshot;
+  actions: any[]; // later we can tighten this to a shared type
+  portfolio: any; // matches BlossomPortfolioSnapshot from backend
 }
 
 export interface CloseRequest {
@@ -24,7 +24,7 @@ export interface CloseRequest {
 
 export interface CloseResponse {
   summaryMessage: string;
-  portfolio: BlossomPortfolioSnapshot;
+  portfolio: any;
 }
 
 // Re-export types from agent (these should match backend types)
@@ -82,39 +82,33 @@ export interface BlossomPortfolioSnapshot {
  * Call Blossom chat endpoint
  */
 export async function callBlossomChat(req: ChatRequest): Promise<ChatResponse> {
-  const response = await fetch(`${API_BASE_URL}/api/chat`, {
+  const res = await fetch(`${BASE_URL}/api/chat`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(req),
   });
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: 'Unknown error' }));
-    throw new Error(error.error || `HTTP ${response.status}`);
+  if (!res.ok) {
+    throw new Error(`Blossom agent error: ${res.status}`);
   }
 
-  return response.json();
+  return res.json();
 }
 
 /**
  * Close a strategy
  */
 export async function closeStrategy(req: CloseRequest): Promise<CloseResponse> {
-  const response = await fetch(`${API_BASE_URL}/api/strategy/close`, {
+  const res = await fetch(`${BASE_URL}/api/strategy/close`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(req),
   });
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: 'Unknown error' }));
-    throw new Error(error.error || `HTTP ${response.status}`);
+  if (!res.ok) {
+    throw new Error(`Blossom agent error: ${res.status}`);
   }
 
-  return response.json();
+  return res.json();
 }
 

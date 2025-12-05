@@ -1,6 +1,8 @@
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useState } from 'react';
 import { ParsedStrategy } from '../lib/mockParser';
-import { useBlossomContext, getBaseAsset, DefiPosition } from '../context/BlossomContext';
+import { useBlossomContext, getBaseAsset } from '../context/BlossomContext';
+import { USE_AGENT_BACKEND } from '../lib/config';
+import { closeStrategy as closeStrategyApi } from '../lib/blossomApi';
 
 interface MessageBubbleProps {
   text: string;
@@ -14,7 +16,7 @@ interface MessageBubbleProps {
   onRegisterStrategyRef?: (id: string, element: HTMLDivElement | null) => void;
 }
 
-function getStrategyReasoning(strategy: ParsedStrategy, account: any, instrumentType?: 'perp' | 'event'): string[] {
+function getStrategyReasoning(strategy: ParsedStrategy, instrumentType?: 'perp' | 'event'): string[] {
   const reasons: string[] = [];
 
   if (instrumentType === 'event') {
@@ -58,7 +60,8 @@ function getPortfolioBiasWarning(strategies: any[], newStrategy: ParsedStrategy)
 }
 
 export default function MessageBubble({ text, isUser, timestamp, strategy, strategyId, selectedStrategyId, defiProposalId, onInsertPrompt, onRegisterStrategyRef }: MessageBubbleProps) {
-  const { updateStrategyStatus, recomputeAccountFromStrategies, strategies, account, setActiveTab, setSelectedStrategyId, setOnboarding, closeStrategy, closeEventStrategy, defiPositions, latestDefiProposal, confirmDefiPlan } = useBlossomContext();
+  const { updateStrategyStatus, recomputeAccountFromStrategies, strategies, account, setActiveTab, setSelectedStrategyId, setOnboarding, closeStrategy, closeEventStrategy, defiPositions, latestDefiProposal, confirmDefiPlan, updateFromBackendPortfolio } = useBlossomContext();
+  const [isClosing, setIsClosing] = useState(false);
   
   // Find the DeFi proposal for this message
   const defiProposal = defiProposalId 
@@ -242,26 +245,68 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
             )}
             {isExecuted && !isClosed && currentStrategy?.instrumentType === 'event' && (
               <button
-                onClick={(e) => {
+                onClick={async (e) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  closeEventStrategy(strategyId!);
+                  if (isClosing) return;
+                  
+                  if (USE_AGENT_BACKEND) {
+                    setIsClosing(true);
+                    try {
+                      const response = await closeStrategyApi({
+                        strategyId: strategyId!,
+                        type: 'event',
+                      });
+                      updateFromBackendPortfolio(response.portfolio);
+                      // Optionally show summary message
+                      console.log('Event closed:', response.summaryMessage);
+                    } catch (error: any) {
+                      console.error('Failed to close event:', error);
+                      alert(`Failed to close event: ${error.message}`);
+                    } finally {
+                      setIsClosing(false);
+                    }
+                  } else {
+                    closeEventStrategy(strategyId!);
+                  }
                 }}
-                className="mt-4 w-full px-4 py-2 text-sm font-medium rounded-lg bg-green-500 text-white hover:bg-green-600 transition-colors"
+                disabled={isClosing}
+                className="mt-4 w-full px-4 py-2 text-sm font-medium rounded-lg bg-green-500 text-white hover:bg-green-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Close & settle this event (Sim)
+                {isClosing ? 'Closing...' : 'Close & settle this event (Sim)'}
               </button>
             )}
             {isExecuted && !isClosed && currentStrategy?.instrumentType !== 'event' && (
               <button
-                onClick={(e) => {
+                onClick={async (e) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  closeStrategy(strategyId!);
+                  if (isClosing) return;
+                  
+                  if (USE_AGENT_BACKEND) {
+                    setIsClosing(true);
+                    try {
+                      const response = await closeStrategyApi({
+                        strategyId: strategyId!,
+                        type: 'perp',
+                      });
+                      updateFromBackendPortfolio(response.portfolio);
+                      // Optionally show summary message
+                      console.log('Strategy closed:', response.summaryMessage);
+                    } catch (error: any) {
+                      console.error('Failed to close strategy:', error);
+                      alert(`Failed to close strategy: ${error.message}`);
+                    } finally {
+                      setIsClosing(false);
+                    }
+                  } else {
+                    closeStrategy(strategyId!);
+                  }
                 }}
-                className="mt-4 w-full px-4 py-2 text-sm font-medium rounded-lg bg-green-500 text-white hover:bg-green-600 transition-colors"
+                disabled={isClosing}
+                className="mt-4 w-full px-4 py-2 text-sm font-medium rounded-lg bg-green-500 text-white hover:bg-green-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Close & Take Profit (Sim)
+                {isClosing ? 'Closing...' : 'Close & Take Profit (Sim)'}
               </button>
             )}
             {isClosed && currentStrategy && (
@@ -295,7 +340,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
           <div className="mt-3 rounded-lg border border-gray-100 bg-gray-50 px-4 py-3 text-sm text-gray-700">
             <div className="font-medium mb-1">Why this setup?</div>
             <ul className="list-disc pl-5 space-y-1">
-              {getStrategyReasoning(strategy, account, currentStrategy?.instrumentType).map((line, idx) => (
+              {getStrategyReasoning(strategy, currentStrategy?.instrumentType).map((line, idx) => (
                 <li key={idx}>{line}</li>
               ))}
             </ul>

@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useCallback, ReactNode } from 'react';
-import { mockAccount } from '../lib/mockData';
+import { mapBackendPortfolioToFrontendState } from '../lib/portfolioMapping';
 
 export type StrategyStatus = 'draft' | 'queued' | 'executing' | 'executed' | 'closed';
 
@@ -97,6 +97,7 @@ interface BlossomContextType {
   latestDefiProposal: DefiPosition | null;
   createDefiPlanFromCommand: (command: string) => DefiPosition;
   confirmDefiPlan: (id: string) => void;
+  updateFromBackendPortfolio: (portfolio: any) => void; // For agent mode
 }
 
 const BlossomContext = createContext<BlossomContextType | undefined>(undefined);
@@ -598,6 +599,12 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
         latestDefiProposal,
         createDefiPlanFromCommand,
         confirmDefiPlan,
+        updateFromBackendPortfolio: useCallback((portfolio: any) => {
+          const mapped = mapBackendPortfolioToFrontendState(portfolio);
+          setAccount(mapped.account);
+          setStrategies(mapped.strategies);
+          setDefiPositions(mapped.defiPositions);
+        }, []),
       }}
     >
       {children}
