@@ -1,97 +1,182 @@
 /**
- * Parse model output into BlossomAction[]
- * This is a post-processing layer that extracts structured actions from natural language
+ * Action Parser and Validator
+ * Parses and validates BlossomAction[] from LLM JSON output
  */
 
-import { BlossomAction } from '../types/blossom';
+import { BlossomAction, BlossomPortfolioSnapshot } from '../types/blossom';
+import { blossomCharacter } from '../characters/blossom';
 
 /**
- * Parse model response into BlossomAction[]
- * For MVP, we'll use a simple pattern-based parser
- * In production, this would use structured output from the LLM
+ * Validate and sanitize actions from LLM output
  */
-export function parseActionsFromResponse(
-  response: string,
-  context?: { venue?: 'hyperliquid' | 'event_demo' }
-): BlossomAction[] {
-  const actions: BlossomAction[] = [];
-  const lower = response.toLowerCase();
+export function validateActions(raw: any): BlossomAction[] {
+  if (!Array.isArray(raw)) {
+    console.warn('Actions is not an array:', typeof raw);
+    return [];
+  }
 
-  // Simple keyword-based parsing for MVP
-  // In production, use structured output or JSON mode from LLM
+  const validActions: BlossomAction[] = [];
 
-  // Perp detection
-  if (context?.venue === 'hyperliquid' || !context?.venue) {
-    const perpMatch = response.match(/perp|perpetual|long|short|eth|btc|sol/i);
-    if (perpMatch) {
-      // Extract perp action details
-      const side = lower.includes('short') ? 'short' : 'long';
-      const marketMatch = response.match(/(ETH|BTC|SOL|BNB|AVAX)-PERP/i);
-      const market = marketMatch ? marketMatch[1] + '-PERP' : 'ETH-PERP';
-      
-      const riskMatch = response.match(/(\d+(?:\.\d+)?)\s*%/);
-      const riskPct = riskMatch ? parseFloat(riskMatch[1]) : 3;
+  for (const item of raw) {
+    try {
+      if (!item || typeof item !== 'object') {
+        console.warn('Invalid action item (not an object):', item);
+        continue;
+      }
 
-      actions.push({
-        type: 'perp',
-        action: 'open',
-        market,
-        side,
-        riskPct,
-        reasoning: ['Market analysis suggests this position', 'Risk is within acceptable limits'],
-      });
+      if (item.type === 'perp' && item.action === 'open') {
+        // Validate perp action
+        if (
+          typeof item.market === 'string' &&
+          (item.side === 'long' || item.side === 'short') &&
+          typeof item.riskPct === 'number' &&
+          item.riskPct > 0 &&
+          item.riskPct <= 5 && // Enforce 5% max
+          Array.isArray(item.reasoning)
+        ) {
+          validActions.push({
+            type: 'perp',
+            action: 'open',
+            market: item.market,
+            side: item.side,
+            riskPct: Math.min(item.riskPct, 5), // Cap at 5%
+            entry: typeof item.entry === 'number' ? item.entry : undefined,
+            takeProfit: typeof item.takeProfit === 'number' ? item.takeProfit : undefined,
+            stopLoss: typeof item.stopLoss === 'number' ? item.stopLoss : undefined,
+            reasoning: item.reasoning.filter((r: any) => typeof r === 'string'),
+          });
+        } else {
+          console.warn('Invalid perp action:', item);
+        }
+      } else if (item.type === 'defi' && item.action === 'deposit') {
+        // Validate defi action
+        if (
+          typeof item.protocol === 'string' &&
+          typeof item.asset === 'string' &&
+          typeof item.amountUsd === 'number' &&
+          item.amountUsd > 0 &&
+          typeof item.apr === 'number' &&
+          Array.isArray(item.reasoning)
+        ) {
+          validActions.push({
+            type: 'defi',
+            action: 'deposit',
+            protocol: item.protocol,
+            asset: item.asset,
+            amountUsd: item.amountUsd,
+            apr: item.apr,
+            reasoning: item.reasoning.filter((r: any) => typeof r === 'string'),
+          });
+        } else {
+          console.warn('Invalid defi action:', item);
+        }
+      } else if (item.type === 'event' && item.action === 'open') {
+        // Validate event action
+        if (
+          typeof item.eventKey === 'string' &&
+          typeof item.label === 'string' &&
+          (item.side === 'YES' || item.side === 'NO') &&
+          typeof item.stakeUsd === 'number' &&
+          item.stakeUsd > 0 &&
+          typeof item.maxPayoutUsd === 'number' &&
+          typeof item.maxLossUsd === 'number' &&
+          Array.isArray(item.reasoning)
+        ) {
+          validActions.push({
+            type: 'event',
+            action: 'open',
+            eventKey: item.eventKey,
+            label: item.label,
+            side: item.side,
+            stakeUsd: item.stakeUsd,
+            maxPayoutUsd: item.maxPayoutUsd,
+            maxLossUsd: item.maxLossUsd,
+            reasoning: item.reasoning.filter((r: any) => typeof r === 'string'),
+          });
+        } else {
+          console.warn('Invalid event action:', item);
+        }
+      } else {
+        console.warn('Unknown action type or action:', item);
+      }
+    } catch (error: any) {
+      console.warn('Error validating action:', error.message, item);
     }
   }
 
-  // DeFi detection
-  if (lower.includes('yield') || lower.includes('deposit') || lower.includes('kamino') || lower.includes('rootsfi') || lower.includes('jet')) {
-    const protocolMatch = lower.includes('kamino') ? 'Kamino' : lower.includes('jet') ? 'Jet' : 'RootsFi';
-    const amountMatch = response.match(/\$(\d+(?:,\d{3})*(?:\.\d{2})?)/);
-    const amountUsd = amountMatch ? parseFloat(amountMatch[1].replace(/,/g, '')) : 1000;
+  return validActions;
+}
 
-    actions.push({
-      type: 'defi',
-      action: 'deposit',
-      protocol: protocolMatch,
-      asset: 'REDACTED',
-      amountUsd,
-      apr: protocolMatch === 'Kamino' ? 8.5 : protocolMatch === 'Jet' ? 7.2 : 6.4,
-      reasoning: ['Idle capital optimization', 'Conservative yield strategy'],
-    });
-  }
+/**
+ * Build prompts for Blossom LLM
+ */
+export function buildBlossomPrompts(args: {
+  userMessage: string;
+  portfolio: BlossomPortfolioSnapshot | null;
+  venue: 'hyperliquid' | 'event_demo';
+}): { systemPrompt: string; userPrompt: string } {
+  const { userMessage, portfolio, venue } = args;
 
-  // Event detection
-  if (context?.venue === 'event_demo' || lower.includes('bet') || lower.includes('event') || lower.includes('fed') || lower.includes('etf')) {
-    let eventKey = 'GENERIC_EVENT_DEMO';
-    let label = 'Generic Event';
-    
-    if (lower.includes('fed') || lower.includes('rate cut')) {
-      eventKey = 'FED_CUTS_MAR_2025';
-      label = 'Fed cuts in March 2025';
-    } else if (lower.includes('etf')) {
-      eventKey = 'BTC_ETF_APPROVAL_2025';
-      label = 'BTC ETF Approval 2025';
+  const systemPrompt = `${blossomCharacter.system}
+
+**CRITICAL OUTPUT FORMAT:**
+You MUST respond with a single JSON object with exactly these two keys:
+1. "assistantMessage" (string): A natural language explanation of what you're doing
+2. "actions" (array): An array of BlossomAction objects (can be empty if no action is needed)
+
+The JSON must be valid and parseable. No commentary outside the JSON object.
+
+**Action Rules:**
+- For perps: riskPct must be between 0.1 and 5.0 (default 3.0)
+- For events: stakeUsd should be 2-3% of account value
+- For DeFi: amountUsd should not exceed 25% of idle REDACTED
+- Each action must include a "reasoning" array with 2-4 explanation bullets
+
+**Example valid JSON response:**
+{
+  "assistantMessage": "I'll open a long ETH position with 3% risk...",
+  "actions": [
+    {
+      "type": "perp",
+      "action": "open",
+      "market": "ETH-PERP",
+      "side": "long",
+      "riskPct": 3.0,
+      "entry": 3500,
+      "takeProfit": 3640,
+      "stopLoss": 3395,
+      "reasoning": ["ETH is trending up", "Risk is within 3% cap", "Stop loss protects downside"]
     }
+  ]
+}`;
 
-    const side: 'YES' | 'NO' = lower.includes('yes') || lower.includes('long') ? 'YES' : 'NO';
-    const stakeMatch = response.match(/\$(\d+(?:,\d{3})*(?:\.\d{2})?)/);
-    const stakeUsd = stakeMatch ? parseFloat(stakeMatch[1].replace(/,/g, '')) : 200;
-    const riskMatch = response.match(/(\d+(?:\.\d+)?)\s*%/);
-    const riskPct = riskMatch ? parseFloat(riskMatch[1]) : 2;
+  let userPrompt = `**User Request:**\n${userMessage}\n\n`;
 
-    actions.push({
-      type: 'event',
-      action: 'open',
-      eventKey,
-      label,
-      side,
-      stakeUsd,
-      maxPayoutUsd: stakeUsd * 1.7,
-      maxLossUsd: stakeUsd,
-      reasoning: ['Event market opportunity identified', `Risk capped at ${riskPct}% of account`],
-    });
+  if (portfolio) {
+    const accountValue = portfolio.accountValueUsd.toLocaleString();
+    const usdc = portfolio.balances.find(b => b.symbol === 'REDACTED')?.balanceUsd || 0;
+    const openPerps = portfolio.strategies.filter(s => s.type === 'perp' && s.status !== 'closed').length;
+    const openEvents = portfolio.strategies.filter(s => s.type === 'event' && s.status !== 'closed').length;
+    const activeDefi = portfolio.defiPositions.filter(p => !p.isClosed).length;
+
+    userPrompt += `**Current Portfolio State:**\n`;
+    userPrompt += `- Account Value: $${accountValue}\n`;
+    userPrompt += `- REDACTED Balance: $${usdc.toLocaleString()}\n`;
+    userPrompt += `- Open Perp Positions: ${openPerps}\n`;
+    userPrompt += `- Open Event Positions: ${openEvents}\n`;
+    userPrompt += `- Active DeFi Positions: ${activeDefi}\n`;
+    userPrompt += `- Open Perp Exposure: $${portfolio.openPerpExposureUsd.toLocaleString()}\n`;
+    userPrompt += `- Event Exposure: $${portfolio.eventExposureUsd.toLocaleString()}\n\n`;
   }
 
-  return actions;
+  if (venue === 'hyperliquid') {
+    userPrompt += `**Venue Context:** Hyperliquid (Perpetuals). Prefer perps or DeFi actions.\n\n`;
+  } else if (venue === 'event_demo') {
+    userPrompt += `**Venue Context:** Event Markets (Demo). Prefer event market actions.\n\n`;
+  }
+
+  userPrompt += `**Remember:** This is a SIMULATED environment. No real orders are placed.`;
+
+  return { systemPrompt, userPrompt };
 }
 
