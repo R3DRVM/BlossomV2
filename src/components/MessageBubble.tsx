@@ -120,7 +120,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
     <div className={`flex gap-3 mb-4 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
       <div className="flex-shrink-0">
         <div className={`w-8 h-8 rounded-full flex items-center justify-center text-lg ${
-          isUser ? 'bg-purple-500' : 'bg-gray-300'
+          isUser ? 'bg-blossom-pink' : 'bg-gray-300'
         }`}>
           {isUser ? '👤' : '🌸'}
         </div>
@@ -131,7 +131,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
         </div>
         <div className={`rounded-3xl px-4 py-3 ${
           isUser 
-            ? 'bg-gradient-to-br from-blossom-pink to-[#FF5AA3] text-white shadow-sm' 
+            ? 'bg-gradient-to-br from-blossom-pink to-[#FF5A96] text-white shadow-sm' 
             : 'card-glass text-blossom-ink'
         }`}>
           <div className="whitespace-pre-wrap">{text}</div>
@@ -257,11 +257,11 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                     handleConfirmAndQueue();
                   }}
                   disabled={isVeryHighRisk}
-                  className={`w-full h-10 px-4 text-sm font-medium rounded-xl transition-all ${
-                    !isVeryHighRisk
-                      ? 'bg-blossom-pink text-white hover:bg-blossom-pink/90 hover:shadow-md shadow-sm'
-                      : 'bg-blossom-outline/40 text-blossom-slate cursor-not-allowed'
-                  }`}
+                className={`w-full h-10 px-4 text-sm font-medium rounded-xl transition-all ${
+                  !isVeryHighRisk
+                    ? 'bg-blossom-pink text-white hover:bg-[#FF5A96] shadow-[0_10px_25px_rgba(255,107,160,0.35)]'
+                    : 'bg-blossom-outline/40 text-blossom-slate cursor-not-allowed'
+                }`}
                   title={isVeryHighRisk ? 'Risk too high' : undefined}
                 >
                   Confirm & Queue
@@ -329,7 +329,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                   }
                 }}
                 disabled={isClosing}
-                className="w-full h-10 px-4 text-sm font-medium rounded-xl bg-blossom-success text-white hover:bg-blossom-success/90 hover:shadow-md transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                className="w-full h-10 px-4 text-sm font-medium rounded-xl bg-blossom-success text-white hover:bg-blossom-success/90 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
               >
                 {isClosing ? 'Closing...' : 'Close & Take Profit (Sim)'}
               </button>
@@ -371,7 +371,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
             </ul>
             
             {biasWarning && (
-              <div className="mt-2 rounded-md bg-purple-50 px-3 py-2 text-xs text-purple-800 border border-purple-100">
+              <div className="mt-2 rounded-md bg-blossom-pinkSoft px-3 py-2 text-xs text-blossom-ink border border-blossom-pink/40">
                 {biasWarning}
               </div>
             )}
@@ -474,7 +474,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
           <div className="mt-2 flex flex-wrap gap-3 text-xs">
             <button
               type="button"
-              className="text-blossom-ink hover:underline"
+              className="text-blossom-pink hover:underline hover:text-blossom-pink/80"
               onClick={() => {
                 setSelectedStrategyId(strategyId);
                 setActiveTab('risk');

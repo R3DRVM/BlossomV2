@@ -8,7 +8,7 @@ import { BlossomLogo } from './BlossomLogo';
 
 export function SimBanner() {
   return (
-    <div className="w-full border-b border-blossom-outline/60 bg-blossom-pinkLight/30 text-xs text-blossom-ink px-4 py-2 flex items-center justify-between">
+    <div className="w-full border-b border-blossom-outline/60 bg-blossom-pinkSoft/50 text-xs text-blossom-slate px-4 py-2 flex items-center justify-between">
       <div className="flex items-center gap-2">
         <BlossomLogo size={18} className="opacity-60" />
         <span>

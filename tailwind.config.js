@@ -8,15 +8,15 @@ export default {
     extend: {
       colors: {
         blossom: {
-          pink: '#FF6FB5',
-          pinkSoft: '#FFE6F3',
+          pink: '#FF6BA0',
+          pinkSoft: '#FFE4F0',
           pinkLight: '#FFF0F8',
           ink: '#111827',
           slate: '#6B7280',
-          surface: '#F9FAFB',
+          surface: '#F7F5FA',
           outline: '#E5E7EB',
           success: '#16A34A',
-          warning: '#FACC15',
+          warning: '#FBBF24',
           danger: '#EF4444',
         },
       },

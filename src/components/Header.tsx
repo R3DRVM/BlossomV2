@@ -17,22 +17,28 @@ export default function Header() {
         <div className="flex items-center gap-2">
           <button
             onClick={() => setVenue('hyperliquid')}
-            className={`px-3 py-1.5 text-xs font-medium rounded-full transition-all ${
+            className={`px-3 py-1.5 text-xs font-medium rounded-full transition-all flex items-center gap-1.5 ${
               venue === 'hyperliquid'
-                ? 'bg-blossom-pinkSoft text-blossom-ink border-transparent shadow-sm'
-                : 'bg-white/70 text-blossom-slate border border-blossom-outline/60 hover:bg-white/90 hover:shadow-sm'
+                ? 'bg-white text-blossom-ink shadow-sm border border-blossom-pink/40'
+                : 'bg-transparent text-blossom-slate hover:bg-white/40 hover:text-blossom-ink'
             }`}
           >
+            {venue === 'hyperliquid' && (
+              <span className="h-1.5 w-1.5 rounded-full bg-blossom-pink" />
+            )}
             Hyperliquid
           </button>
           <button
             onClick={() => setVenue('event_demo')}
-            className={`px-3 py-1.5 text-xs font-medium rounded-full transition-all ${
+            className={`px-3 py-1.5 text-xs font-medium rounded-full transition-all flex items-center gap-1.5 ${
               venue === 'event_demo'
-                ? 'bg-blossom-pinkSoft text-blossom-ink border-transparent shadow-sm'
-                : 'bg-white/70 text-blossom-slate border border-blossom-outline/60 hover:bg-white/90 hover:shadow-sm'
+                ? 'bg-white text-blossom-ink shadow-sm border border-blossom-pink/40'
+                : 'bg-transparent text-blossom-slate hover:bg-white/40 hover:text-blossom-ink'
             }`}
           >
+            {venue === 'event_demo' && (
+              <span className="h-1.5 w-1.5 rounded-full bg-blossom-pink" />
+            )}
             Event Markets
           </button>
         </div>
