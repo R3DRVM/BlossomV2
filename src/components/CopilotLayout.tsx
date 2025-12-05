@@ -3,7 +3,7 @@ import Chat from './Chat';
 import SidePanel from './SidePanel';
 
 export default function CopilotLayout() {
-  const { selectedStrategyId, onboarding, setOnboarding, strategies, defiPositions, venue } = useBlossomContext();
+  const { selectedStrategyId, onboarding, setOnboarding, strategies, defiPositions } = useBlossomContext();
   // Check if user has tried all three: perp, defi, event
   const hasPerp = strategies.some(s => s.instrumentType === 'perp' && s.status !== 'draft');
   const hasDefi = defiPositions.length > 0 || onboarding.queuedStrategy;
