@@ -6,7 +6,8 @@
 import express from 'express';
 import cors from 'cors';
 import { BlossomAction, BlossomPortfolioSnapshot } from '../types/blossom';
-import { parseActionsFromResponse } from '../utils/actionParser';
+import { validateActions, buildBlossomPrompts } from '../utils/actionParser';
+import { callLlm } from '../services/llmClient';
 import * as perpsSim from '../plugins/perps-sim';
 import * as defiSim from '../plugins/defi-sim';
 import * as eventSim from '../plugins/event-sim';
@@ -108,27 +109,35 @@ function applyAction(action: BlossomAction): void {
 }
 
 /**
- * Generate assistant response (simplified for MVP)
- * In production, this would call the actual LLM via ElizaOS
+ * Parse LLM JSON response into assistant message and actions
  */
-function generateAssistantResponse(
-  userMessage: string,
-  actions: BlossomAction[]
-): string {
-  if (actions.length === 0) {
-    return "I understand your request. Let me help you with that.";
-  }
+interface ModelResponse {
+  assistantMessage: string;
+  actions: BlossomAction[];
+}
 
-  const action = actions[0];
-  if (action.type === 'perp') {
-    return `I've prepared a ${action.side} strategy for ${action.market} with ${action.riskPct}% risk. Entry at $${action.entry?.toLocaleString() || 'market'}, take profit at $${action.takeProfit?.toLocaleString() || 'auto'}, and stop loss at $${action.stopLoss?.toLocaleString() || 'auto'}. Review the details and confirm when ready.`;
-  } else if (action.type === 'defi') {
-    return `I've analyzed your request and prepared a DeFi yield plan using ${action.protocol} with ${action.apr}% APR. Deposit amount: $${action.amountUsd.toLocaleString()}. Review the details and confirm when ready.`;
-  } else if (action.type === 'event') {
-    return `I'll allocate a stake of $${action.stakeUsd.toLocaleString()} into the event market "${action.label}" (${action.side} side). Max payout: $${action.maxPayoutUsd.toLocaleString()}, max loss: $${action.maxLossUsd.toLocaleString()}. Review and confirm when ready.`;
-  }
+function parseModelResponse(rawJson: string): ModelResponse {
+  try {
+    const parsed = JSON.parse(rawJson);
+    
+    if (typeof parsed !== 'object' || parsed === null) {
+      throw new Error('Response is not an object');
+    }
 
-  return "I've processed your request. Check the actions for details.";
+    const assistantMessage = typeof parsed.assistantMessage === 'string' 
+      ? parsed.assistantMessage 
+      : 'I understand your request.';
+
+    const actions = Array.isArray(parsed.actions) 
+      ? validateActions(parsed.actions)
+      : [];
+
+    return { assistantMessage, actions };
+  } catch (error: any) {
+    console.error('Failed to parse model response:', error.message);
+    console.error('Raw JSON:', rawJson);
+    throw error;
+  }
 }
 
 interface ChatRequest {
@@ -154,28 +163,56 @@ app.post('/api/chat', async (req, res) => {
       return res.status(400).json({ error: 'userMessage is required' });
     }
 
-    // Parse actions from user message
-    const actions = parseActionsFromResponse(userMessage, { venue });
+    // Get current portfolio snapshot before applying new actions
+    const portfolioBefore = buildPortfolioSnapshot();
+    const portfolioForPrompt = clientPortfolio ? { ...portfolioBefore, ...clientPortfolio } : portfolioBefore;
 
-    // Apply actions to sims
+    // Build prompts for LLM
+    const { systemPrompt, userPrompt } = buildBlossomPrompts({
+      userMessage,
+      portfolio: portfolioForPrompt,
+      venue: venue || 'hyperliquid',
+    });
+
+    let assistantMessage = '';
+    let actions: BlossomAction[] = [];
+
+    try {
+      // Call LLM
+      const llmOutput = await callLlm({ systemPrompt, userPrompt });
+
+      // Parse JSON response
+      const modelResponse = parseModelResponse(llmOutput.rawJson);
+      assistantMessage = modelResponse.assistantMessage;
+      actions = modelResponse.actions;
+    } catch (error: any) {
+      console.error('LLM call or parsing error:', error.message);
+      // Fallback: return safe response with no actions
+      assistantMessage = "I couldn't safely parse a trading plan, so I didn't execute any actions. Please rephrase or try a simpler command.";
+      actions = [];
+    }
+
+    // Apply validated actions to sims
     actions.forEach(action => {
       try {
         applyAction(action);
       } catch (error: any) {
         console.error(`Error applying action:`, error.message);
+        // Remove failed action from array
+        const index = actions.indexOf(action);
+        if (index > -1) {
+          actions.splice(index, 1);
+        }
       }
     });
 
-    // Generate assistant response
-    const assistantMessage = generateAssistantResponse(userMessage, actions);
-
-    // Build portfolio snapshot
-    const portfolio = buildPortfolioSnapshot();
+    // Build updated portfolio snapshot after applying actions
+    const portfolioAfter = buildPortfolioSnapshot();
 
     const response: ChatResponse = {
       assistantMessage,
       actions,
-      portfolio,
+      portfolio: portfolioAfter,
     };
 
     res.json(response);
