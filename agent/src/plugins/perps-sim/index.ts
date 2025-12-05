@@ -5,15 +5,16 @@
 
 import { v4 as uuidv4 } from 'uuid';
 import { PerpPosition, PerpsAccountState } from './types';
+import { getPrice, PriceSymbol } from '../../services/prices';
 
-// Default prices for markets
-const DEFAULT_PRICES: Record<string, number> = {
-  'ETH-PERP': 3500,
-  'BTC-PERP': 45000,
-  'SOL-PERP': 100,
-  'BNB-PERP': 300,
-  'AVAX-PERP': 40,
-};
+// Helper to extract base symbol from market
+function getBaseSymbolFromMarket(market: string): PriceSymbol {
+  const base = market.split('-')[0];
+  if (base === 'ETH') return 'ETH';
+  if (base === 'BTC') return 'BTC';
+  if (base === 'SOL') return 'SOL';
+  return 'ETH'; // Default fallback
+}
 
 // Initial account state
 const INITIAL_BALANCES = [
@@ -31,14 +32,14 @@ let accountState: PerpsAccountState = {
 /**
  * Open a perp position
  */
-export function openPerp(spec: {
+export async function openPerp(spec: {
   market: string;
   side: 'long' | 'short';
   riskPct: number;
   entry?: number;
   takeProfit?: number;
   stopLoss?: number;
-}): PerpPosition {
+}): Promise<PerpPosition> {
   const { market, side, riskPct, entry, takeProfit, stopLoss } = spec;
 
   // Calculate size based on risk
@@ -50,10 +51,17 @@ export function openPerp(spec: {
     throw new Error(`Insufficient USDC balance. Need $${sizeUsd.toFixed(2)}, have $${usdcBalance?.balanceUsd.toFixed(2) || 0}`);
   }
 
-  // Use provided entry or default price
-  const entryPrice = entry || DEFAULT_PRICES[market] || 3500;
+  // Use provided entry or fetch real price
+  let entryPrice: number;
+  if (entry) {
+    entryPrice = entry;
+  } else {
+    const baseSymbol = getBaseSymbolFromMarket(market);
+    const priceSnapshot = await getPrice(baseSymbol);
+    entryPrice = priceSnapshot.priceUsd;
+  }
   
-  // Calculate TP/SL if not provided
+  // Calculate TP/SL if not provided (small deterministic move around entry)
   const calculatedTP = takeProfit || (side === 'long' ? entryPrice * 1.04 : entryPrice * 0.96);
   const calculatedSL = stopLoss || (side === 'long' ? entryPrice * 0.97 : entryPrice * 1.03);
 
@@ -82,15 +90,28 @@ export function openPerp(spec: {
 /**
  * Close a perp position
  */
-export function closePerp(id: string): { position: PerpPosition; pnl: number } {
+export async function closePerp(id: string): Promise<{ position: PerpPosition; pnl: number }> {
   const position = accountState.positions.find(p => p.id === id && !p.isClosed);
   if (!position) {
     throw new Error(`Position ${id} not found or already closed`);
   }
 
-  // Simple deterministic PnL for MVP
-  // In production, this would use real price data
-  const pnlPct = position.side === 'long' ? 0.8 : 0.6; // 0.8% profit for long, 0.6% for short
+  // Calculate PnL based on current price vs entry
+  const baseSymbol = getBaseSymbolFromMarket(position.market);
+  const currentPriceSnapshot = await getPrice(baseSymbol);
+  const currentPrice = currentPriceSnapshot.priceUsd;
+  
+  // Calculate PnL based on price movement
+  let pnlPct: number;
+  if (position.side === 'long') {
+    pnlPct = ((currentPrice - position.entryPrice) / position.entryPrice) * 100;
+  } else {
+    pnlPct = ((position.entryPrice - currentPrice) / position.entryPrice) * 100;
+  }
+  
+  // Clamp to reasonable range for demo (between -2% and +2%)
+  pnlPct = Math.max(-2, Math.min(2, pnlPct));
+  
   const realizedPnlUsd = (position.sizeUsd * pnlPct) / 100;
 
   // Update position

@@ -2,6 +2,7 @@ import { BlossomProvider, useBlossomContext } from './context/BlossomContext';
 import Header from './components/Header';
 import TabNav from './components/TabNav';
 import AccountSummaryStrip from './components/AccountSummaryStrip';
+import { SimBanner } from './components/SimBanner';
 import CopilotLayout from './components/CopilotLayout';
 import RiskCenter from './components/RiskCenter';
 import PortfolioView from './components/PortfolioView';
@@ -12,6 +13,7 @@ function AppContent() {
   return (
     <div className="h-screen flex flex-col bg-gray-100">
       <Header />
+      <SimBanner />
       <TabNav />
       <AccountSummaryStrip />
       <main className="flex-1 overflow-hidden">

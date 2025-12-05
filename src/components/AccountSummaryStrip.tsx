@@ -1,7 +1,9 @@
+import { useState } from 'react';
 import { useBlossomContext } from '../context/BlossomContext';
 
 export default function AccountSummaryStrip() {
   const { account, resetSim } = useBlossomContext();
+  const [isResetting, setIsResetting] = useState(false);
   
   const balanceText = account.balances
     .map(b => `${b.symbol}: $${b.balanceUsd.toLocaleString()}`)
@@ -29,15 +31,22 @@ export default function AccountSummaryStrip() {
         </div>
         <div className="flex items-center gap-3">
           <button
-            onClick={() => {
+            onClick={async () => {
               if (window.confirm('Reset SIM account to initial state?')) {
-                resetSim();
-                alert('SIM account reset.');
+                setIsResetting(true);
+                try {
+                  await resetSim();
+                } catch (error: any) {
+                  alert(`Failed to reset: ${error.message}`);
+                } finally {
+                  setIsResetting(false);
+                }
               }
             }}
-            className="px-2 py-1 text-xs font-medium text-gray-600 hover:text-gray-900 hover:underline"
+            disabled={isResetting}
+            className="px-2 py-1 text-xs font-medium text-gray-600 hover:text-gray-900 hover:underline disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Reset SIM
+            {isResetting ? 'Resetting...' : 'Reset SIM'}
           </button>
           <span className="px-2 py-0.5 text-xs font-medium text-purple-700 bg-purple-100 rounded-full">
             Mode: SIM
