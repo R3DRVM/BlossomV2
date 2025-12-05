@@ -401,32 +401,38 @@ export default function Chat({ selectedStrategyId }: ChatProps) {
               rows={1}
               style={{ minHeight: '48px', maxHeight: '120px' }}
             />
-            <button
-              type="button"
-              onClick={handleSend}
-              disabled={!inputValue.trim() || isTyping}
-              className={`ml-3 flex items-center justify-center rounded-full px-6 h-11 text-sm font-medium tracking-wide bg-blossom-pink text-white shadow-[0_10px_25px_rgba(255,107,160,0.35)] transition-colors transition-shadow duration-150 ${
-                !inputValue.trim() || isTyping
-                  ? 'opacity-60 cursor-not-allowed shadow-sm'
-                  : 'hover:bg-[#FF4B9A] hover:shadow-md cursor-pointer'
-              }`}
-            >
-              <span>{isTyping ? 'Sending...' : 'Send'}</span>
-              <svg
-                className="ml-2 h-4 w-4"
-                viewBox="0 0 20 20"
-                fill="none"
-                xmlns="http://www.w3.org/2000/svg"
-              >
-                <path
-                  d="M4 10h9.5M11 6l3.5 4L11 14"
-                  stroke="currentColor"
-                  strokeWidth="1.6"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            </button>
+            {(() => {
+              const canSend = inputValue.trim().length > 0 && !isTyping;
+              const sendLabel = isTyping ? 'Sending...' : 'Send';
+              return (
+                <button
+                  type="button"
+                  onClick={handleSend}
+                  disabled={!canSend}
+                  className={`ml-3 flex items-center justify-center rounded-full px-6 h-11 text-sm font-medium tracking-wide bg-[#FF5AA3] text-white transition-colors transition-shadow duration-150 ${
+                    canSend
+                      ? 'shadow-[0_10px_25px_rgba(255,107,160,0.35)] hover:bg-[#FF4B9A] hover:shadow-md cursor-pointer'
+                      : 'opacity-60 shadow-sm cursor-not-allowed'
+                  }`}
+                >
+                  <span>{sendLabel}</span>
+                  <svg
+                    className="ml-2 h-4 w-4"
+                    viewBox="0 0 20 20"
+                    fill="none"
+                    xmlns="http://www.w3.org/2000/svg"
+                  >
+                    <path
+                      d="M4 10h9.5M11 6l3.5 4L11 14"
+                      stroke="currentColor"
+                      strokeWidth="1.6"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </button>
+              );
+            })()}
           </div>
         </div>
       </div>
