@@ -19,8 +19,8 @@ export default function Header() {
             onClick={() => setVenue('hyperliquid')}
             className={`px-3 py-1.5 text-xs font-medium rounded-full transition-all flex items-center gap-1.5 ${
               venue === 'hyperliquid'
-                ? 'bg-white text-blossom-ink shadow-sm border border-blossom-pink/40'
-                : 'bg-transparent text-blossom-slate hover:bg-white/40 hover:text-blossom-ink'
+                ? 'bg-white/90 text-blossom-ink shadow-sm border border-blossom-pink/40'
+                : 'bg-transparent text-blossom-slate hover:bg-white/60 hover:text-blossom-ink'
             }`}
           >
             {venue === 'hyperliquid' && (
@@ -32,8 +32,8 @@ export default function Header() {
             onClick={() => setVenue('event_demo')}
             className={`px-3 py-1.5 text-xs font-medium rounded-full transition-all flex items-center gap-1.5 ${
               venue === 'event_demo'
-                ? 'bg-white text-blossom-ink shadow-sm border border-blossom-pink/40'
-                : 'bg-transparent text-blossom-slate hover:bg-white/40 hover:text-blossom-ink'
+                ? 'bg-white/90 text-blossom-ink shadow-sm border border-blossom-pink/40'
+                : 'bg-transparent text-blossom-slate hover:bg-white/60 hover:text-blossom-ink'
             }`}
           >
             {venue === 'event_demo' && (

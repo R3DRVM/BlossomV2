@@ -98,7 +98,7 @@ export default function PortfolioView() {
   ];
 
   return (
-    <div className="h-full overflow-y-auto bg-gray-100 p-6">
+    <div className="h-full overflow-y-auto bg-transparent p-6">
       <div className="max-w-7xl mx-auto space-y-6">
         <p className="text-xs text-blossom-slate mb-4 max-w-2xl">
           A SIM view of how your strategies are performing over time.

@@ -11,22 +11,24 @@ function AppContent() {
   const { activeTab } = useBlossomContext();
 
   return (
-    <div className="min-h-screen bg-blossom-surface relative">
-      {/* Subtle blossom bloom gradient - positioned behind chat area */}
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_30%_20%,rgba(244,114,182,0.18),transparent_55%)]" />
+    <div className="min-h-screen bg-blossom-surface relative overflow-hidden">
+      {/* Stable subtle blossom bloom gradient - does not change on tab switch */}
+      <div className="pointer-events-none absolute inset-0 opacity-[0.16]">
+        <div className="absolute -top-40 left-[-10%] h-96 w-96 rounded-full bg-[radial-gradient(circle_at_center,#FFC0E4,transparent)]" />
+      </div>
       <div className="relative z-10 flex flex-col h-screen">
         <Header />
         <SimBanner />
         <TabNav />
         <AccountSummaryStrip />
         <main className="flex-1 overflow-hidden">
-        <div className={`h-full transition-opacity duration-200 ${activeTab === 'copilot' ? 'opacity-100' : 'opacity-0 absolute inset-0 pointer-events-none'}`}>
+        <div className={`h-full transition-opacity duration-150 ease-out ${activeTab === 'copilot' ? 'opacity-100' : 'opacity-0 absolute inset-0 pointer-events-none'}`}>
           {activeTab === 'copilot' && <CopilotLayout />}
         </div>
-        <div className={`h-full transition-opacity duration-200 ${activeTab === 'risk' ? 'opacity-100' : 'opacity-0 absolute inset-0 pointer-events-none'}`}>
+        <div className={`h-full transition-opacity duration-150 ease-out ${activeTab === 'risk' ? 'opacity-100' : 'opacity-0 absolute inset-0 pointer-events-none'}`}>
           {activeTab === 'risk' && <RiskCenter />}
         </div>
-        <div className={`h-full transition-opacity duration-200 ${activeTab === 'portfolio' ? 'opacity-100' : 'opacity-0 absolute inset-0 pointer-events-none'}`}>
+        <div className={`h-full transition-opacity duration-150 ease-out ${activeTab === 'portfolio' ? 'opacity-100' : 'opacity-0 absolute inset-0 pointer-events-none'}`}>
           {activeTab === 'portfolio' && <PortfolioView />}
         </div>
       </main>
