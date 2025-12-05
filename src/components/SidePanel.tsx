@@ -239,13 +239,6 @@ export default function SidePanel({ selectedStrategyId }: SidePanelProps) {
             <div className="space-y-2">
               {strategies.slice(0, 5).map((strategyItem) => {
                 const isSelected = strategyItem.id === selectedStrategyId;
-                const statusColors = {
-                  draft: 'bg-gray-100 text-gray-600',
-                  queued: 'bg-yellow-100 text-yellow-700',
-                  executing: 'bg-blue-100 text-blue-700',
-                  executed: 'bg-green-100 text-green-700',
-                  closed: 'bg-gray-200 text-gray-600',
-                };
                 return (
                   <button
                     key={strategyItem.id}
