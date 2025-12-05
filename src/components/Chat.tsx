@@ -377,7 +377,7 @@ export default function Chat({ selectedStrategyId }: ChatProps) {
           <div ref={messagesEndRef} />
         </div>
       </div>
-      <div className="flex-shrink-0 border-t border-blossom-outline/50 bg-white/85 backdrop-blur-sm p-4 shadow-[0_-4px_20px_rgba(15,23,42,0.08)]">
+      <div className="flex-shrink-0 border-t border-blossom-outline/50 bg-white/90 backdrop-blur-sm p-4 shadow-[0_-4px_20px_rgba(15,23,42,0.08)]">
         <div className="max-w-3xl mx-auto">
           <div className="flex gap-2 mb-3 overflow-x-auto pb-2">
             {(venue === 'hyperliquid' ? QUICK_PROMPTS_PERPS : QUICK_PROMPTS_EVENTS).map((prompt, idx) => (
@@ -390,7 +390,7 @@ export default function Chat({ selectedStrategyId }: ChatProps) {
               </button>
             ))}
           </div>
-          <div className="flex gap-3">
+          <div className="flex items-center gap-3">
             <textarea
               ref={textareaRef}
               value={inputValue}
@@ -402,15 +402,30 @@ export default function Chat({ selectedStrategyId }: ChatProps) {
               style={{ minHeight: '48px', maxHeight: '120px' }}
             />
             <button
+              type="button"
               onClick={handleSend}
               disabled={!inputValue.trim() || isTyping}
-              className={`ml-2 h-10 px-5 rounded-xl font-medium text-white bg-blossom-pink transition-colors transition-shadow duration-150 ${
+              className={`ml-3 flex items-center justify-center rounded-full px-6 h-11 text-sm font-medium tracking-wide bg-blossom-pink text-white shadow-[0_10px_25px_rgba(255,107,160,0.35)] transition-colors transition-shadow duration-150 ${
                 !inputValue.trim() || isTyping
-                  ? 'opacity-50 cursor-not-allowed shadow-sm'
-                  : 'hover:bg-[#FF4B9A] hover:shadow-md active:shadow-sm shadow-[0_10px_25px_rgba(255,107,160,0.35)]'
+                  ? 'opacity-60 cursor-not-allowed shadow-sm'
+                  : 'hover:bg-[#FF4B9A] hover:shadow-md cursor-pointer'
               }`}
             >
-              {isTyping ? 'Sending...' : 'Send'}
+              <span>{isTyping ? 'Sending...' : 'Send'}</span>
+              <svg
+                className="ml-2 h-4 w-4"
+                viewBox="0 0 20 20"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <path
+                  d="M4 10h9.5M11 6l3.5 4L11 14"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
             </button>
           </div>
         </div>
