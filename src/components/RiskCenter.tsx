@@ -88,6 +88,9 @@ export default function RiskCenter() {
   return (
     <div className="h-full overflow-y-auto bg-gray-100 p-6">
       <div className="max-w-7xl mx-auto">
+        <p className="text-xs text-gray-500 mb-4">
+          This view reflects the positions Blossom opened from your Copilot commands (perps, DeFi, and event markets). Ask things like 'What's my current risk?' in Copilot to get explanations.
+        </p>
         <p className="text-sm text-gray-600 mb-2">
           Blossom monitors account-level risk, liquidation buffers, volatility, and correlation in real time.
         </p>
