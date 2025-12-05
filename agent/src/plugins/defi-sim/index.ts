@@ -1,0 +1,116 @@
+/**
+ * DeFi Simulation Plugin
+ * Simulates DeFi yield farming positions
+ */
+
+import { v4 as uuidv4 } from 'uuid';
+import { DefiPosition, DefiState } from './types';
+
+// Available vaults with APRs
+const VAULTS = {
+  Kamino: { apr: 8.5, asset: 'REDACTED' },
+  RootsFi: { apr: 6.4, asset: 'REDACTED' },
+  Jet: { apr: 7.2, asset: 'REDACTED' },
+} as const;
+
+let defiState: DefiState = {
+  positions: [],
+};
+
+// Reference to perps account for balance updates
+let getUsdcBalance: () => number;
+let updateUsdcBalance: (delta: number) => void;
+
+export function setBalanceCallbacks(
+  getBalance: () => number,
+  updateBalance: (delta: number) => void
+): void {
+  getUsdcBalance = getBalance;
+  updateUsdcBalance = updateBalance;
+}
+
+/**
+ * Open a DeFi position
+ */
+export function openDefiPosition(
+  protocol: 'Kamino' | 'RootsFi' | 'Jet',
+  asset: string,
+  amountUsd: number
+): DefiPosition {
+  const vault = VAULTS[protocol];
+  if (!vault) {
+    throw new Error(`Unknown protocol: ${protocol}`);
+  }
+
+  // Check REDACTED balance
+  const currentBalance = getUsdcBalance ? getUsdcBalance() : 0;
+  if (currentBalance < amountUsd) {
+    throw new Error(`Insufficient REDACTED balance. Need $${amountUsd.toFixed(2)}, have $${currentBalance.toFixed(2)}`);
+  }
+
+  // Deduct from REDACTED
+  if (updateUsdcBalance) {
+    updateUsdcBalance(-amountUsd);
+  }
+
+  // Create position
+  const position: DefiPosition = {
+    id: uuidv4(),
+    protocol,
+    asset: vault.asset,
+    depositUsd: amountUsd,
+    apr: vault.apr,
+    openedAt: Date.now(),
+    isClosed: false,
+  };
+
+  defiState.positions.push(position);
+  return position;
+}
+
+/**
+ * Close a DeFi position
+ */
+export function closeDefiPosition(id: string): { position: DefiPosition; yieldEarned: number } {
+  const position = defiState.positions.find(p => p.id === id && !p.isClosed);
+  if (!position) {
+    throw new Error(`Position ${id} not found or already closed`);
+  }
+
+  // Calculate yield (simple pro-rata APR)
+  const elapsedMs = Date.now() - position.openedAt;
+  const elapsedDays = elapsedMs / (1000 * 60 * 60 * 24);
+  const yieldEarnedUsd = (position.depositUsd * position.apr * elapsedDays) / (100 * 365);
+
+  // Update position
+  position.isClosed = true;
+  position.closedAt = Date.now();
+  position.yieldEarnedUsd = yieldEarnedUsd;
+
+  // Credit REDACTED with deposit + yield
+  const totalReturn = position.depositUsd + yieldEarnedUsd;
+  if (updateUsdcBalance) {
+    updateUsdcBalance(totalReturn);
+  }
+
+  return { position, yieldEarned: yieldEarnedUsd };
+}
+
+/**
+ * Get DeFi snapshot
+ */
+export function getDefiSnapshot(): DefiState {
+  return {
+    positions: [...defiState.positions],
+  };
+}
+
+/**
+ * Reset DeFi state (for testing)
+ */
+export function resetDefiState(): void {
+  defiState = {
+    positions: [],
+  };
+}
+

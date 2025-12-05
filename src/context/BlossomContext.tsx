@@ -256,6 +256,10 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
     return newStrategy;
   }, []);
 
+  // TODO: When backend is ready, replace updateStrategyStatus with API call
+  // See src/lib/blossomApi.ts for closeStrategy() function
+  // Example: await closeStrategy({ strategyId: id, type: 'perp' })
+  
   const updateStrategyStatus = useCallback((id: string, status: StrategyStatus) => {
     setStrategies(prev => {
       const strategyToUpdate = prev.find(s => s.id === id);
