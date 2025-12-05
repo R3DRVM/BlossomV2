@@ -8,9 +8,9 @@ import { BlossomLogo } from './BlossomLogo';
 
 export function SimBanner() {
   return (
-    <div className="w-full border-b border-blossom-outline bg-blossom-pinkLight/40 text-xs text-blossom-ink px-4 py-2 flex items-center justify-between">
+    <div className="w-full border-b border-blossom-outline/60 bg-blossom-pinkLight/30 text-xs text-blossom-ink px-4 py-2 flex items-center justify-between">
       <div className="flex items-center gap-2">
-        <BlossomLogo className="h-3 w-3 opacity-30" />
+        <BlossomLogo size={18} className="opacity-60" />
         <span>
           SIM mode · {USE_AGENT_BACKEND ? 'Real prices' : 'Mock data'} · No live orders
         </span>

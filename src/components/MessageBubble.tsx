@@ -117,7 +117,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
     }
   };
   return (
-    <div className={`flex gap-3 mb-6 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
+    <div className={`flex gap-3 mb-4 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
       <div className="flex-shrink-0">
         <div className={`w-8 h-8 rounded-full flex items-center justify-center text-lg ${
           isUser ? 'bg-purple-500' : 'bg-gray-300'
@@ -129,26 +129,24 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
         <div className="text-sm font-medium text-gray-600 mb-1">
           {isUser ? 'You' : 'Blossom'}
         </div>
-        <div className={`rounded-2xl px-4 py-3 ${
+        <div className={`rounded-3xl px-4 py-3 ${
           isUser 
-            ? 'bg-purple-500 text-white' 
-            : 'bg-white border border-gray-200 text-gray-900'
+            ? 'bg-gradient-to-br from-blossom-pink to-[#FF5AA3] text-white shadow-sm' 
+            : 'card-glass text-blossom-ink'
         }`}>
           <div className="whitespace-pre-wrap">{text}</div>
         </div>
         {!isUser && strategy && (
           <div 
             ref={strategyPreviewRef}
-            className={`mt-3 w-full max-w-md strategy-card rounded-2xl p-5 border transition-all duration-300 ${
+            className={`mt-3 w-full max-w-md strategy-card card-glass p-5 transition-all duration-300 ${
               currentStatus === 'draft' || currentStatus === 'queued'
-                ? 'bg-white border-blossom-outline'
+                ? ''
                 : currentStatus === 'executing'
-                ? 'bg-blossom-pinkSoft/60 border-blossom-pink/30'
+                ? 'bg-blossom-pinkSoft/40'
                 : currentStatus === 'executed' && !isClosed
-                ? 'bg-white border-blossom-outline shadow-sm'
-                : isClosed
-                ? 'bg-white border-blossom-outline'
-                : 'bg-white border-blossom-outline'
+                ? ''
+                : ''
             } ${isSelected ? 'ring-2 ring-blossom-pink/30' : ''}`}
           >
             <div className="flex items-center justify-between mb-4">
@@ -251,22 +249,24 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
             )}
             
             {isDraft && (
-              <button 
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  handleConfirmAndQueue();
-                }}
-                disabled={isVeryHighRisk}
-                className={`w-full px-4 py-2.5 text-sm font-semibold rounded-xl transition-colors ${
-                  !isVeryHighRisk
-                    ? 'bg-blossom-pink text-white hover:bg-blossom-pink/90 shadow-sm'
-                    : 'bg-gray-200 text-gray-400 cursor-not-allowed'
-                }`}
-                title={isVeryHighRisk ? 'Risk too high' : undefined}
-              >
-                Confirm & Queue
-              </button>
+              <div className="pt-3 border-t border-blossom-outline/50">
+                <button 
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    handleConfirmAndQueue();
+                  }}
+                  disabled={isVeryHighRisk}
+                  className={`w-full h-10 px-4 text-sm font-medium rounded-xl transition-all ${
+                    !isVeryHighRisk
+                      ? 'bg-blossom-pink text-white hover:bg-blossom-pink/90 hover:shadow-md shadow-sm'
+                      : 'bg-blossom-outline/40 text-blossom-slate cursor-not-allowed'
+                  }`}
+                  title={isVeryHighRisk ? 'Risk too high' : undefined}
+                >
+                  Confirm & Queue
+                </button>
+              </div>
             )}
             {isExecuted && !isClosed && currentStrategy?.instrumentType === 'event' && (
               <button
@@ -296,7 +296,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                   }
                 }}
                 disabled={isClosing}
-                className="w-full px-4 py-2.5 text-sm font-semibold rounded-xl bg-blossom-success text-white hover:bg-blossom-success/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                className="w-full h-10 px-4 text-sm font-medium rounded-xl bg-blossom-success text-white hover:bg-blossom-success/90 hover:shadow-md transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
               >
                 {isClosing ? 'Closing...' : 'Close & settle this event (Sim)'}
               </button>
@@ -329,7 +329,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                   }
                 }}
                 disabled={isClosing}
-                className="w-full px-4 py-2.5 text-sm font-semibold rounded-xl bg-blossom-success text-white hover:bg-blossom-success/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                className="w-full h-10 px-4 text-sm font-medium rounded-xl bg-blossom-success text-white hover:bg-blossom-success/90 hover:shadow-md transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
               >
                 {isClosing ? 'Closing...' : 'Close & Take Profit (Sim)'}
               </button>
@@ -427,41 +427,43 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
             <div className="grid grid-cols-2 gap-3 text-sm mb-4">
               <div>
                 <div className="text-xs text-blossom-slate mb-0.5">Protocol</div>
-                <div className="font-medium text-blossom-ink">{defiProposal.protocol}</div>
+                <div className="text-sm font-medium text-blossom-ink">{defiProposal.protocol}</div>
               </div>
               <div>
                 <div className="text-xs text-blossom-slate mb-0.5">Asset</div>
-                <div className="font-medium text-blossom-ink">{defiProposal.asset}</div>
+                <div className="text-sm font-medium text-blossom-ink">{defiProposal.asset}</div>
               </div>
               <div>
                 <div className="text-xs text-blossom-slate mb-0.5">Deposit</div>
-                <div className="font-medium text-blossom-ink">${defiProposal.depositUsd.toLocaleString()}</div>
+                <div className="text-sm font-medium text-blossom-ink">${defiProposal.depositUsd.toLocaleString()}</div>
               </div>
               <div>
                 <div className="text-xs text-blossom-slate mb-0.5">APY</div>
-                <div className="font-medium text-blossom-success">{defiProposal.apyPct}%</div>
+                <div className="text-sm font-medium text-blossom-success">{defiProposal.apyPct}%</div>
               </div>
             </div>
-            <div className="text-xs text-blossom-slate mb-4 pt-3 border-t border-blossom-outline">
+            <div className="text-xs text-blossom-slate mb-4 pt-3 border-t border-blossom-outline/50">
               Choosing the highest APY within your risk band using idle USDC.
             </div>
             {defiProposal.status === 'proposed' ? (
-              <button
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  confirmDefiPlan(defiProposal.id);
-                }}
-                className="w-full px-4 py-2.5 text-sm font-semibold rounded-xl bg-blossom-pink text-white hover:bg-blossom-pink/90 transition-colors shadow-sm"
-              >
-                Confirm deposit (Sim)
-              </button>
+              <div className="pt-3 border-t border-blossom-outline/50">
+                <button
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    confirmDefiPlan(defiProposal.id);
+                  }}
+                  className="w-full h-10 px-4 text-sm font-medium rounded-xl bg-blossom-pink text-white hover:bg-blossom-pink/90 hover:shadow-md transition-all shadow-sm"
+                >
+                  Confirm deposit (Sim)
+                </button>
+              </div>
             ) : (
-              <div className="w-full px-4 py-2.5 text-sm font-medium text-center text-blossom-slate bg-blossom-pinkLight rounded-xl">
+              <div className="w-full h-10 px-4 text-sm font-medium text-center text-blossom-slate bg-blossom-pinkLight rounded-xl flex items-center justify-center">
                 Active
               </div>
             )}
-            <div className="mt-4 pt-3 border-t border-blossom-outline text-xs text-blossom-slate">
+            <div className="mt-4 pt-3 border-t border-blossom-outline/50 text-xs text-blossom-slate">
               Instrument: DeFi yield (Sim – no real deposits)
             </div>
           </div>
@@ -469,10 +471,10 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
 
         {/* Cross-tab CTAs for executed strategies */}
         {!isUser && strategy && isExecuted && strategyId && (
-          <div className="mt-2 flex flex-wrap gap-3 text-xs text-purple-700">
+          <div className="mt-2 flex flex-wrap gap-3 text-xs">
             <button
               type="button"
-              className="underline hover:text-purple-900"
+              className="text-blossom-ink hover:underline"
               onClick={() => {
                 setSelectedStrategyId(strategyId);
                 setActiveTab('risk');

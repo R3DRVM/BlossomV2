@@ -1,25 +1,28 @@
 /**
  * Blossom Logo Component
- * Renders cherry blossom logo or fallback icon
+ * Renders cherry blossom logo with SVG fallback
  */
 
-interface BlossomLogoProps {
-  className?: string;
-}
+import blossomLogo from '../assets/blossom-logo.png';
 
-export function BlossomLogo({ className = 'h-7 w-7' }: BlossomLogoProps) {
-  // Try to load logo, fallback to SVG icon
-  try {
-    // In production, this will be the actual logo
-    // For now, use a simple SVG cherry blossom icon
+type BlossomLogoProps = {
+  className?: string;
+  size?: number; // default 24
+};
+
+export function BlossomLogo({ className = '', size = 24 }: BlossomLogoProps) {
+  const [imgError, setImgError] = React.useState(false);
+
+  if (imgError) {
+    // Fallback SVG if image fails to load
     return (
       <svg
         className={className}
         viewBox="0 0 24 24"
         fill="none"
         xmlns="http://www.w3.org/2000/svg"
+        style={{ width: size, height: size }}
       >
-        {/* Cherry blossom icon - simple 5-petal flower */}
         <circle cx="12" cy="12" r="3" fill="#FF6FB5" opacity="0.3" />
         <path
           d="M12 6C12 6 10 8 10 10C10 12 12 12 12 12C12 12 14 12 14 10C14 8 12 6 12 6Z"
@@ -48,13 +51,16 @@ export function BlossomLogo({ className = 'h-7 w-7' }: BlossomLogoProps) {
         <circle cx="12" cy="12" r="1.5" fill="#FF6FB5" />
       </svg>
     );
-  } catch {
-    // Fallback if logo file doesn't exist
-    return (
-      <div className={`${className} rounded-full bg-blossom-pink flex items-center justify-center text-white font-bold text-xs`}>
-        B
-      </div>
-    );
   }
+
+  return (
+    <img
+      src={blossomLogo}
+      alt="Blossom logo"
+      className={`rounded-lg ${className}`}
+      style={{ width: size, height: size }}
+      onError={() => setImgError(true)}
+    />
+  );
 }
 

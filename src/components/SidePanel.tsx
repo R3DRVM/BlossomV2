@@ -21,13 +21,13 @@ export default function SidePanel({ selectedStrategyId }: SidePanelProps) {
   );
 
   return (
-    <div className="w-full lg:w-80 xl:w-96 flex-shrink-0 bg-gray-50 border-l border-gray-200 p-6 overflow-y-auto">
+    <div className="w-full lg:w-80 xl:w-96 flex-shrink-0 bg-white/70 backdrop-blur-md border-l border-blossom-outline/60 p-6 overflow-y-auto">
       <div className="space-y-6">
         {selectedStrategy && (
           <>
-            <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
-              <div className="flex items-center justify-between mb-2">
-                <h2 className="text-sm font-semibold text-gray-900">Active Strategy</h2>
+            <div className="card-glass p-5">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-xs font-semibold text-blossom-slate uppercase tracking-wide">Active Strategy</h2>
                 <span className="px-2 py-0.5 text-xs font-medium text-purple-700 bg-purple-100 rounded-full">
                   AI-generated
                 </span>
@@ -90,8 +90,8 @@ export default function SidePanel({ selectedStrategyId }: SidePanelProps) {
               </div>
             </div>
 
-            <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
-              <h2 className="text-sm font-semibold text-gray-900 mb-4">Risk Snapshot</h2>
+            <div className="card-glass p-5">
+              <h2 className="text-xs font-semibold text-blossom-slate uppercase tracking-wide mb-4">Risk Snapshot</h2>
               <div className="space-y-3 text-sm">
                 <div className="flex justify-between">
                   <span className="text-gray-600">Max Loss:</span>
@@ -114,10 +114,10 @@ export default function SidePanel({ selectedStrategyId }: SidePanelProps) {
           </>
         )}
 
-        <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
-          <div className="mb-3">
-            <div className="text-xs text-gray-500 mb-2">Hyperliquid Account (Demo) • Total PnL: <span className="text-green-600 font-medium">+{account.totalPnlPct.toFixed(1)}%</span></div>
-            <h2 className="text-sm font-semibold text-gray-900">Spot & Perp Exposure</h2>
+        <div className="card-glass p-5">
+          <div className="mb-4">
+            <h2 className="text-xs font-semibold text-blossom-slate uppercase tracking-wide mb-2">Spot & Perp Exposure</h2>
+            <div className="text-xs text-blossom-slate">Total PnL: <span className="text-blossom-success font-medium">+{account.totalPnlPct.toFixed(1)}%</span></div>
           </div>
           <div className="space-y-3 mb-4">
             {account.balances.map((balance, idx) => (
@@ -140,9 +140,9 @@ export default function SidePanel({ selectedStrategyId }: SidePanelProps) {
           </div>
         </div>
 
-        <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
-          <div className="mb-3">
-            <h2 className="text-sm font-semibold text-gray-900">Positions (Mock)</h2>
+        <div className="card-glass p-5">
+          <div className="mb-4">
+            <h2 className="text-xs font-semibold text-blossom-slate uppercase tracking-wide">Positions (Mock)</h2>
           </div>
           <div className="space-y-3">
             {mockPositions.slice(0, 2).map((pos, idx) => (
@@ -170,8 +170,8 @@ export default function SidePanel({ selectedStrategyId }: SidePanelProps) {
           </div>
 
         {/* DeFi Positions */}
-        <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
-          <h2 className="text-sm font-semibold text-gray-900 mb-4">DeFi Positions (Sim)</h2>
+        <div className="card-glass p-5">
+          <h2 className="text-xs font-semibold text-blossom-slate uppercase tracking-wide mb-4">DeFi Positions (Sim)</h2>
           {defiPositions.filter(p => p.status === 'active').length === 0 ? (
             <p className="text-sm text-gray-500">No active DeFi positions yet. Ask the copilot to move idle USDC into yield.</p>
           ) : (
@@ -208,8 +208,8 @@ export default function SidePanel({ selectedStrategyId }: SidePanelProps) {
         </div>
 
         {/* Event Markets */}
-        <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
-          <h2 className="text-sm font-semibold text-gray-900 mb-4">Event Markets (Sim)</h2>
+        <div className="card-glass p-5">
+          <h2 className="text-xs font-semibold text-blossom-slate uppercase tracking-wide mb-4">Event Markets (Sim)</h2>
           <div className="space-y-3 text-sm">
             <div className="flex justify-between">
               <span className="text-gray-600">Total Event Stake:</span>
@@ -234,8 +234,8 @@ export default function SidePanel({ selectedStrategyId }: SidePanelProps) {
 
         {/* Execution Queue */}
         {strategies.length > 0 && (
-          <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
-            <h2 className="text-sm font-semibold text-gray-900 mb-4">Execution Queue (Sim)</h2>
+          <div className="card-glass p-5">
+            <h2 className="text-xs font-semibold text-blossom-slate uppercase tracking-wide mb-4">Execution Queue (Sim)</h2>
             <div className="space-y-2">
               {strategies.slice(0, 5).map((strategyItem) => {
                 const isSelected = strategyItem.id === selectedStrategyId;
@@ -255,10 +255,10 @@ export default function SidePanel({ selectedStrategyId }: SidePanelProps) {
                         setModalStrategy(strategyItem.id);
                       }
                     }}
-                    className={`w-full text-left p-3 rounded-lg border transition-colors ${
+                    className={`w-full text-left p-3 rounded-xl border transition-all cursor-pointer ${
                       isSelected
-                        ? 'border-purple-500 bg-purple-50'
-                        : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                        ? 'border-blossom-pink bg-blossom-pinkSoft/30'
+                        : 'border-blossom-outline/50 hover:bg-blossom-pinkSoft/25 hover:border-blossom-pink/30'
                     }`}
                   >
                     <div className="flex items-center justify-between mb-1">
@@ -277,10 +277,20 @@ export default function SidePanel({ selectedStrategyId }: SidePanelProps) {
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-gray-600">Risk: {strategyItem.riskPercent}%</span>
-                      <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${
+                      <span className={`px-2.5 py-1 text-xs font-medium rounded-full ${
                         strategyItem.isClosed 
-                          ? statusColors.closed 
-                          : statusColors[strategyItem.status]
+                          ? (strategyItem.instrumentType === 'event' && strategyItem.eventOutcome === 'won'
+                              ? 'bg-blossom-success/10 text-blossom-success'
+                              : strategyItem.instrumentType === 'event' && strategyItem.eventOutcome === 'lost'
+                              ? 'bg-blossom-danger/10 text-blossom-danger'
+                              : 'bg-slate-100 text-slate-600')
+                          : strategyItem.status === 'draft'
+                          ? 'bg-slate-100 text-slate-600'
+                          : strategyItem.status === 'queued'
+                          ? 'bg-slate-100 text-slate-700 border border-slate-200'
+                          : strategyItem.status === 'executing'
+                          ? 'bg-blossom-pinkSoft text-blossom-ink'
+                          : 'bg-blossom-pink text-white'
                       }`}>
                         {strategyItem.isClosed 
                           ? (strategyItem.instrumentType === 'event' && strategyItem.eventOutcome 
@@ -296,8 +306,8 @@ export default function SidePanel({ selectedStrategyId }: SidePanelProps) {
           </div>
         )}
 
-        <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
-          <h2 className="text-sm font-semibold text-gray-900 mb-4">DeFi Aggregation (Coming Soon)</h2>
+        <div className="card-glass p-5">
+          <h2 className="text-xs font-semibold text-blossom-slate uppercase tracking-wide mb-4">DeFi Aggregation (Coming Soon)</h2>
           <ul className="space-y-2 text-sm text-gray-600">
             <li className="flex items-start">
               <span className="mr-2">•</span>
