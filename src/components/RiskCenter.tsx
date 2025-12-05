@@ -98,7 +98,7 @@ export default function RiskCenter() {
           Want to adjust this profile?{' '}
           <button
             type="button"
-            className="text-purple-600 underline hover:text-purple-800"
+            className="text-blossom-pink underline hover:text-blossom-pink/80"
             onClick={() => setActiveTab('copilot')}
           >
             Ask the Copilot to rebalance →
@@ -166,7 +166,7 @@ export default function RiskCenter() {
                   <span className="font-medium text-green-600">{availableMargin}%</span>
                 </div>
                 <div className="mt-3 pt-3 border-t border-gray-100">
-                  <span className="px-2 py-1 text-xs font-medium text-purple-700 bg-purple-100 rounded-full">
+                  <span className="px-2 py-1 text-xs font-medium text-blossom-pink bg-blossom-pinkSoft border border-blossom-pink/40 rounded-full">
                     Mode: SIM
                   </span>
                 </div>
@@ -377,7 +377,7 @@ export default function RiskCenter() {
               </div>
               <button
                 onClick={handleAutoClose}
-                className="w-full px-4 py-2 text-sm font-medium text-purple-700 bg-purple-50 border border-purple-200 rounded-lg hover:bg-purple-100 transition-colors"
+                className="w-full px-4 py-2 text-sm font-medium text-blossom-pink bg-blossom-pinkSoft border border-blossom-pink/40 rounded-lg hover:bg-blossom-pinkSoft/80 transition-colors"
               >
                 Let Blossom lock in profits
               </button>

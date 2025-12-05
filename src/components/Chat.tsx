@@ -404,7 +404,7 @@ export default function Chat({ selectedStrategyId }: ChatProps) {
             <button
               onClick={handleSend}
               disabled={!inputValue.trim() || isTyping}
-              className="px-6 py-2.5 bg-blossom-pink text-white rounded-xl hover:bg-blossom-pink/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow-md text-sm font-medium"
+              className="px-6 py-2.5 bg-blossom-pink text-white rounded-xl hover:bg-[#FF5A96] disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-[0_10px_25px_rgba(255,107,160,0.35)] text-sm font-medium"
             >
               Send
             </button>

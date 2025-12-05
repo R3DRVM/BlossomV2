@@ -163,7 +163,7 @@ export default function PortfolioView() {
                   <div className="flex-1 bg-gray-200 rounded-full h-4 overflow-hidden">
                     <div
                       className={`h-full ${
-                        idx === 0 ? 'bg-purple-500' :
+                        idx === 0 ? 'bg-blossom-pink' :
                         idx === 1 ? 'bg-blue-500' :
                         idx === 2 ? 'bg-green-500' : 'bg-gray-400'
                       }`}
@@ -189,7 +189,7 @@ export default function PortfolioView() {
                   return (
                     <div
                       key={idx}
-                      className="flex-1 bg-purple-500 rounded-t"
+                      className="flex-1 bg-blossom-pink rounded-t"
                       style={{ height: `${height}%` }}
                     />
                   );

@@ -28,7 +28,7 @@ export default function SidePanel({ selectedStrategyId }: SidePanelProps) {
             <div className="card-glass p-5">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-xs font-semibold text-blossom-slate uppercase tracking-wide">Active Strategy</h2>
-                <span className="px-2 py-0.5 text-xs font-medium text-purple-700 bg-purple-100 rounded-full">
+                <span className="px-2 py-0.5 text-xs font-medium text-blossom-pink bg-blossom-pinkSoft border border-blossom-pink/40 rounded-full">
                   AI-generated
                 </span>
               </div>
