@@ -184,7 +184,7 @@ export function parseUserMessage(
   return { intent };
 }
 
-export function generateBlossomResponse(parsed: ParsedMessage, userText?: string): string {
+export function generateBlossomResponse(parsed: ParsedMessage): string {
   if (parsed.intent === 'trade' && parsed.strategy) {
     const { market, side, riskPercent, entryPrice, takeProfit, stopLoss, liqBuffer, fundingImpact } = parsed.strategy;
     

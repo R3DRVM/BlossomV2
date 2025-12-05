@@ -1,7 +1,7 @@
 import { useBlossomContext } from '../context/BlossomContext';
 
 export default function Header() {
-  const { venue, setVenue, resetSim } = useBlossomContext();
+  const { venue, setVenue } = useBlossomContext();
 
   return (
     <header className="bg-white border-b border-gray-200">

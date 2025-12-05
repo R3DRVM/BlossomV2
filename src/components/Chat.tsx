@@ -2,7 +2,9 @@ import { useState, useRef, useEffect } from 'react';
 import MessageBubble from './MessageBubble';
 import TypingIndicator from './TypingIndicator';
 import { parseUserMessage, generateBlossomResponse, ParsedStrategy } from '../lib/mockParser';
-import { useBlossomContext, ActiveTab, Venue } from '../context/BlossomContext';
+import { useBlossomContext, ActiveTab } from '../context/BlossomContext';
+import { USE_AGENT_BACKEND } from '../lib/config';
+import { callBlossomChat } from '../lib/blossomApi';
 
 export interface Message {
   id: string;
@@ -40,7 +42,7 @@ const QUICK_PROMPTS_EVENTS = [
 ];
 
 export default function Chat({ selectedStrategyId }: ChatProps) {
-  const { addDraftStrategy, setOnboarding, activeTab, venue, account, createDefiPlanFromCommand, latestDefiProposal } = useBlossomContext();
+  const { addDraftStrategy, setOnboarding, activeTab, venue, account, createDefiPlanFromCommand, updateFromBackendPortfolio } = useBlossomContext();
   const [messages, setMessages] = useState<Message[]>([
     {
       id: '0',
@@ -107,7 +109,7 @@ export default function Chat({ selectedStrategyId }: ChatProps) {
     checkIfAtBottom();
   };
 
-  const handleSend = () => {
+  const handleSend = async () => {
     if (!inputValue.trim() || isTyping) return;
 
     const userText = inputValue.trim();
@@ -124,96 +126,197 @@ export default function Chat({ selectedStrategyId }: ChatProps) {
     setIsTyping(true);
     setIsAtBottom(true);
 
-    // Parse message with venue context
-    const parsed = parseUserMessage(userText, { venue });
+    if (USE_AGENT_BACKEND) {
+      // Agent mode: call backend
+      try {
+        const response = await callBlossomChat({
+          userMessage: userText,
+          venue,
+          clientPortfolio: {
+            accountValueUsd: account.accountValue,
+            balances: account.balances,
+            openPerpExposureUsd: account.openPerpExposure,
+            eventExposureUsd: account.eventExposureUsd,
+          },
+        });
 
-    // Simulate thinking delay
-    setTimeout(() => {
-      const blossomResponseId = (Date.now() + 1).toString();
-      let strategyId: string | null = null;
-      let strategy: ParsedStrategy | null = null;
-      let defiProposalId: string | null = null;
+        // Update state from backend portfolio
+        updateFromBackendPortfolio(response.portfolio);
 
-      if (parsed.intent === 'defi') {
-        // Create DeFi plan and get the proposal
-        const defiProposal = createDefiPlanFromCommand(userText);
-        defiProposalId = defiProposal.id;
-      } else if (parsed.intent === 'event' && parsed.eventStrategy) {
-        // Create event strategy
-        const eventStrat = parsed.eventStrategy;
-        
-        // Calculate stake
-        let stakeUsd: number;
-        if (eventStrat.stakeUsd) {
-          stakeUsd = eventStrat.stakeUsd;
-        } else {
-          const riskPct = eventStrat.riskPercent || 1;
-          stakeUsd = (account.accountValue * riskPct) / 100;
-          const usdcBalance = account.balances.find(b => b.symbol === 'REDACTED');
-          const availableUsdc = usdcBalance?.balanceUsd || 0;
-          stakeUsd = Math.min(stakeUsd, availableUsdc);
+        // Find strategy IDs from actions
+        let strategyId: string | null = null;
+        let strategy: ParsedStrategy | null = null;
+        let defiProposalId: string | null = null;
+
+        if (response.actions && response.actions.length > 0) {
+          const action = response.actions[0];
+          // Find the strategy that matches this action
+          // The backend should have created it, so we look for the most recent matching strategy
+          const matchingStrategy = response.portfolio.strategies?.find((s: any) => {
+            if (action.type === 'perp') {
+              return s.type === 'perp' && s.market === action.market && s.side === action.side;
+            } else if (action.type === 'event') {
+              return s.type === 'event' && s.eventKey === action.eventKey;
+            } else if (action.type === 'defi') {
+              return s.type === 'defi' && s.protocol === action.protocol;
+            }
+            return false;
+          });
+
+          if (matchingStrategy) {
+            strategyId = matchingStrategy.id;
+            if (action.type === 'perp') {
+              strategy = {
+                market: action.market,
+                side: action.side === 'long' ? 'Long' : 'Short',
+                riskPercent: action.riskPct,
+                entryPrice: action.entry || 0,
+                takeProfit: action.takeProfit || 0,
+                stopLoss: action.stopLoss || 0,
+                liqBuffer: 15,
+                fundingImpact: 'Low',
+              };
+            } else if (action.type === 'event') {
+              strategy = {
+                market: action.eventKey,
+                side: action.side === 'YES' ? 'Long' : 'Short',
+                riskPercent: (action.stakeUsd / account.accountValue) * 100,
+                entryPrice: action.stakeUsd,
+                takeProfit: action.maxPayoutUsd,
+                stopLoss: action.maxLossUsd,
+                liqBuffer: 0,
+                fundingImpact: 'Low',
+              };
+            }
+          }
+
+          // Check for DeFi proposal
+          if (action.type === 'defi') {
+            const defiPos = response.portfolio.defiPositions?.find((p: any) => 
+              p.protocol === action.protocol && !p.isClosed
+            );
+            if (defiPos) {
+              defiProposalId = defiPos.id;
+            }
+          }
+
+          setOnboarding(prev => ({ ...prev, openedTrade: true }));
         }
-        
-        const maxPayoutUsd = stakeUsd * 1.7;
-        const riskPct = eventStrat.riskPercent || (stakeUsd / account.accountValue) * 100;
-        
-        const newStrategy = addDraftStrategy({
-          side: eventStrat.eventSide === 'YES' ? 'Long' : 'Short',
-          market: eventStrat.eventKey,
-          riskPercent: riskPct,
-          entry: stakeUsd,
-          takeProfit: maxPayoutUsd,
-          stopLoss: stakeUsd,
-          sourceText: userText,
-          instrumentType: 'event',
-          eventKey: eventStrat.eventKey,
-          eventLabel: eventStrat.eventLabel,
-          eventSide: eventStrat.eventSide,
-          stakeUsd: stakeUsd,
-          maxPayoutUsd: maxPayoutUsd,
-          maxLossUsd: stakeUsd,
-        });
-        strategyId = newStrategy.id;
-        strategy = {
-          market: eventStrat.eventKey,
-          side: eventStrat.eventSide === 'YES' ? 'Long' : 'Short',
-          riskPercent: riskPct,
-          entryPrice: stakeUsd,
-          takeProfit: maxPayoutUsd,
-          stopLoss: stakeUsd,
-          liqBuffer: 0,
-          fundingImpact: 'Low',
-        };
-        setOnboarding(prev => ({ ...prev, openedTrade: true }));
-      } else if (parsed.intent === 'trade' && parsed.strategy) {
-        // Create perp strategy (existing behavior)
-        const newStrategy = addDraftStrategy({
-          side: parsed.strategy.side,
-          market: parsed.strategy.market,
-          riskPercent: parsed.strategy.riskPercent,
-          entry: parsed.strategy.entryPrice,
-          takeProfit: parsed.strategy.takeProfit,
-          stopLoss: parsed.strategy.stopLoss,
-          sourceText: userText,
-          instrumentType: 'perp',
-        });
-        strategyId = newStrategy.id;
-        strategy = parsed.strategy;
-        setOnboarding(prev => ({ ...prev, openedTrade: true }));
-      }
 
-      const blossomResponse: Message = {
-        id: blossomResponseId,
-        text: generateBlossomResponse(parsed, userText),
-        isUser: false,
-        timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
-        strategy: strategy,
-        strategyId: strategyId,
-        defiProposalId: defiProposalId,
-      };
-      setMessages(prev => [...prev, blossomResponse]);
-      setIsTyping(false);
-    }, 1500);
+        const blossomResponse: Message = {
+          id: (Date.now() + 1).toString(),
+          text: response.assistantMessage,
+          isUser: false,
+          timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+          strategy: strategy,
+          strategyId: strategyId,
+          defiProposalId: defiProposalId,
+        };
+        setMessages(prev => [...prev, blossomResponse]);
+        setIsTyping(false);
+      } catch (error: any) {
+        console.error('Agent backend error:', error);
+        const errorMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          text: "I couldn't reach the agent backend, so I didn't execute anything. Please try again.",
+          isUser: false,
+          timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+        };
+        setMessages(prev => [...prev, errorMessage]);
+        setIsTyping(false);
+      }
+    } else {
+      // Mock mode: existing behavior
+      const parsed = parseUserMessage(userText, { venue });
+
+      // Simulate thinking delay
+      setTimeout(() => {
+        const blossomResponseId = (Date.now() + 1).toString();
+        let strategyId: string | null = null;
+        let strategy: ParsedStrategy | null = null;
+        let defiProposalId: string | null = null;
+
+        if (parsed.intent === 'defi') {
+          // Create DeFi plan and get the proposal
+          const defiProposal = createDefiPlanFromCommand(userText);
+          defiProposalId = defiProposal.id;
+        } else if (parsed.intent === 'event' && parsed.eventStrategy) {
+          // Create event strategy
+          const eventStrat = parsed.eventStrategy;
+          
+          // Calculate stake
+          let stakeUsd: number;
+          if (eventStrat.stakeUsd) {
+            stakeUsd = eventStrat.stakeUsd;
+          } else {
+            const riskPct = eventStrat.riskPercent || 1;
+            stakeUsd = (account.accountValue * riskPct) / 100;
+            const usdcBalance = account.balances.find(b => b.symbol === 'REDACTED');
+            const availableUsdc = usdcBalance?.balanceUsd || 0;
+            stakeUsd = Math.min(stakeUsd, availableUsdc);
+          }
+          
+          const maxPayoutUsd = stakeUsd * 1.7;
+          const riskPct = eventStrat.riskPercent || (stakeUsd / account.accountValue) * 100;
+          
+          const newStrategy = addDraftStrategy({
+            side: eventStrat.eventSide === 'YES' ? 'Long' : 'Short',
+            market: eventStrat.eventKey,
+            riskPercent: riskPct,
+            entry: stakeUsd,
+            takeProfit: maxPayoutUsd,
+            stopLoss: stakeUsd,
+            sourceText: userText,
+            instrumentType: 'event',
+            eventKey: eventStrat.eventKey,
+            eventLabel: eventStrat.eventLabel,
+            eventSide: eventStrat.eventSide,
+            stakeUsd: stakeUsd,
+            maxPayoutUsd: maxPayoutUsd,
+            maxLossUsd: stakeUsd,
+          });
+          strategyId = newStrategy.id;
+          strategy = {
+            market: eventStrat.eventKey,
+            side: eventStrat.eventSide === 'YES' ? 'Long' : 'Short',
+            riskPercent: riskPct,
+            entryPrice: stakeUsd,
+            takeProfit: maxPayoutUsd,
+            stopLoss: stakeUsd,
+            liqBuffer: 0,
+            fundingImpact: 'Low',
+          };
+          setOnboarding(prev => ({ ...prev, openedTrade: true }));
+        } else if (parsed.intent === 'trade' && parsed.strategy) {
+          // Create perp strategy (existing behavior)
+          const newStrategy = addDraftStrategy({
+            side: parsed.strategy.side,
+            market: parsed.strategy.market,
+            riskPercent: parsed.strategy.riskPercent,
+            entry: parsed.strategy.entryPrice,
+            takeProfit: parsed.strategy.takeProfit,
+            stopLoss: parsed.strategy.stopLoss,
+            sourceText: userText,
+            instrumentType: 'perp',
+          });
+          strategyId = newStrategy.id;
+          strategy = parsed.strategy;
+          setOnboarding(prev => ({ ...prev, openedTrade: true }));
+        }
+
+        const blossomResponse: Message = {
+          id: blossomResponseId,
+          text: generateBlossomResponse(parsed),
+          isUser: false,
+          timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+          strategy: strategy,
+          strategyId: strategyId,
+          defiProposalId: defiProposalId,
+        };
+        setMessages(prev => [...prev, blossomResponse]);
+        setIsTyping(false);
+      }, 1500);
+    }
   };
 
   const handleQuickPrompt = (prompt: string) => {
