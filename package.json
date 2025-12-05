@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "dev:agent": "cd agent && npm run dev:agent",
+    "dev:all": "concurrently \"npm run dev\" \"npm run dev:agent\"",
+    "install:all": "npm install && cd agent && npm install"
   },
   "dependencies": {
     "react": "^18.2.0",

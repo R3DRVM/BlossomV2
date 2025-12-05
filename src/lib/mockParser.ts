@@ -1,3 +1,7 @@
+// TODO: Replace mockParser with real Blossom agent API calls
+// See src/lib/blossomApi.ts for the integration layer
+// When ready, update Chat.tsx to use callBlossomChat() instead of parseUserMessage()
+
 export type ParsedIntent = 'trade' | 'risk_question' | 'general' | 'defi' | 'event';
 
 export interface ParsedStrategy {
