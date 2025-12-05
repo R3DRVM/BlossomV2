@@ -112,3 +112,19 @@ export async function closeStrategy(req: CloseRequest): Promise<CloseResponse> {
   return res.json();
 }
 
+/**
+ * Reset simulation state
+ */
+export async function resetSim(): Promise<{ portfolio: any; message: string }> {
+  const res = await fetch(`${BASE_URL}/api/reset`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+  if (!res.ok) {
+    throw new Error(`Blossom agent error: ${res.status}`);
+  }
+
+  return res.json();
+}
+

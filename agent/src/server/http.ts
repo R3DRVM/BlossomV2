@@ -11,6 +11,7 @@ import { callLlm } from '../services/llmClient';
 import * as perpsSim from '../plugins/perps-sim';
 import * as defiSim from '../plugins/defi-sim';
 import * as eventSim from '../plugins/event-sim';
+import { resetAllSims, getPortfolioSnapshot } from '../services/state';
 
 const app = express();
 app.use(cors());
@@ -31,61 +32,18 @@ eventSim.setBalanceCallbacks(getUsdcBalance, updateUsdcBalance);
 
 /**
  * Build portfolio snapshot from all sims
+ * (Now uses centralized helper)
  */
 function buildPortfolioSnapshot(): BlossomPortfolioSnapshot {
-  const perpsSnapshot = perpsSim.getPerpsSnapshot();
-  const defiSnapshot = defiSim.getDefiSnapshot();
-  const eventSnapshot = eventSim.getEventSnapshot();
-  const eventExposureUsd = eventSim.getEventExposureUsd();
-
-  // Calculate open perp exposure
-  const openPerpExposureUsd = perpsSnapshot.positions
-    .filter(p => !p.isClosed)
-    .reduce((sum, p) => sum + p.sizeUsd, 0);
-
-  // Build strategies array (combine all position types)
-  const strategies = [
-    ...perpsSnapshot.positions.map(p => ({
-      type: 'perp' as const,
-      status: p.isClosed ? 'closed' : 'executed',
-      ...p,
-    })),
-    ...defiSnapshot.positions.map(p => ({
-      type: 'defi' as const,
-      status: p.isClosed ? 'closed' : 'active',
-      ...p,
-    })),
-    ...eventSnapshot.positions.map(p => ({
-      type: 'event' as const,
-      status: p.isClosed ? 'closed' : 'executed',
-      ...p,
-    })),
-  ];
-
-  return {
-    accountValueUsd: perpsSnapshot.accountValueUsd,
-    balances: perpsSnapshot.balances,
-    openPerpExposureUsd,
-    eventExposureUsd,
-    defiPositions: defiSnapshot.positions.map(p => ({
-      id: p.id,
-      protocol: p.protocol,
-      asset: p.asset,
-      depositUsd: p.depositUsd,
-      apr: p.apr,
-      openedAt: p.openedAt,
-      isClosed: p.isClosed,
-    })),
-    strategies,
-  };
+  return getPortfolioSnapshot();
 }
 
 /**
  * Apply action to appropriate sim
  */
-function applyAction(action: BlossomAction): void {
+async function applyAction(action: BlossomAction): Promise<void> {
   if (action.type === 'perp' && action.action === 'open') {
-    perpsSim.openPerp({
+    await perpsSim.openPerp({
       market: action.market,
       side: action.side,
       riskPct: action.riskPct,
@@ -193,9 +151,9 @@ app.post('/api/chat', async (req, res) => {
     }
 
     // Apply validated actions to sims
-    actions.forEach(action => {
+    for (const action of actions) {
       try {
-        applyAction(action);
+        await applyAction(action);
       } catch (error: any) {
         console.error(`Error applying action:`, error.message);
         // Remove failed action from array
@@ -204,7 +162,7 @@ app.post('/api/chat', async (req, res) => {
           actions.splice(index, 1);
         }
       }
-    });
+    }
 
     // Build updated portfolio snapshot after applying actions
     const portfolioAfter = buildPortfolioSnapshot();
@@ -247,7 +205,7 @@ app.post('/api/strategy/close', async (req, res) => {
     let pnl = 0;
 
     if (type === 'perp') {
-      const result = perpsSim.closePerp(strategyId);
+      const result = await perpsSim.closePerp(strategyId);
       pnl = result.pnl;
       summaryMessage = `Closed ${result.position.market} ${result.position.side} position. Realized PnL: ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`;
     } else if (type === 'event') {
@@ -275,6 +233,27 @@ app.post('/api/strategy/close', async (req, res) => {
   } catch (error: any) {
     console.error('Close strategy error:', error);
     res.status(500).json({ error: error.message || 'Internal server error' });
+  }
+});
+
+/**
+ * POST /api/reset
+ */
+app.post('/api/reset', async (req, res) => {
+  try {
+    // Reset all sim states to initial
+    resetAllSims();
+    
+    // Build fresh portfolio snapshot
+    const snapshot = getPortfolioSnapshot();
+    
+    res.json({ 
+      portfolio: snapshot, 
+      message: 'Simulation state reset.' 
+    });
+  } catch (err: any) {
+    console.error('Failed to reset sim state', err);
+    res.status(500).json({ error: 'Failed to reset simulation state' });
   }
 });
 

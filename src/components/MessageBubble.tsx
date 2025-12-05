@@ -60,7 +60,7 @@ function getPortfolioBiasWarning(strategies: any[], newStrategy: ParsedStrategy)
 }
 
 export default function MessageBubble({ text, isUser, timestamp, strategy, strategyId, selectedStrategyId, defiProposalId, onInsertPrompt, onRegisterStrategyRef }: MessageBubbleProps) {
-  const { updateStrategyStatus, recomputeAccountFromStrategies, strategies, account, setActiveTab, setSelectedStrategyId, setOnboarding, closeStrategy, closeEventStrategy, defiPositions, latestDefiProposal, confirmDefiPlan, updateFromBackendPortfolio } = useBlossomContext();
+  const { updateStrategyStatus, recomputeAccountFromStrategies, strategies, setActiveTab, setSelectedStrategyId, setOnboarding, closeStrategy, closeEventStrategy, defiPositions, latestDefiProposal, confirmDefiPlan, updateFromBackendPortfolio } = useBlossomContext();
   const [isClosing, setIsClosing] = useState(false);
   
   // Find the DeFi proposal for this message

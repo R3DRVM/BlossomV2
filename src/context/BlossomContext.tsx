@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useCallback, ReactNode } from 'react';
 import { mapBackendPortfolioToFrontendState } from '../lib/portfolioMapping';
+import { USE_AGENT_BACKEND } from '../lib/config';
 
 export type StrategyStatus = 'draft' | 'queued' | 'executing' | 'executed' | 'closed';
 
@@ -81,7 +82,7 @@ interface BlossomContextType {
   setSelectedStrategyId: (id: string | null) => void;
   account: AccountState;
   recomputeAccountFromStrategies: () => void;
-  resetSim: () => void;
+  resetSim: () => Promise<void>;
   activeTab: ActiveTab;
   setActiveTab: (tab: ActiveTab) => void;
   onboarding: OnboardingState;
@@ -567,11 +568,30 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
     });
   }, [latestDefiProposal]);
 
-  const resetSim = useCallback(() => {
-    setStrategies(seedStrategies);
-    setAccount(INITIAL_ACCOUNT);
-    setSelectedStrategyId(null);
+  const updateFromBackendPortfolio = useCallback((portfolio: any) => {
+    const mapped = mapBackendPortfolioToFrontendState(portfolio);
+    setAccount(mapped.account);
+    setStrategies(mapped.strategies);
+    setDefiPositions(mapped.defiPositions);
   }, []);
+
+  const resetSim = useCallback(async () => {
+    if (USE_AGENT_BACKEND) {
+      try {
+        const { resetSim: resetSimApi } = await import('../lib/blossomApi');
+        const response = await resetSimApi();
+        updateFromBackendPortfolio(response.portfolio);
+      } catch (error: any) {
+        console.error('Failed to reset backend sim:', error);
+        throw error;
+      }
+    } else {
+      // Mock mode: local reset
+      setStrategies(seedStrategies);
+      setAccount(INITIAL_ACCOUNT);
+      setSelectedStrategyId(null);
+    }
+  }, [updateFromBackendPortfolio]);
 
   return (
     <BlossomContext.Provider
@@ -599,12 +619,7 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
         latestDefiProposal,
         createDefiPlanFromCommand,
         confirmDefiPlan,
-        updateFromBackendPortfolio: useCallback((portfolio: any) => {
-          const mapped = mapBackendPortfolioToFrontendState(portfolio);
-          setAccount(mapped.account);
-          setStrategies(mapped.strategies);
-          setDefiPositions(mapped.defiPositions);
-        }, []),
+        updateFromBackendPortfolio,
       }}
     >
       {children}

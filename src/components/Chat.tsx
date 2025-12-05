@@ -28,15 +28,15 @@ const SUGGESTIONS = [
 ];
 
 const QUICK_PROMPTS_PERPS = [
-  'Long ETH 3% risk, auto TP/SL',
+  'Long ETH with 3% risk and manage liquidation for me',
+  'Park half my idle REDACTED into the safest yield on Kamino',
   'Market-neutral BTC funding strategy',
   'Hedge my SOL spot with perps',
-  'Show portfolio risk summary',
 ];
 
 const QUICK_PROMPTS_EVENTS = [
-  'Bet $500 that BTC ETF is approved by Dec 31.',
   'Take YES on Fed cuts in March with 2% account risk.',
+  'Bet $500 that BTC ETF is approved by year end.',
   'Risk 1% on a NO position for ETH ETF delay.',
   'Stake $300 on YES for rate cuts by Q2.',
 ];
@@ -198,9 +198,12 @@ export default function Chat({ selectedStrategyId }: ChatProps) {
             if (defiPos) {
               defiProposalId = defiPos.id;
             }
+            setOnboarding(prev => ({ ...prev, queuedStrategy: true })); // DeFi counts as "queued"
+          } else if (action.type === 'perp') {
+            setOnboarding(prev => ({ ...prev, openedTrade: true })); // Perp trade
+          } else if (action.type === 'event') {
+            setOnboarding(prev => ({ ...prev, openedTrade: true })); // Event also counts
           }
-
-          setOnboarding(prev => ({ ...prev, openedTrade: true }));
         }
 
         const blossomResponse: Message = {
@@ -240,6 +243,7 @@ export default function Chat({ selectedStrategyId }: ChatProps) {
           // Create DeFi plan and get the proposal
           const defiProposal = createDefiPlanFromCommand(userText);
           defiProposalId = defiProposal.id;
+          setOnboarding(prev => ({ ...prev, queuedStrategy: true }));
         } else if (parsed.intent === 'event' && parsed.eventStrategy) {
           // Create event strategy
           const eventStrat = parsed.eventStrategy;

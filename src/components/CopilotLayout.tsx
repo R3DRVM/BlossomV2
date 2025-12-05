@@ -3,8 +3,12 @@ import Chat from './Chat';
 import SidePanel from './SidePanel';
 
 export default function CopilotLayout() {
-  const { selectedStrategyId, onboarding, setOnboarding } = useBlossomContext();
-  const allDone = onboarding.openedTrade && onboarding.queuedStrategy && onboarding.openedRiskCenter;
+  const { selectedStrategyId, onboarding, setOnboarding, strategies, defiPositions, venue } = useBlossomContext();
+  // Check if user has tried all three: perp, defi, event
+  const hasPerp = strategies.some(s => s.instrumentType === 'perp' && s.status !== 'draft');
+  const hasDefi = defiPositions.length > 0 || onboarding.queuedStrategy;
+  const hasEvent = strategies.some(s => s.instrumentType === 'event' && s.status !== 'draft');
+  const allDone = hasPerp && hasDefi && hasEvent;
 
   return (
     <div className="h-full flex lg:flex-row flex-col gap-4 px-4 pb-4 overflow-hidden">
@@ -22,14 +26,14 @@ export default function CopilotLayout() {
               </button>
             </div>
             <ol className="space-y-1 list-decimal pl-4">
-              <li className={onboarding.openedTrade ? 'line-through text-gray-500' : ''}>
-                Ask Blossom to open a perps trade.
+              <li className={hasPerp ? 'line-through text-gray-500' : ''}>
+                Open your first perp trade (e.g. Long ETH with 3% risk and auto TP/SL).
               </li>
-              <li className={onboarding.queuedStrategy ? 'line-through text-gray-500' : ''}>
-                Confirm & queue the strategy.
+              <li className={hasDefi ? 'line-through text-gray-500' : ''}>
+                Park idle REDACTED into yield (e.g. Park half my idle REDACTED in the safest Kamino vault).
               </li>
-              <li className={onboarding.openedRiskCenter ? 'line-through text-gray-500' : ''}>
-                Check the impact in the Risk Center tab.
+              <li className={hasEvent ? 'line-through text-gray-500' : ''}>
+                Try an event market (switch venue to Event Markets and use Take YES on Fed cuts in March with 2% risk).
               </li>
             </ol>
           </div>
