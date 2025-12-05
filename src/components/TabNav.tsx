@@ -4,34 +4,34 @@ export default function TabNav() {
   const { activeTab, setActiveTab } = useBlossomContext();
 
   return (
-    <div className="bg-white border-b border-gray-200 px-6 py-3">
+    <div className="bg-white/95 backdrop-blur-sm border-b border-blossom-outline/60 px-6 py-2">
       <div className="flex items-center gap-2">
         <button
           onClick={() => setActiveTab('copilot')}
-          className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${
+          className={`px-4 py-1.5 text-sm font-medium rounded-full transition-all ${
             activeTab === 'copilot'
-              ? 'bg-purple-500 text-white'
-              : 'bg-transparent border border-gray-300 text-gray-700 hover:bg-gray-50'
+              ? 'bg-white text-blossom-ink shadow-sm'
+              : 'bg-transparent text-blossom-slate hover:text-blossom-ink'
           }`}
         >
           Copilot
         </button>
         <button
           onClick={() => setActiveTab('risk')}
-          className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${
+          className={`px-4 py-1.5 text-sm font-medium rounded-full transition-all ${
             activeTab === 'risk'
-              ? 'bg-purple-500 text-white'
-              : 'bg-transparent border border-gray-300 text-gray-700 hover:bg-gray-50'
+              ? 'bg-white text-blossom-ink shadow-sm'
+              : 'bg-transparent text-blossom-slate hover:text-blossom-ink'
           }`}
         >
           Risk Center
         </button>
         <button
           onClick={() => setActiveTab('portfolio')}
-          className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${
+          className={`px-4 py-1.5 text-sm font-medium rounded-full transition-all ${
             activeTab === 'portfolio'
-              ? 'bg-purple-500 text-white'
-              : 'bg-transparent border border-gray-300 text-gray-700 hover:bg-gray-50'
+              ? 'bg-white text-blossom-ink shadow-sm'
+              : 'bg-transparent text-blossom-slate hover:text-blossom-ink'
           }`}
         >
           Portfolio
@@ -40,4 +40,3 @@ export default function TabNav() {
     </div>
   );
 }
-
