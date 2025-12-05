@@ -11,14 +11,15 @@ function AppContent() {
   const { activeTab } = useBlossomContext();
 
   return (
-    <div className="h-screen flex flex-col bg-blossom-surface relative">
-      {/* Subtle blossom bloom gradient */}
-      <div className="fixed inset-0 pointer-events-none bg-[radial-gradient(circle_at_top,_#FFE6F3_0%,_transparent_60%)] opacity-30" />
-      <Header />
-      <SimBanner />
-      <TabNav />
-      <AccountSummaryStrip />
-      <main className="flex-1 overflow-hidden relative z-10">
+    <div className="min-h-screen bg-blossom-surface relative">
+      {/* Subtle blossom bloom gradient - positioned behind chat area */}
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_30%_20%,rgba(244,114,182,0.18),transparent_55%)]" />
+      <div className="relative z-10 flex flex-col h-screen">
+        <Header />
+        <SimBanner />
+        <TabNav />
+        <AccountSummaryStrip />
+        <main className="flex-1 overflow-hidden">
         <div className={`h-full transition-opacity duration-200 ${activeTab === 'copilot' ? 'opacity-100' : 'opacity-0 absolute inset-0 pointer-events-none'}`}>
           {activeTab === 'copilot' && <CopilotLayout />}
         </div>
@@ -29,6 +30,7 @@ function AppContent() {
           {activeTab === 'portfolio' && <PortfolioView />}
         </div>
       </main>
+      </div>
     </div>
   );
 }
