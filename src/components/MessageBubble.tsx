@@ -139,74 +139,99 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
         {!isUser && strategy && (
           <div 
             ref={strategyPreviewRef}
-            className={`mt-3 w-full max-w-md bg-white rounded-lg p-4 shadow-sm ${
-              isSelected 
-                ? 'border-2 border-purple-500 bg-purple-50' 
-                : 'border border-gray-200'
-            }`}
+            className={`mt-3 w-full max-w-md strategy-card rounded-2xl p-5 border transition-all duration-300 ${
+              currentStatus === 'draft' || currentStatus === 'queued'
+                ? 'bg-white border-blossom-outline'
+                : currentStatus === 'executing'
+                ? 'bg-blossom-pinkSoft/60 border-blossom-pink/30'
+                : currentStatus === 'executed' && !isClosed
+                ? 'bg-white border-blossom-outline shadow-sm'
+                : isClosed
+                ? 'bg-white border-blossom-outline'
+                : 'bg-white border-blossom-outline'
+            } ${isSelected ? 'ring-2 ring-blossom-pink/30' : ''}`}
           >
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-semibold text-gray-900">Strategy Preview</h3>
-              {isSelected && (
-                <span className="px-2 py-0.5 text-xs font-medium text-purple-700 bg-purple-200 rounded-full">
-                  Active
-                </span>
-              )}
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-base font-semibold text-blossom-ink">
+                {currentStrategy?.eventLabel || currentStrategy?.eventKey || strategy.market}
+              </h3>
+              <span className={`px-2.5 py-1 text-xs font-medium rounded-full ${
+                currentStatus === 'draft'
+                  ? 'bg-gray-100 text-gray-600'
+                  : currentStatus === 'queued'
+                  ? 'bg-blossom-slate/10 text-blossom-slate'
+                  : currentStatus === 'executing'
+                  ? 'bg-blossom-pink/10 text-blossom-pink border border-blossom-pink/30'
+                  : currentStatus === 'executed' && !isClosed
+                  ? 'bg-blossom-pink text-white'
+                  : isClosed && currentStrategy?.realizedPnlUsd && currentStrategy.realizedPnlUsd > 0
+                  ? 'bg-blossom-success text-white'
+                  : isClosed && currentStrategy?.realizedPnlUsd && currentStrategy.realizedPnlUsd < 0
+                  ? 'bg-blossom-danger text-white'
+                  : 'bg-gray-100 text-gray-600 border border-blossom-outline'
+              }`}>
+                {currentStatus === 'draft' ? 'Draft' :
+                 currentStatus === 'queued' ? 'Queued' :
+                 currentStatus === 'executing' ? 'Executing' :
+                 currentStatus === 'executed' && !isClosed ? 'Executed' :
+                 isClosed && currentStrategy?.eventOutcome === 'won' ? 'Settled - Won' :
+                 isClosed && currentStrategy?.eventOutcome === 'lost' ? 'Settled - Lost' :
+                 isClosed ? 'Closed' : 'Active'}
+              </span>
             </div>
-            <div className="space-y-2 text-sm">
-              <div className="flex justify-between">
-                <span className="text-gray-600">Market:</span>
-                <span className="font-medium text-gray-900">{currentStrategy?.eventLabel || currentStrategy?.eventKey || strategy.market}</span>
-              </div>
-              {currentStrategy?.instrumentType === 'event' && (
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Type:</span>
-                  <span className="font-medium text-gray-600 text-xs">Event contract (Sim)</span>
-                </div>
-              )}
-              <div className="flex justify-between">
-                <span className="text-gray-600">Side:</span>
-                <span className={`font-medium ${
-                  (currentStrategy?.eventSide === 'YES' || strategy.side === 'Long') ? 'text-green-600' : 'text-red-600'
-                }`}>
-                  {currentStrategy?.eventSide || strategy.side}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-600">Risk:</span>
-                <span className="font-medium text-gray-900">{strategy.riskPercent}% of account</span>
-              </div>
+            <div className="grid grid-cols-2 gap-3 text-sm mb-4">
               {currentStrategy?.instrumentType === 'event' ? (
                 <>
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Stake:</span>
-                    <span className="font-medium text-gray-900">${(currentStrategy.stakeUsd || strategy.entryPrice).toLocaleString()}</span>
+                  <div>
+                    <div className="text-xs text-blossom-slate mb-0.5">Type</div>
+                    <div className="font-medium text-blossom-ink">Event Contract</div>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Max Payout:</span>
-                    <span className="font-medium text-green-600">${(currentStrategy.maxPayoutUsd || strategy.takeProfit).toLocaleString()}</span>
+                  <div>
+                    <div className="text-xs text-blossom-slate mb-0.5">Side</div>
+                    <div className={`font-medium ${
+                      currentStrategy.eventSide === 'YES' ? 'text-blossom-success' : 'text-blossom-danger'
+                    }`}>
+                      {currentStrategy.eventSide}
+                    </div>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Max Loss:</span>
-                    <span className="font-medium text-red-600">${(currentStrategy.maxLossUsd || strategy.stopLoss).toLocaleString()}</span>
+                  <div>
+                    <div className="text-xs text-blossom-slate mb-0.5">Stake</div>
+                    <div className="font-medium text-blossom-ink">${(currentStrategy.stakeUsd || strategy.entryPrice).toLocaleString()}</div>
                   </div>
-                  <div className="mt-2 pt-2 border-t border-gray-100 text-xs text-gray-500">
-                    Instrument: Event contract (demo - no real trades).
+                  <div>
+                    <div className="text-xs text-blossom-slate mb-0.5">Max Payout</div>
+                    <div className="font-medium text-blossom-success">${(currentStrategy.maxPayoutUsd || strategy.takeProfit).toLocaleString()}</div>
+                  </div>
+                  <div className="col-span-2">
+                    <div className="text-xs text-blossom-slate mb-0.5">Max Loss</div>
+                    <div className="font-medium text-blossom-danger">${(currentStrategy.maxLossUsd || strategy.stopLoss).toLocaleString()}</div>
                   </div>
                 </>
               ) : (
                 <>
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Entry:</span>
-                    <span className="font-medium text-gray-900">${strategy.entryPrice.toLocaleString()}</span>
+                  <div>
+                    <div className="text-xs text-blossom-slate mb-0.5">Side</div>
+                    <div className={`font-medium ${
+                      strategy.side === 'Long' ? 'text-blossom-success' : 'text-blossom-danger'
+                    }`}>
+                      {strategy.side}
+                    </div>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Take Profit:</span>
-                    <span className="font-medium text-green-600">${strategy.takeProfit.toLocaleString()}</span>
+                  <div>
+                    <div className="text-xs text-blossom-slate mb-0.5">Risk</div>
+                    <div className="font-medium text-blossom-ink">{strategy.riskPercent}%</div>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Stop Loss:</span>
-                    <span className="font-medium text-red-600">${strategy.stopLoss.toLocaleString()}</span>
+                  <div>
+                    <div className="text-xs text-blossom-slate mb-0.5">Entry</div>
+                    <div className="font-medium text-blossom-ink">${strategy.entryPrice.toLocaleString()}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-blossom-slate mb-0.5">Take Profit</div>
+                    <div className="font-medium text-blossom-success">${strategy.takeProfit.toLocaleString()}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-blossom-slate mb-0.5">Stop Loss</div>
+                    <div className="font-medium text-blossom-danger">${strategy.stopLoss.toLocaleString()}</div>
                   </div>
                 </>
               )}
@@ -233,10 +258,10 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                   handleConfirmAndQueue();
                 }}
                 disabled={isVeryHighRisk}
-                className={`mt-4 w-full px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+                className={`w-full px-4 py-2.5 text-sm font-semibold rounded-xl transition-colors ${
                   !isVeryHighRisk
-                    ? 'bg-purple-500 text-white hover:bg-purple-600'
-                    : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                    ? 'bg-blossom-pink text-white hover:bg-blossom-pink/90 shadow-sm'
+                    : 'bg-gray-200 text-gray-400 cursor-not-allowed'
                 }`}
                 title={isVeryHighRisk ? 'Risk too high' : undefined}
               >
@@ -271,7 +296,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                   }
                 }}
                 disabled={isClosing}
-                className="mt-4 w-full px-4 py-2 text-sm font-medium rounded-lg bg-green-500 text-white hover:bg-green-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full px-4 py-2.5 text-sm font-semibold rounded-xl bg-blossom-success text-white hover:bg-blossom-success/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
               >
                 {isClosing ? 'Closing...' : 'Close & settle this event (Sim)'}
               </button>
@@ -304,7 +329,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                   }
                 }}
                 disabled={isClosing}
-                className="mt-4 w-full px-4 py-2 text-sm font-medium rounded-lg bg-green-500 text-white hover:bg-green-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full px-4 py-2.5 text-sm font-semibold rounded-xl bg-blossom-success text-white hover:bg-blossom-success/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
               >
                 {isClosing ? 'Closing...' : 'Close & Take Profit (Sim)'}
               </button>
@@ -388,27 +413,36 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
         
         {/* DeFi Plan Card */}
         {!isUser && defiProposal && (
-          <div className="mt-3 w-full max-w-md bg-white rounded-lg p-4 shadow-sm border border-gray-200">
-            <h3 className="text-sm font-semibold text-gray-900 mb-3">DeFi Plan (Sim)</h3>
-            <div className="space-y-2 text-sm mb-4">
-              <div className="flex justify-between">
-                <span className="text-gray-600">Protocol:</span>
-                <span className="font-medium text-gray-900">{defiProposal.protocol}</span>
+          <div className="mt-3 w-full max-w-md bg-white rounded-2xl p-5 shadow-sm border border-blossom-outline strategy-card">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-base font-semibold text-blossom-ink">DeFi Plan (Sim)</h3>
+              <span className={`px-2.5 py-1 text-xs font-medium rounded-full ${
+                defiProposal.status === 'proposed'
+                  ? 'bg-gray-100 text-gray-600'
+                  : 'bg-blossom-pink text-white'
+              }`}>
+                {defiProposal.status === 'proposed' ? 'Proposed' : 'Active'}
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-3 text-sm mb-4">
+              <div>
+                <div className="text-xs text-blossom-slate mb-0.5">Protocol</div>
+                <div className="font-medium text-blossom-ink">{defiProposal.protocol}</div>
               </div>
-              <div className="flex justify-between">
-                <span className="text-gray-600">Asset:</span>
-                <span className="font-medium text-gray-900">{defiProposal.asset}</span>
+              <div>
+                <div className="text-xs text-blossom-slate mb-0.5">Asset</div>
+                <div className="font-medium text-blossom-ink">{defiProposal.asset}</div>
               </div>
-              <div className="flex justify-between">
-                <span className="text-gray-600">Deposit:</span>
-                <span className="font-medium text-gray-900">${defiProposal.depositUsd.toLocaleString()}</span>
+              <div>
+                <div className="text-xs text-blossom-slate mb-0.5">Deposit</div>
+                <div className="font-medium text-blossom-ink">${defiProposal.depositUsd.toLocaleString()}</div>
               </div>
-              <div className="flex justify-between">
-                <span className="text-gray-600">APY:</span>
-                <span className="font-medium text-green-600">{defiProposal.apyPct}%</span>
+              <div>
+                <div className="text-xs text-blossom-slate mb-0.5">APY</div>
+                <div className="font-medium text-blossom-success">{defiProposal.apyPct}%</div>
               </div>
             </div>
-            <div className="text-xs text-gray-600 mb-4 pt-3 border-t border-gray-100">
+            <div className="text-xs text-blossom-slate mb-4 pt-3 border-t border-blossom-outline">
               Choosing the highest APY within your risk band using idle REDACTED.
             </div>
             {defiProposal.status === 'proposed' ? (
@@ -418,15 +452,18 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                   e.stopPropagation();
                   confirmDefiPlan(defiProposal.id);
                 }}
-                className="w-full px-4 py-2 text-sm font-medium text-white bg-purple-500 rounded-lg hover:bg-purple-600 transition-colors"
+                className="w-full px-4 py-2.5 text-sm font-semibold rounded-xl bg-blossom-pink text-white hover:bg-blossom-pink/90 transition-colors shadow-sm"
               >
                 Confirm deposit (Sim)
               </button>
             ) : (
-              <div className="w-full px-4 py-2 text-sm font-medium text-center text-gray-500 bg-gray-100 rounded-lg">
+              <div className="w-full px-4 py-2.5 text-sm font-medium text-center text-blossom-slate bg-blossom-pinkLight rounded-xl">
                 Active
               </div>
             )}
+            <div className="mt-4 pt-3 border-t border-blossom-outline text-xs text-blossom-slate">
+              Instrument: DeFi yield (Sim – no real deposits)
+            </div>
           </div>
         )}
 

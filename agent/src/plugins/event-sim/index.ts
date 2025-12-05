@@ -21,6 +21,24 @@ const SEEDED_MARKETS: EventMarket[] = [
     payoutMultiple: 1.6,
   },
   {
+    key: 'ETH_ETF_APPROVAL_2025',
+    label: 'ETH ETF approved by June 2025',
+    winProbability: 0.58,
+    payoutMultiple: 1.65,
+  },
+  {
+    key: 'US_ELECTION_2024',
+    label: 'US Election Winner 2024',
+    winProbability: 0.50,
+    payoutMultiple: 1.8,
+  },
+  {
+    key: 'CRYPTO_MCAP_THRESHOLD',
+    label: 'Crypto market cap above $3T by year-end',
+    winProbability: 0.52,
+    payoutMultiple: 1.75,
+  },
+  {
     key: 'GENERIC_EVENT_DEMO',
     label: 'Generic Event Demo',
     winProbability: 0.50,

@@ -9,5 +9,11 @@ body {
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  background-color: #F9FAFB;
+}
+
+/* Smooth transitions for strategy cards */
+.strategy-card {
+  transition: background-color 300ms ease, box-shadow 300ms ease;
 }
 
