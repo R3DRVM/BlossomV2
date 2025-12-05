@@ -11,7 +11,7 @@ export default function CopilotLayout() {
   const allDone = hasPerp && hasDefi && hasEvent;
 
   return (
-    <div className="h-full flex lg:flex-row flex-col gap-4 px-4 pb-4 overflow-hidden">
+    <div className="h-full flex lg:flex-row flex-col gap-4 px-4 pb-4 overflow-hidden bg-transparent">
       <div className="flex-1 flex flex-col min-h-0 bg-white rounded-lg overflow-hidden">
         {!onboarding.dismissed && !allDone && (
           <div className="mb-3 card-glass px-4 py-3 text-xs text-blossom-ink mx-4 mt-4">
