@@ -4,20 +4,22 @@
  */
 
 import { USE_AGENT_BACKEND } from '../lib/config';
+import { BlossomLogo } from './BlossomLogo';
 
 export function SimBanner() {
   return (
-    <div className="w-full border-b border-purple-300/30 bg-purple-50/60 text-xs text-purple-900 px-4 py-2 flex items-center justify-between">
+    <div className="w-full border-b border-blossom-outline bg-blossom-pinkLight/40 text-xs text-blossom-ink px-4 py-2 flex items-center justify-between">
       <div className="flex items-center gap-2">
-        <span className="inline-flex h-2 w-2 rounded-full bg-purple-500" />
+        <BlossomLogo className="h-3 w-3 opacity-30" />
         <span>
-          Blossom is running in <strong>SIM mode</strong>
-          {USE_AGENT_BACKEND ? ' with real market prices' : ''}. No real orders are placed.
+          SIM mode · {USE_AGENT_BACKEND ? 'Real prices' : 'Mock data'} · No live orders
         </span>
       </div>
-      <span className="text-[11px] text-purple-700/70">
-        Environment: {USE_AGENT_BACKEND ? 'Agent (LLM + sims)' : 'Local mock'}
-      </span>
+      {USE_AGENT_BACKEND && (
+        <span className="text-[11px] text-blossom-slate">
+          Powered by Blossom Agent
+        </span>
+      )}
     </div>
   );
 }

@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { useBlossomContext } from '../context/BlossomContext';
 import { mockPositions } from '../lib/mockData';
+import { PositionDetailsModal } from './PositionDetailsModal';
 
 interface SidePanelProps {
   selectedStrategyId: string | null;
@@ -7,6 +9,8 @@ interface SidePanelProps {
 
 export default function SidePanel({ selectedStrategyId }: SidePanelProps) {
   const { strategies, setSelectedStrategyId, account, defiPositions } = useBlossomContext();
+  const [modalStrategy, setModalStrategy] = useState<string | null>(null);
+  const [modalDefiPosition, setModalDefiPosition] = useState<string | null>(null);
   
   // Get the selected strategy or default to most recent
   const selectedStrategy = strategies.find(s => s.id === selectedStrategyId) || strategies[0] || null;
@@ -173,7 +177,11 @@ export default function SidePanel({ selectedStrategyId }: SidePanelProps) {
           ) : (
             <div className="space-y-3">
               {defiPositions.filter(p => p.status === 'active').map((position) => (
-                <div key={position.id} className="border-b border-gray-100 pb-3 last:border-0 last:pb-0">
+                <button
+                  key={position.id}
+                  onClick={() => setModalDefiPosition(position.id)}
+                  className="w-full text-left border-b border-gray-100 pb-3 last:border-0 last:pb-0 hover:bg-gray-50 rounded-lg p-2 -m-2 transition-colors"
+                >
                   <div className="flex justify-between items-start mb-2">
                     <div>
                       <div className="text-sm font-medium text-gray-900">{position.protocol}</div>
@@ -193,7 +201,7 @@ export default function SidePanel({ selectedStrategyId }: SidePanelProps) {
                       <span className="ml-1 font-medium text-green-600">{position.apyPct}%</span>
                     </div>
                   </div>
-                </div>
+                </button>
               ))}
             </div>
           )}
@@ -241,7 +249,12 @@ export default function SidePanel({ selectedStrategyId }: SidePanelProps) {
                 return (
                   <button
                     key={strategyItem.id}
-                    onClick={() => setSelectedStrategyId(strategyItem.id)}
+                    onClick={() => {
+                      setSelectedStrategyId(strategyItem.id);
+                      if (strategyItem.status === 'executed' || strategyItem.isClosed) {
+                        setModalStrategy(strategyItem.id);
+                      }
+                    }}
                     className={`w-full text-left p-3 rounded-lg border transition-colors ${
                       isSelected
                         ? 'border-purple-500 bg-purple-50'
@@ -301,6 +314,17 @@ export default function SidePanel({ selectedStrategyId }: SidePanelProps) {
           </ul>
         </div>
       </div>
+
+      {/* Position Details Modal */}
+      <PositionDetailsModal
+        isOpen={!!modalStrategy || !!modalDefiPosition}
+        onClose={() => {
+          setModalStrategy(null);
+          setModalDefiPosition(null);
+        }}
+        strategy={modalStrategy ? strategies.find(s => s.id === modalStrategy) || null : null}
+        defiPosition={modalDefiPosition ? defiPositions.find(p => p.id === modalDefiPosition) || null : null}
+      />
     </div>
   );
 }

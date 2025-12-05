@@ -100,8 +100,8 @@ export default function PortfolioView() {
   return (
     <div className="h-full overflow-y-auto bg-gray-100 p-6">
       <div className="max-w-7xl mx-auto space-y-6">
-        <p className="text-xs text-gray-500 mb-4">
-          This is a SIM portfolio view based on Blossom's actions. Try closing trades or settling events from the Copilot view and watch these metrics update.
+        <p className="text-xs text-blossom-slate mb-4">
+          A SIM view of how your strategies are performing over time — powered by real prices, simulated execution, and Blossom's agent.
         </p>
         <div className="flex items-center justify-between mb-2">
           <p className="text-sm text-gray-600">

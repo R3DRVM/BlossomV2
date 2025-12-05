@@ -1,51 +1,42 @@
 import { useBlossomContext } from '../context/BlossomContext';
+import { BlossomLogo } from './BlossomLogo';
 
 export default function Header() {
   const { venue, setVenue } = useBlossomContext();
 
   return (
-    <header className="bg-white border-b border-gray-200">
-      <div className="px-6 py-3 flex items-center justify-between">
-        <div className="flex flex-col gap-1">
-          <div className="flex items-center gap-3">
-            <div className="text-2xl">🌸</div>
-            <h1 className="text-lg font-semibold text-gray-900">
-              Blossom – AI Trading Copilot
-            </h1>
+    <header className="bg-white border-b border-blossom-outline h-16 flex items-center">
+      <div className="px-6 w-full flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <BlossomLogo className="h-7 w-7 drop-shadow-sm" />
+          <div className="flex flex-col">
+            <h1 className="text-lg font-semibold text-blossom-ink leading-tight">Blossom</h1>
+            <p className="text-xs text-blossom-slate leading-tight">AI Trading Copilot</p>
           </div>
-          <p className="text-xs text-gray-500 ml-11">
-            Natural-language perps execution • Risk automation • DeFi aggregation (coming soon)
-          </p>
         </div>
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2 bg-gray-100 rounded-full p-1">
-            <button className="px-4 py-1.5 bg-white rounded-full text-sm font-medium text-gray-900 shadow-sm">
-              SIM
-            </button>
-            <button 
-              onClick={() => {
-                // Show a simple alert for now - could be replaced with toast
-                alert('This prototype runs in simulation only. No real trading is performed.');
-              }}
-              className="px-4 py-1.5 text-sm font-medium text-gray-500 hover:text-gray-700"
-            >
-              LIVE
-            </button>
-          </div>
-          <div className="relative">
-            <select
-              value={venue}
-              onChange={(e) => setVenue(e.target.value as 'hyperliquid' | 'event_demo')}
-              className="px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-purple-500"
-            >
-              <option value="hyperliquid">Hyperliquid (Perps - Demo)</option>
-              <option value="event_demo">Event Markets (Demo)</option>
-            </select>
-          </div>
-          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-400 to-pink-400"></div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setVenue('hyperliquid')}
+            className={`px-3 py-1.5 text-xs font-medium rounded-full transition-colors ${
+              venue === 'hyperliquid'
+                ? 'bg-blossom-pink text-white'
+                : 'bg-white text-blossom-slate border border-blossom-outline hover:bg-blossom-pinkLight'
+            }`}
+          >
+            Hyperliquid
+          </button>
+          <button
+            onClick={() => setVenue('event_demo')}
+            className={`px-3 py-1.5 text-xs font-medium rounded-full transition-colors ${
+              venue === 'event_demo'
+                ? 'bg-blossom-pink text-white'
+                : 'bg-white text-blossom-slate border border-blossom-outline hover:bg-blossom-pinkLight'
+            }`}
+          >
+            Event Markets
+          </button>
         </div>
       </div>
     </header>
   );
 }
-
