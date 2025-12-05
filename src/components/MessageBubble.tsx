@@ -3,6 +3,7 @@ import { ParsedStrategy } from '../lib/mockParser';
 import { useBlossomContext, getBaseAsset } from '../context/BlossomContext';
 import { USE_AGENT_BACKEND } from '../lib/config';
 import { closeStrategy as closeStrategyApi } from '../lib/blossomApi';
+import { BlossomLogo } from './BlossomLogo';
 
 interface MessageBubbleProps {
   text: string;
@@ -119,11 +120,15 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
   return (
     <div className={`flex gap-3 mb-4 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
       <div className="flex-shrink-0">
-        <div className={`w-8 h-8 rounded-full flex items-center justify-center text-lg ${
-          isUser ? 'bg-blossom-pink' : 'bg-gray-300'
-        }`}>
-          {isUser ? '👤' : '🌸'}
-        </div>
+        {isUser ? (
+          <div className="w-8 h-8 rounded-full flex items-center justify-center text-lg bg-blossom-pink">
+            👤
+          </div>
+        ) : (
+          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white shadow-sm ring-1 ring-blossom-pink/30">
+            <BlossomLogo size={20} />
+          </div>
+        )}
       </div>
       <div className={`flex flex-col ${isUser ? 'items-end' : 'items-start'} max-w-[70%]`}>
         <div className="text-sm font-medium text-gray-600 mb-1">
