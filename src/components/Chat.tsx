@@ -377,14 +377,14 @@ export default function Chat({ selectedStrategyId }: ChatProps) {
           <div ref={messagesEndRef} />
         </div>
       </div>
-      <div className="flex-shrink-0 border-t border-gray-200 bg-white p-4">
+      <div className="flex-shrink-0 border-t border-blossom-outline/50 bg-white/85 backdrop-blur-sm p-4 shadow-[0_-4px_20px_rgba(15,23,42,0.08)]">
         <div className="max-w-3xl mx-auto">
           <div className="flex gap-2 mb-3 overflow-x-auto pb-2">
             {(venue === 'hyperliquid' ? QUICK_PROMPTS_PERPS : QUICK_PROMPTS_EVENTS).map((prompt, idx) => (
               <button
                 key={idx}
                 onClick={() => handleQuickPrompt(prompt)}
-                className="flex-shrink-0 px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-full transition-colors whitespace-nowrap"
+                className="flex-shrink-0 rounded-full border border-blossom-outline/60 bg-white/70 text-xs text-blossom-slate px-3 py-1.5 hover:bg-blossom-pinkSoft/40 hover:text-blossom-ink transition-all whitespace-nowrap"
               >
                 {prompt}
               </button>
@@ -397,14 +397,14 @@ export default function Chat({ selectedStrategyId }: ChatProps) {
               onChange={(e) => setInputValue(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder={inputValue.trim().length > 0 ? '' : SUGGESTIONS[placeholderIndex]}
-              className="flex-1 resize-none border border-gray-300 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+              className="flex-1 resize-none border border-blossom-outline/60 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blossom-pink/30 focus:border-blossom-pink bg-white/90 text-sm"
               rows={1}
               style={{ minHeight: '48px', maxHeight: '120px' }}
             />
             <button
               onClick={handleSend}
               disabled={!inputValue.trim() || isTyping}
-              className="px-6 py-3 bg-purple-500 text-white rounded-lg font-medium hover:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="px-6 py-2.5 bg-blossom-pink text-white rounded-xl hover:bg-blossom-pink/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow-md text-sm font-medium"
             >
               Send
             </button>

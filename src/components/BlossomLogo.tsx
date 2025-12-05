@@ -3,6 +3,7 @@
  * Renders cherry blossom logo with SVG fallback
  */
 
+import { useState } from 'react';
 import blossomLogo from '../assets/blossom-logo.png';
 
 type BlossomLogoProps = {
@@ -11,7 +12,7 @@ type BlossomLogoProps = {
 };
 
 export function BlossomLogo({ className = '', size = 24 }: BlossomLogoProps) {
-  const [imgError, setImgError] = React.useState(false);
+  const [imgError, setImgError] = useState(false);
 
   if (imgError) {
     // Fallback SVG if image fails to load
