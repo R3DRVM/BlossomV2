@@ -5,10 +5,11 @@
 
 import { useEffect, useState } from 'react';
 import { Card } from '../ui/Card';
-import { Badge } from '../ui/Badge';
 import { BlossomLogo } from '../BlossomLogo';
 
 type ScenarioId = 'perps' | 'defi' | 'predictions';
+
+type Phase = 'user' | 'typing' | 'assistant';
 
 interface Scenario {
   id: ScenarioId;
@@ -22,62 +23,67 @@ const SCENARIOS: Scenario[] = [
     id: 'perps',
     label: 'Perps',
     userMessage: 'Long ETH with 3% risk and manage liquidation for me.',
-    blossomMessage:
-      "Great. I'll size your position at 3% account risk, scan perp venues for best liquidity, and place TP/SL with a safe liquidation buffer.",
+    blossomMessage: 'Opening a 3% risk long on ETH, setting take profit and stop loss to maintain a safe liquidation buffer, and tracking P&L in your portfolio.',
   },
   {
     id: 'defi',
     label: 'DeFi',
     userMessage: 'Park half my idle REDACTED into the safest yield on Kamino.',
-    blossomMessage:
-      "Allocating 50% of idle REDACTED into a conservative Kamino vault with high TVL and a stable yield profile. I'll monitor APY and rebalance if needed.",
+    blossomMessage: "Allocating 50% of idle REDACTED into a conservative Kamino vault with high TVL and a stable yield profile. I'll monitor APY and rebalance if needed.",
   },
   {
     id: 'predictions',
     label: 'Prediction Markets',
     userMessage: 'Risk 2% of my account on the highest-volume BTC ETF prediction market.',
-    blossomMessage:
-      'Routing 2% of account equity into the most liquid BTC ETF approval market, checking spreads and max payout before placing your position.',
+    blossomMessage: 'Routing 2% of account equity into the most liquid BTC ETF approval market, checking spreads and max payout before placing your position.',
   },
 ];
 
 export function ChatPreview() {
   const [index, setIndex] = useState(0);
+  const [phase, setPhase] = useState<Phase>('user');
   const scenario = SCENARIOS[index];
 
   useEffect(() => {
-    const id = setInterval(
-      () => setIndex((prev) => (prev + 1) % SCENARIOS.length),
-      7500
-    );
-    return () => clearInterval(id);
-  }, []);
+    // Reset phase when scenario changes
+    setPhase('user');
+
+    // Phase 1: User message appears immediately (0s)
+    // Phase 2: Typing indicator appears after ~1s
+    const typingTimer = setTimeout(() => {
+      setPhase('typing');
+    }, 1000);
+
+    // Phase 3: Blossom reply appears after ~2.5s total
+    const assistantTimer = setTimeout(() => {
+      setPhase('assistant');
+    }, 2500);
+
+    // Move to next scenario after ~8.5s total
+    const nextScenarioTimer = setTimeout(() => {
+      setIndex((prev) => (prev + 1) % SCENARIOS.length);
+    }, 8500);
+
+    return () => {
+      clearTimeout(typingTimer);
+      clearTimeout(assistantTimer);
+      clearTimeout(nextScenarioTimer);
+    };
+  }, [index]);
 
   return (
-    <Card className="relative max-w-md w-full mx-auto rounded-2xl border border-[#FFD6E6] bg-white/90 shadow-xl backdrop-blur-sm">
+    <Card className="w-full max-w-xl mx-auto rounded-3xl shadow-xl border border-[#FFD6E6] bg-white/95 backdrop-blur p-6 md:p-7">
       {/* Header */}
-      <div className="flex items-center justify-between mb-3">
-        <Badge className="bg-[#F25AA2] text-white border border-[#F25AA2]/30">
+      <div className="flex items-center justify-between mb-4">
+        <div className="inline-flex items-center px-3 py-1 rounded-full border border-[#F9A4C8] bg-white/90 text-xs font-medium text-[#F25AA2] shadow-sm">
           {scenario.label}
-        </Badge>
+        </div>
         <span className="text-xs text-gray-400">Preview only</span>
-      </div>
-
-      {/* Getting started hint */}
-      <div className="mb-4 rounded-xl bg-white/80 backdrop-blur-sm px-3 py-2 text-[11px] text-[#666666] border border-[#E5E5E5]/50">
-        <p className="font-medium text-[#111111] mb-1">
-          Getting started with Blossom
-        </p>
-        <ul className="list-disc list-inside space-y-0.5">
-          <li>Open a perp trade with defined risk.</li>
-          <li>Park idle stablecoins into DeFi yield.</li>
-          <li>Express views via prediction markets.</li>
-        </ul>
       </div>
 
       {/* Chat bubbles */}
       <div className="space-y-3">
-        {/* User bubble (right) */}
+        {/* User bubble (right) - shown in all phases */}
         <div className="flex justify-end">
           <div className="max-w-[80%]">
             <div className="flex justify-end mb-1">
@@ -89,27 +95,48 @@ export function ChatPreview() {
           </div>
         </div>
 
-        {/* Blossom bubble (left) */}
-        <div
-          key={scenario.id}
-          className="flex items-start gap-2 animate-fade-in"
-        >
-          {/* Avatar – Blossom logo */}
-          <div className="mt-1 flex h-7 w-7 items-center justify-center rounded-full bg-white shadow-sm ring-1 ring-[#F25AA2]/30">
-            <BlossomLogo size={16} />
-          </div>
-          <div className="max-w-[82%]">
-            <div className="mb-1 text-[11px] text-gray-400">Blossom</div>
-            <div className="rounded-2xl rounded-bl-sm bg-white px-3 py-2 text-sm text-[#111111] shadow-sm border border-[#E5E5E5] backdrop-blur-sm" style={{
-              background: 'rgba(255, 255, 255, 0.85)',
-              backdropFilter: 'blur(12px)',
-              WebkitBackdropFilter: 'blur(12px)',
-            }}>
-              {scenario.blossomMessage}
+        {/* Typing indicator (left) - shown only in 'typing' phase */}
+        {phase === 'typing' && (
+          <div className="flex items-start gap-2 animate-fade-in">
+            <div className="mt-1 flex h-7 w-7 items-center justify-center rounded-full bg-white shadow-sm ring-1 ring-[#F25AA2]/30">
+              <BlossomLogo size={16} />
             </div>
-            <div className="mt-1 text-[10px] text-gray-400">Just now</div>
+            <div className="max-w-[82%]">
+              <div className="mb-1 text-[11px] text-gray-400">Blossom</div>
+              <div className="rounded-2xl rounded-bl-sm bg-white px-3 py-2 text-sm shadow-sm border border-[#E5E5E5] backdrop-blur-sm" style={{
+                background: 'rgba(255, 255, 255, 0.85)',
+                backdropFilter: 'blur(12px)',
+                WebkitBackdropFilter: 'blur(12px)',
+              }}>
+                <div className="flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#F25AA2] opacity-60 animate-pulse" style={{ animationDelay: '0ms' }} />
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#F25AA2] opacity-60 animate-pulse" style={{ animationDelay: '150ms' }} />
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#F25AA2] opacity-60 animate-pulse" style={{ animationDelay: '300ms' }} />
+                </div>
+              </div>
+            </div>
           </div>
-        </div>
+        )}
+
+        {/* Blossom bubble (left) - shown only in 'assistant' phase */}
+        {phase === 'assistant' && (
+          <div className="flex items-start gap-2 animate-fade-in">
+            <div className="mt-1 flex h-7 w-7 items-center justify-center rounded-full bg-white shadow-sm ring-1 ring-[#F25AA2]/30">
+              <BlossomLogo size={16} />
+            </div>
+            <div className="max-w-[82%]">
+              <div className="mb-1 text-[11px] text-gray-400">Blossom</div>
+              <div className="rounded-3xl rounded-bl-sm bg-white px-4 py-3 text-sm text-[#111111] shadow-sm border border-[#E5E5E5] backdrop-blur-sm" style={{
+                background: 'rgba(255, 255, 255, 0.85)',
+                backdropFilter: 'blur(12px)',
+                WebkitBackdropFilter: 'blur(12px)',
+              }}>
+                {scenario.blossomMessage}
+              </div>
+              <div className="mt-1 text-[10px] text-gray-400">Just now</div>
+            </div>
+          </div>
+        )}
       </div>
     </Card>
   );
