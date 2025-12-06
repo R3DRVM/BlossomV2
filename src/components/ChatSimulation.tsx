@@ -85,7 +85,10 @@ export function ChatSimulation() {
   }, [showBlossomResponse]);
 
   return (
-    <div className="bg-white rounded-3xl shadow-lg border border-pink-100 p-5 md:p-6 relative z-20">
+    <div className="bg-white rounded-3xl p-5 md:p-6 relative z-20" style={{ 
+      boxShadow: '0px 4px 12px rgba(0, 0, 0, 0.06)',
+      border: '1px solid #EDEDED',
+    }}>
       {/* SIM mode info */}
       <div className="flex items-center gap-2 mb-5 pb-3 border-b border-slate-100">
         <span className="text-[10px] text-[#6B7280]">SIM mode · Mock data · No real trades</span>
@@ -96,11 +99,14 @@ export function ChatSimulation() {
         {/* User message */}
         {showUserMessage && (
           <div className="flex justify-end animate-fade-in">
-            <div className="bg-white border border-slate-200 rounded-2xl rounded-tr-sm px-4 py-2.5 max-w-[85%]">
-              <p className="text-sm text-[#111827] leading-relaxed">
+            <div className="bg-white border border-[#EDEDED] rounded-2xl rounded-tr-sm px-4 py-2.5 max-w-[85%]" style={{
+              borderRadius: '16px 16px 16px 4px',
+              boxShadow: '0px 2px 8px rgba(0, 0, 0, 0.04)',
+            }}>
+              <p className="text-sm text-[#1A1A1A] leading-relaxed">
                 {currentScenario.userMessage}
                 {isTyping && (
-                  <span className="inline-block w-2 h-4 bg-[#FF5FA8] ml-1.5 animate-pulse" />
+                  <span className="inline-block w-2 h-4 bg-[#F25AA2] ml-1.5 animate-pulse" />
                 )}
               </p>
             </div>
@@ -113,11 +119,13 @@ export function ChatSimulation() {
             <div className="w-7 h-7 rounded-full bg-[#FFD6E6] flex items-center justify-center flex-shrink-0">
               <BlossomLogo size={18} className="opacity-90" />
             </div>
-            <div className="bg-[#FFD6E6] rounded-2xl rounded-tl-sm px-4 py-2.5">
+            <div className="bg-[#FFD6E6] rounded-2xl rounded-tl-sm px-4 py-2.5" style={{
+              borderRadius: '4px 16px 16px 16px',
+            }}>
               <div className="flex gap-1">
-                <span className="w-2 h-2 rounded-full bg-[#FF5FA8] animate-pulse" style={{ animationDelay: '0ms' }} />
-                <span className="w-2 h-2 rounded-full bg-[#FF5FA8] animate-pulse" style={{ animationDelay: '150ms' }} />
-                <span className="w-2 h-2 rounded-full bg-[#FF5FA8] animate-pulse" style={{ animationDelay: '300ms' }} />
+                <span className="w-2 h-2 rounded-full bg-[#F25AA2] animate-pulse" style={{ animationDelay: '0ms' }} />
+                <span className="w-2 h-2 rounded-full bg-[#F25AA2] animate-pulse" style={{ animationDelay: '150ms' }} />
+                <span className="w-2 h-2 rounded-full bg-[#F25AA2] animate-pulse" style={{ animationDelay: '300ms' }} />
               </div>
             </div>
           </div>
@@ -129,8 +137,11 @@ export function ChatSimulation() {
             <div className="w-7 h-7 rounded-full bg-[#FFD6E6] flex items-center justify-center flex-shrink-0">
               <BlossomLogo size={18} className="opacity-90" />
             </div>
-            <div className="bg-[#FFD6E6] rounded-2xl rounded-tl-sm px-4 py-2.5 max-w-[85%]">
-              <p className="text-sm text-[#111827] leading-relaxed">{currentScenario.blossomResponse}</p>
+            <div className="bg-[#FFD6E6] rounded-2xl rounded-tl-sm px-4 py-2.5 max-w-[85%]" style={{
+              borderRadius: '4px 16px 16px 16px',
+              boxShadow: '0px 2px 8px rgba(0, 0, 0, 0.04)',
+            }}>
+              <p className="text-sm text-[#1A1A1A] leading-relaxed">{currentScenario.blossomResponse}</p>
             </div>
           </div>
         )}

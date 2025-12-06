@@ -18,13 +18,13 @@ export function FeatureSections() {
   return (
     <>
       {/* Intelligence for Modern Markets */}
-      <section className="py-24 px-6 relative z-10 bg-white">
+      <section className="py-20 px-6 relative z-10 bg-white">
         <div className="max-w-6xl mx-auto">
-          <div className="text-center mb-16">
+          <div className="text-center mb-12">
             <h2 className="text-3xl md:text-4xl font-bold text-[#111827] mb-4">
               Intelligence for Modern Markets
             </h2>
-            <p className="text-lg md:text-xl text-[#4B5563] max-w-2xl mx-auto">
+            <p className="text-lg md:text-xl text-[#4B5563] max-w-2xl mx-auto" style={{ lineHeight: '1.5' }}>
               Blossom combines AI reasoning with execution infrastructure to give you a single interface for all markets.
             </p>
           </div>
@@ -51,28 +51,32 @@ export function FeatureSections() {
                 description: 'From blue-chip crypto to pre-IPO, prediction markets, and sports — one interface.',
                 Icon: GlobeIcon,
               },
-            ].map((feature, idx) => (
-              <div key={idx} className="bg-white rounded-2xl p-6 shadow-sm hover:shadow-md transition-all border border-pink-50">
-                <div className="w-12 h-12 rounded-full bg-[#FFD6E6] flex items-center justify-center mb-4">
-                  <feature.Icon className="w-6 h-6 text-[#FF5FA8]" />
+            ].map((feature, idx) => {
+              // Alternate between pink and purple for visual interest
+              const iconColor = idx % 2 === 0 ? '#F25AA2' : '#C29FFF';
+              return (
+                <div key={idx} className="bg-white rounded-2xl p-6 shadow-sm hover:shadow-md transition-all border border-pink-50">
+                  <div className="w-14 h-14 rounded-full bg-[#FFD6E6] flex items-center justify-center mb-4">
+                    <feature.Icon className="w-7 h-7" style={{ color: iconColor }} />
+                  </div>
+                  <h3 className="text-xl font-semibold text-[#111827] mb-2">{feature.title}</h3>
+                  <p className="text-[#4B5563] text-sm leading-relaxed" style={{ lineHeight: '1.5' }}>{feature.description}</p>
                 </div>
-                <h3 className="text-xl font-semibold text-[#111827] mb-2">{feature.title}</h3>
-                <p className="text-[#4B5563] text-sm leading-relaxed">{feature.description}</p>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </section>
 
       {/* Cross-Chain & Cross-Venue */}
-      <section className="py-24 px-6 relative z-10 bg-[#FFF7FB]">
+      <section className="py-20 px-6 relative z-10 bg-[#FFF7FB]">
         <div className="max-w-6xl mx-auto">
           <div className="grid lg:grid-cols-2 gap-12 items-center">
             <div>
               <h2 className="text-3xl md:text-4xl font-bold text-[#111827] mb-4">
                 Cross-Chain & Cross-Venue
               </h2>
-              <p className="text-lg text-[#4B5563] mb-6 leading-relaxed">
+              <p className="text-lg text-[#4B5563] mb-6" style={{ lineHeight: '1.5' }}>
                 Blossom abstracts away the complexity of multiple chains and venues. Whether you're trading on-chain perps, 
                 deploying DeFi strategies, or participating in prediction markets, Blossom provides a unified interface 
                 that routes your intent to the optimal execution venue.
@@ -117,10 +121,10 @@ export function FeatureSections() {
       </section>
 
       {/* Ready to Bloom? Waitlist */}
-      <section className="py-24 px-6 relative z-10 bg-[#FFF7FB]">
+      <section className="py-20 px-6 relative z-10 bg-[#FFF7FB]">
         <div className="max-w-2xl mx-auto text-center">
           <h2 className="text-3xl md:text-4xl font-bold text-[#111827] mb-4">Ready to Bloom?</h2>
-          <p className="text-lg text-[#4B5563] mb-8">
+          <p className="text-lg text-[#4B5563] mb-8" style={{ lineHeight: '1.5' }}>
             Join the waitlist for early access to the intelligent execution layer.
           </p>
 
@@ -137,7 +141,7 @@ export function FeatureSections() {
               <button
                 type="submit"
                 disabled={submitted}
-                className="px-6 py-3 text-base font-medium text-white bg-[#FF5FA8] rounded-full hover:bg-[#FF4B8A] transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-6 py-3 text-base font-medium text-white bg-[#F25AA2] rounded-full hover:bg-[#FF4B8A] transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {submitted ? 'Joined!' : 'Join Waitlist'}
               </button>

@@ -48,7 +48,7 @@ export function HeroSection() {
                 <span
                   className={`inline-block transition-opacity duration-300 ${
                     isVisible ? 'opacity-100' : 'opacity-0'
-                  } bg-gradient-to-r from-[#FF5FA8] via-[#FF7EB3] to-[#A78BFA] bg-clip-text text-transparent font-bold`}
+                  } bg-gradient-to-r from-[#F25AA2] via-[#FF7EB3] to-[#C29FFF] bg-clip-text text-transparent font-bold`}
                 >
                   {ROTATING_WORDS[currentWordIndex]}
                 </span>
@@ -56,7 +56,7 @@ export function HeroSection() {
             </h1>
 
             {/* Subheadline */}
-            <p className="text-base md:text-lg text-[#374151] leading-relaxed max-w-lg" style={{ lineHeight: '1.6' }}>
+            <p className="text-base md:text-lg text-[#374151] max-w-lg" style={{ lineHeight: '1.5' }}>
               Your AI-native copilot for strategy, execution, and risk. Trade any asset on any venue with simple, natural-language commands.
             </p>
 
@@ -64,7 +64,7 @@ export function HeroSection() {
             <div className="flex flex-col sm:flex-row gap-4 pt-2">
               <button
                 onClick={() => navigate('/app')}
-                className="px-6 py-3 text-sm font-medium text-white bg-[#FF5FA8] rounded-full hover:bg-[#FF4B8A] transition-all shadow-md hover:shadow-lg"
+                className="px-6 py-3 text-sm font-medium text-white bg-[#F25AA2] rounded-full hover:bg-[#FF4B8A] transition-all shadow-md hover:shadow-lg"
               >
                 Open App
               </button>
@@ -73,7 +73,7 @@ export function HeroSection() {
                   // Placeholder for product deck
                   console.log('View product deck');
                 }}
-                className="px-6 py-3 text-sm font-medium text-[#111827] border border-[#FF5FA8] rounded-full hover:bg-[#FFD6E6]/30 transition-all"
+                className="px-6 py-3 text-sm font-medium text-[#111827] border border-[#F25AA2] rounded-full hover:bg-[#FFD6E6]/30 transition-all"
               >
                 View product deck
               </button>
