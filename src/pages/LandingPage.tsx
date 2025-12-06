@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { BlossomLogo } from '../components/BlossomLogo';
 import { HeroSection } from '../components/HeroSection';
+import { FeatureSections } from '../components/FeatureSections';
 
 export default function LandingPage() {
   const navigate = useNavigate();
@@ -28,6 +29,9 @@ export default function LandingPage() {
 
       {/* Hero Section */}
       <HeroSection />
+
+      {/* Feature Sections */}
+      <FeatureSections />
     </div>
   );
 }
