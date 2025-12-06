@@ -6,6 +6,26 @@
 import { getPrice, PriceSymbol } from './prices';
 import { getEventSnapshot } from '../plugins/event-sim';
 
+// Unified ticker item structure
+export interface TickerItem {
+  label: string;      // e.g. "BTC" or "Fed cuts in March 2025"
+  value: string;     // e.g. "$60,000" or "62%"
+  change?: string;   // e.g. "+2.5%" or "+8% prob"
+  meta?: string;     // e.g. "24h", "Kalshi", "Polymarket", "DeFi"
+}
+
+export interface TickerSection {
+  id: 'majors' | 'gainers' | 'defi' | 'kalshi' | 'polymarket';
+  label: string;      // "Majors", "Top gainers (24h)", etc.
+  items: TickerItem[];
+}
+
+export interface TickerPayload {
+  venue: 'hyperliquid' | 'event_demo';
+  sections: TickerSection[];
+}
+
+// Legacy interfaces for backward compatibility
 export interface OnchainTickerItem {
   symbol: string;
   priceUsd: number;
@@ -38,58 +58,110 @@ const STATIC_EVENT_TICKER: EventTickerItem[] = [
 ];
 
 /**
- * Get on-chain ticker (crypto prices)
+ * Get on-chain ticker (crypto prices) - new unified format
  */
-export async function getOnchainTicker(): Promise<OnchainTickerItem[]> {
+export async function getOnchainTicker(): Promise<TickerPayload> {
   const symbols: PriceSymbol[] = ['BTC', 'ETH', 'SOL'];
-  const tickerItems: OnchainTickerItem[] = [];
+  const priceData: Array<{ symbol: string; priceUsd: number; change24hPct: number }> = [];
 
   try {
     for (const symbol of symbols) {
       try {
         const snapshot = await getPrice(symbol);
-        // For demo, use a simple mock 24h change based on symbol
-        // In production, you'd fetch this from the price API
         const change24hPct = getMock24hChange(symbol);
         
-        tickerItems.push({
+        priceData.push({
           symbol,
           priceUsd: snapshot.priceUsd,
           change24hPct,
         });
       } catch (error) {
         console.warn(`Failed to fetch ${symbol} price:`, error);
-        // Use static fallback for this symbol
         const staticItem = STATIC_ONCHAIN_TICKER.find(item => item.symbol === symbol);
         if (staticItem) {
-          tickerItems.push(staticItem);
+          priceData.push(staticItem);
         }
       }
     }
 
-    // Add AVAX and LINK from static data (not in price service yet)
-    tickerItems.push(
+    // Add AVAX and LINK from static data
+    priceData.push(
       STATIC_ONCHAIN_TICKER.find(item => item.symbol === 'AVAX')!,
       STATIC_ONCHAIN_TICKER.find(item => item.symbol === 'LINK')!
     );
 
-    return tickerItems.length > 0 ? tickerItems : STATIC_ONCHAIN_TICKER;
+    // If we have no data, use static fallback
+    const allPrices = priceData.length > 0 ? priceData : STATIC_ONCHAIN_TICKER;
+
+    // Section 1: Majors
+    const majorsItems: TickerItem[] = allPrices.map(item => ({
+      label: item.symbol,
+      value: `$${item.priceUsd.toLocaleString(undefined, { maximumFractionDigits: 0 })}`,
+      change: `${item.change24hPct >= 0 ? '+' : ''}${item.change24hPct.toFixed(1)}%`,
+      meta: '24h',
+    }));
+
+    // Section 2: Top gainers (sort by 24h change desc, take top 4)
+    const gainers = [...allPrices]
+      .sort((a, b) => b.change24hPct - a.change24hPct)
+      .slice(0, 4)
+      .map(item => ({
+        label: item.symbol,
+        value: `$${item.priceUsd.toLocaleString(undefined, { maximumFractionDigits: 0 })}`,
+        change: `+${item.change24hPct.toFixed(1)}%`,
+        meta: 'Top gainer',
+      }));
+
+    // Section 3: DeFi protocols (stub data)
+    const defiItems: TickerItem[] = [
+      { label: 'Lido', value: '$28B TVL', meta: 'DeFi' },
+      { label: 'Aave', value: '$12B TVL', meta: 'DeFi' },
+      { label: 'Uniswap', value: '$8.5B TVL', meta: 'DeFi' },
+      { label: 'Maker', value: '$6.2B TVL', meta: 'DeFi' },
+    ];
+
+    return {
+      venue: 'hyperliquid',
+      sections: [
+        { id: 'majors', label: 'Majors', items: majorsItems },
+        { id: 'gainers', label: 'Top gainers (24h)', items: gainers },
+        { id: 'defi', label: 'DeFi TVL', items: defiItems },
+      ],
+    };
   } catch (error) {
     console.error('Failed to build on-chain ticker, using static fallback:', error);
-    return STATIC_ONCHAIN_TICKER;
+    // Return fallback payload
+    return {
+      venue: 'hyperliquid',
+      sections: [
+        {
+          id: 'majors',
+          label: 'Majors',
+          items: STATIC_ONCHAIN_TICKER.map(item => ({
+            label: item.symbol,
+            value: `$${item.priceUsd.toLocaleString(undefined, { maximumFractionDigits: 0 })}`,
+            change: `${item.change24hPct >= 0 ? '+' : ''}${item.change24hPct.toFixed(1)}%`,
+            meta: '24h',
+          })),
+        },
+      ],
+    };
   }
 }
 
 /**
- * Get event markets ticker
+ * Get event markets ticker - new unified format
  */
-export async function getEventMarketsTicker(): Promise<EventTickerItem[]> {
+export async function getEventMarketsTicker(): Promise<TickerPayload> {
   try {
     const eventSnapshot = getEventSnapshot();
-    const markets = eventSnapshot.markets.slice(0, 6); // Take first 6 markets
+    const allMarkets = eventSnapshot.markets;
 
-    const tickerItems: EventTickerItem[] = markets.map(market => {
-      // Map market keys to sources
+    // Separate markets by source
+    const kalshiMarkets: Array<{ label: string; impliedProb: number }> = [];
+    const polymarketMarkets: Array<{ label: string; impliedProb: number }> = [];
+
+    for (const market of allMarkets) {
       let source: 'Kalshi' | 'Polymarket' | 'Demo' = 'Demo';
       if (market.key.includes('FED') || market.key.includes('ETF')) {
         source = 'Kalshi';
@@ -97,21 +169,95 @@ export async function getEventMarketsTicker(): Promise<EventTickerItem[]> {
         source = 'Polymarket';
       }
 
-      // Use winProbability as implied probability
-      const impliedProb = market.winProbability;
-
-      return {
-        id: market.key,
+      const item = {
         label: market.label,
-        impliedProb,
-        source,
+        impliedProb: market.winProbability,
       };
-    });
 
-    return tickerItems.length > 0 ? tickerItems : STATIC_EVENT_TICKER;
+      if (source === 'Kalshi') {
+        kalshiMarkets.push(item);
+      } else if (source === 'Polymarket') {
+        polymarketMarkets.push(item);
+      }
+    }
+
+    // Convert to TickerItems
+    const kalshiItems: TickerItem[] = kalshiMarkets.slice(0, 4).map(m => ({
+      label: m.label,
+      value: `${Math.round(m.impliedProb * 100)}%`,
+      meta: 'Kalshi',
+    }));
+
+    const polymarketItems: TickerItem[] = polymarketMarkets.slice(0, 4).map(m => ({
+      label: m.label,
+      value: `${Math.round(m.impliedProb * 100)}%`,
+      meta: 'Polymarket',
+    }));
+
+    // If no markets found, use static fallback
+    if (kalshiItems.length === 0 && polymarketItems.length === 0) {
+      return {
+        venue: 'event_demo',
+        sections: [
+          {
+            id: 'kalshi',
+            label: 'Kalshi',
+            items: STATIC_EVENT_TICKER.filter(item => item.source === 'Kalshi').slice(0, 4).map(item => ({
+              label: item.label,
+              value: `${Math.round(item.impliedProb * 100)}%`,
+              meta: 'Kalshi',
+            })),
+          },
+          {
+            id: 'polymarket',
+            label: 'Polymarket',
+            items: STATIC_EVENT_TICKER.filter(item => item.source === 'Polymarket').slice(0, 4).map(item => ({
+              label: item.label,
+              value: `${Math.round(item.impliedProb * 100)}%`,
+              meta: 'Polymarket',
+            })),
+          },
+        ],
+      };
+    }
+
+    const sections: TickerSection[] = [];
+    if (kalshiItems.length > 0) {
+      sections.push({ id: 'kalshi', label: 'Kalshi', items: kalshiItems });
+    }
+    if (polymarketItems.length > 0) {
+      sections.push({ id: 'polymarket', label: 'Polymarket', items: polymarketItems });
+    }
+
+    return {
+      venue: 'event_demo',
+      sections,
+    };
   } catch (error) {
     console.error('Failed to build event markets ticker, using static fallback:', error);
-    return STATIC_EVENT_TICKER;
+    return {
+      venue: 'event_demo',
+      sections: [
+        {
+          id: 'kalshi',
+          label: 'Kalshi',
+          items: STATIC_EVENT_TICKER.filter(item => item.source === 'Kalshi').slice(0, 4).map(item => ({
+            label: item.label,
+            value: `${Math.round(item.impliedProb * 100)}%`,
+            meta: 'Kalshi',
+          })),
+        },
+        {
+          id: 'polymarket',
+          label: 'Polymarket',
+          items: STATIC_EVENT_TICKER.filter(item => item.source === 'Polymarket').slice(0, 4).map(item => ({
+            label: item.label,
+            value: `${Math.round(item.impliedProb * 100)}%`,
+            meta: 'Polymarket',
+          })),
+        },
+      ],
+    };
   }
 }
 
