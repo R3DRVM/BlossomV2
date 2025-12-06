@@ -18,14 +18,16 @@ export function FeatureSections() {
   return (
     <>
       {/* Intelligence for Modern Markets */}
-      <section className="py-20 px-6 relative z-10 bg-white border-t" style={{ borderColor: '#F3E5EC' }}>
+      <section id="features" className="py-24 px-6 relative z-10 bg-white/20 backdrop-blur-sm">
         <div className="max-w-6xl mx-auto">
-          <div className="text-center mb-12">
-            <h2 className="text-3xl md:text-4xl font-bold text-[#111111] mb-4">
-              Intelligence for Modern Markets
+          <div className="text-center mb-16">
+            <h2 className="text-3xl md:text-4xl font-bold mb-4 text-[#111111]" style={{
+              fontFamily: '"Playfair Display", Georgia, serif',
+            }}>
+              Engineered for Alpha
             </h2>
-            <p className="text-lg md:text-xl text-[#333333] max-w-2xl mx-auto" style={{ lineHeight: '1.5' }}>
-              Blossom combines AI reasoning with execution infrastructure to give you a single interface for all markets.
+            <p className="text-[#666666] max-w-2xl mx-auto bg-white/40 backdrop-blur-[2px] rounded-lg p-2">
+              Blossom translates your intent into precise on-chain execution, handling the complexities of DeFi while you focus on strategy.
             </p>
           </div>
 
@@ -55,26 +57,31 @@ export function FeatureSections() {
               // Alternate between pink and purple for visual interest
               const iconColor = idx % 2 === 0 ? '#F25AA2' : '#C29FFF';
               return (
-                <div key={idx} className="bg-white p-6 transition-all cursor-pointer" style={{
-                  borderRadius: '16px',
-                  boxShadow: '0 10px 30px rgba(0, 0, 0, 0.04)',
-                  border: '1px solid #F3E5EC',
+                <div key={idx} className="group relative p-8 rounded-2xl border border-[#E5E5E5] bg-white/60 backdrop-blur-sm hover:shadow-xl hover:shadow-[#F25AA2]/5 hover:border-[#F25AA2]/20 transition-all duration-300 cursor-pointer" style={{
+                  transform: 'translateY(0)',
                 }}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.transform = 'translateY(-2px)';
-                  e.currentTarget.style.boxShadow = '0 15px 40px rgba(0, 0, 0, 0.08)';
-                  e.currentTarget.style.borderColor = '#FFB6D9';
+                  e.currentTarget.style.transform = 'translateY(-5px)';
                 }}
                 onMouseLeave={(e) => {
                   e.currentTarget.style.transform = 'translateY(0)';
-                  e.currentTarget.style.boxShadow = '0 10px 30px rgba(0, 0, 0, 0.04)';
-                  e.currentTarget.style.borderColor = '#F3E5EC';
                 }}>
-                  <div className="w-14 h-14 rounded-full bg-[#FFD6E6] flex items-center justify-center mb-4">
-                    <feature.Icon className="w-7 h-7" style={{ color: iconColor }} strokeWidth={2} />
+                  <div className="absolute top-0 right-0 p-4 opacity-0 group-hover:opacity-100 transition-opacity text-[#F25AA2]">
+                    <svg className="w-5 h-5 -rotate-45" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
                   </div>
-                  <h3 className="text-xl font-semibold text-[#111111] mb-2">{feature.title}</h3>
-                  <p className="text-[#444444] text-sm leading-relaxed">{feature.description}</p>
+                  <div className="w-12 h-12 rounded-lg bg-[#F25AA2]/5 flex items-center justify-center text-[#F25AA2] mb-6 group-hover:scale-110 transition-transform duration-300">
+                    <feature.Icon className="w-6 h-6" strokeWidth={2} />
+                  </div>
+                  <h3 className="text-xl font-bold mb-3 text-[#111111]" style={{
+                    fontFamily: '"Playfair Display", Georgia, serif',
+                  }}>
+                    {feature.title}
+                  </h3>
+                  <p className="text-[#666666] leading-relaxed">
+                    {feature.description}
+                  </p>
                 </div>
               );
             })}
