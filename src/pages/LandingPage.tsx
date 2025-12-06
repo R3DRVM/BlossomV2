@@ -3,7 +3,6 @@
  * Identical to SuddenGreenCad Home.tsx structure, using Blossom's cherry blossom animation
  */
 
-import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Terminal, Shield, Zap, Brain, Activity, BarChart3, Globe, ArrowRight } from 'lucide-react';
 import { Button } from '../components/ui/Button';
