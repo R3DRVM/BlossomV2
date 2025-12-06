@@ -54,8 +54,6 @@ export function FeatureSections() {
                 Icon: GlobeIcon,
               },
             ].map((feature, idx) => {
-              // Alternate between pink and purple for visual interest
-              const iconColor = idx % 2 === 0 ? '#F25AA2' : '#C29FFF';
               return (
                 <div key={idx} className="group relative p-8 rounded-2xl border border-[#E5E5E5] bg-white/60 backdrop-blur-sm hover:shadow-xl hover:shadow-[#F25AA2]/5 hover:border-[#F25AA2]/20 transition-all duration-300 cursor-pointer" style={{
                   transform: 'translateY(0)',

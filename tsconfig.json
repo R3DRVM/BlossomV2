@@ -21,6 +21,7 @@
     "noFallthroughCasesInSwitch": true
   },
   "include": ["src"],
+  "exclude": ["src/_suddengreencard"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }
 

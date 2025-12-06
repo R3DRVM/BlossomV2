@@ -4,11 +4,9 @@
  * Based on SuddenGreenCad reference design
  */
 
-import { useNavigate } from 'react-router-dom';
 import { HeroTerminal } from './HeroTerminal';
 
 export function HeroSection() {
-  const navigate = useNavigate();
 
   return (
     <section className="relative pt-32 pb-20 lg:pt-48 lg:pb-32 overflow-hidden z-10">
