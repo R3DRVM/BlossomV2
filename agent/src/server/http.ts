@@ -230,6 +230,17 @@ app.post('/api/strategy/close', async (req, res) => {
     // Build updated portfolio snapshot
     const portfolio = buildPortfolioSnapshot();
 
+    // If this was an event close with liveMarkToMarketUsd, attach it to the strategy in the portfolio
+    if (type === 'event' && result.liveMarkToMarketUsd !== undefined) {
+      const strategyIndex = portfolio.strategies.findIndex((s: any) => s.id === strategyId);
+      if (strategyIndex >= 0) {
+        portfolio.strategies[strategyIndex] = {
+          ...portfolio.strategies[strategyIndex],
+          liveMarkToMarketUsd: result.liveMarkToMarketUsd,
+        };
+      }
+    }
+
     const response: CloseResponse = {
       summaryMessage,
       portfolio,
