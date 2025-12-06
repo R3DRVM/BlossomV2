@@ -6,25 +6,25 @@ export function LandingFooter() {
           <div>
             <h3 className="text-sm font-semibold text-[#111827] mb-3">Product</h3>
             <ul className="space-y-2 text-sm text-[#4B5563]">
-              <li><a href="#" className="hover:text-[#FF5FA8] transition-colors">Features</a></li>
-              <li><a href="#" className="hover:text-[#FF5FA8] transition-colors">Pricing</a></li>
-              <li><a href="#" className="hover:text-[#FF5FA8] transition-colors">Roadmap</a></li>
+              <li><a href="#" className="hover:text-[#F25AA2] transition-colors">Features</a></li>
+              <li><a href="#" className="hover:text-[#F25AA2] transition-colors">Pricing</a></li>
+              <li><a href="#" className="hover:text-[#F25AA2] transition-colors">Roadmap</a></li>
             </ul>
           </div>
           <div>
             <h3 className="text-sm font-semibold text-[#111827] mb-3">Resources</h3>
             <ul className="space-y-2 text-sm text-[#4B5563]">
-              <li><a href="#" className="hover:text-[#FF5FA8] transition-colors">Documentation</a></li>
-              <li><a href="#" className="hover:text-[#FF5FA8] transition-colors">Blog</a></li>
-              <li><a href="#" className="hover:text-[#FF5FA8] transition-colors">Support</a></li>
+              <li><a href="#" className="hover:text-[#F25AA2] transition-colors">Documentation</a></li>
+              <li><a href="#" className="hover:text-[#F25AA2] transition-colors">Blog</a></li>
+              <li><a href="#" className="hover:text-[#F25AA2] transition-colors">Support</a></li>
             </ul>
           </div>
           <div>
             <h3 className="text-sm font-semibold text-[#111827] mb-3">Legal</h3>
             <ul className="space-y-2 text-sm text-[#4B5563]">
-              <li><a href="#" className="hover:text-[#FF5FA8] transition-colors">Privacy</a></li>
-              <li><a href="#" className="hover:text-[#FF5FA8] transition-colors">Terms</a></li>
-              <li><a href="#" className="hover:text-[#FF5FA8] transition-colors">Disclaimer</a></li>
+              <li><a href="#" className="hover:text-[#F25AA2] transition-colors">Privacy</a></li>
+              <li><a href="#" className="hover:text-[#F25AA2] transition-colors">Terms</a></li>
+              <li><a href="#" className="hover:text-[#F25AA2] transition-colors">Disclaimer</a></li>
             </ul>
           </div>
         </div>

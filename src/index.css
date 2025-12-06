@@ -87,43 +87,77 @@ body {
 
 /* Light cherry blossom background - premium Japanese fintech aesthetic */
 .sakura-hero-bg {
-  background: linear-gradient(to bottom, #FFFFFF 0%, #FFEFF5 50%, #FFD6E8 100%);
+  background: linear-gradient(to bottom, #FFFFFF 0%, #FFF5F9 30%, #FFEBF3 60%, #FFE0ED 100%);
+  position: relative;
 }
 
-/* Cherry blossom tree styling */
+/* Soft circular bloom shapes for depth */
+.sakura-hero-bg::before {
+  content: '';
+  position: absolute;
+  top: 20%;
+  right: 10%;
+  width: 400px;
+  height: 400px;
+  background: radial-gradient(circle, rgba(255, 95, 168, 0.08) 0%, transparent 70%);
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.sakura-hero-bg::after {
+  content: '';
+  position: absolute;
+  bottom: 10%;
+  left: 5%;
+  width: 300px;
+  height: 300px;
+  background: radial-gradient(circle, rgba(194, 159, 255, 0.06) 0%, transparent 70%);
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+/* Cherry blossom tree styling - premium photography feel */
 .sakura-tree {
-  right: -120px;
+  position: absolute;
+  right: -100px;
   bottom: 0;
-  opacity: 0.4;
-  mix-blend-mode: multiply;
+  opacity: 0.5;
+  mix-blend-mode: soft-light;
+  filter: blur(6px);
+  pointer-events: none;
 }
 
-/* Sakura petal fall animation - subtle and slow */
-@keyframes sakura-fall {
+/* Sakura petal wind animation - organic, believable drift */
+@keyframes sakura-wind {
   0% {
     transform: translate(0, 0) rotate(0deg);
-    opacity: 0.12;
+    opacity: 0.4;
   }
-  25% {
-    transform: translate(15vw, 25vh) rotate(90deg);
-    opacity: 0.16;
+  20% {
+    transform: translate(-8vw, 15vh) rotate(45deg);
+    opacity: 0.5;
   }
-  50% {
-    transform: translate(30vw, 50vh) rotate(180deg);
-    opacity: 0.14;
+  40% {
+    transform: translate(-15vw, 35vh) rotate(90deg);
+    opacity: 0.45;
   }
-  75% {
-    transform: translate(45vw, 75vh) rotate(270deg);
-    opacity: 0.18;
+  60% {
+    transform: translate(-25vw, 55vh) rotate(135deg);
+    opacity: 0.5;
+  }
+  80% {
+    transform: translate(-35vw, 75vh) rotate(180deg);
+    opacity: 0.4;
   }
   100% {
-    transform: translate(60vw, 100vh) rotate(360deg);
-    opacity: 0.1;
+    transform: translate(-45vw, 100vh) rotate(225deg);
+    opacity: 0.3;
   }
 }
 
 .sakura-petal {
   will-change: transform, opacity;
   pointer-events: none;
+  border-radius: 50% 0 50% 50%;
 }
 

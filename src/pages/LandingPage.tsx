@@ -15,8 +15,8 @@ export default function LandingPage() {
 
       {/* Foreground content */}
       <div className="relative z-10 flex flex-col">
-        {/* Top Navigation */}
-        <nav className="w-full px-6 lg:px-10 py-4 flex items-center justify-between relative z-20">
+        {/* Top Navigation - Premium sticky header */}
+        <nav className="sticky top-0 w-full px-6 lg:px-10 py-4 flex items-center justify-between relative z-30 backdrop-blur-lg bg-white/80 border-b border-pink-100/50">
           <div className="flex items-center gap-2">
             <BlossomLogo size={28} className="drop-shadow-sm" />
             <span className="text-lg font-semibold text-[#111827]">Blossom</span>
@@ -27,7 +27,7 @@ export default function LandingPage() {
             </a>
             <button
               onClick={() => navigate('/app')}
-              className="px-4 py-2 text-sm font-medium text-white bg-[#FF5FA8] rounded-full hover:bg-[#FF4B8A] transition-colors shadow-sm"
+              className="px-5 py-2.5 text-sm font-medium text-white bg-[#F25AA2] rounded-full hover:bg-[#FF4B8A] transition-all shadow-md hover:shadow-lg"
             >
               Open App
             </button>
