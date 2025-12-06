@@ -18,7 +18,7 @@ export function FeatureSections() {
   return (
     <>
       {/* Intelligence for Modern Markets */}
-      <section className="py-20 px-6 relative z-10 bg-white">
+      <section className="py-20 px-6 relative z-10 bg-white border-t" style={{ borderColor: '#F3E5EC' }}>
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-12">
             <h2 className="text-3xl md:text-4xl font-bold text-[#111111] mb-4">
@@ -55,16 +55,26 @@ export function FeatureSections() {
               // Alternate between pink and purple for visual interest
               const iconColor = idx % 2 === 0 ? '#F25AA2' : '#C29FFF';
               return (
-                <div key={idx} className="bg-white p-6 hover:shadow-lg transition-all" style={{
+                <div key={idx} className="bg-white p-6 transition-all cursor-pointer" style={{
                   borderRadius: '16px',
                   boxShadow: '0 10px 30px rgba(0, 0, 0, 0.04)',
                   border: '1px solid #F3E5EC',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.transform = 'translateY(-2px)';
+                  e.currentTarget.style.boxShadow = '0 15px 40px rgba(0, 0, 0, 0.08)';
+                  e.currentTarget.style.borderColor = '#FFB6D9';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.transform = 'translateY(0)';
+                  e.currentTarget.style.boxShadow = '0 10px 30px rgba(0, 0, 0, 0.04)';
+                  e.currentTarget.style.borderColor = '#F3E5EC';
                 }}>
                   <div className="w-14 h-14 rounded-full bg-[#FFD6E6] flex items-center justify-center mb-4">
                     <feature.Icon className="w-7 h-7" style={{ color: iconColor }} strokeWidth={2} />
                   </div>
                   <h3 className="text-xl font-semibold text-[#111111] mb-2">{feature.title}</h3>
-                  <p className="text-[#444444] text-sm" style={{ lineHeight: '1.5' }}>{feature.description}</p>
+                  <p className="text-[#444444] text-sm leading-relaxed">{feature.description}</p>
                 </div>
               );
             })}
