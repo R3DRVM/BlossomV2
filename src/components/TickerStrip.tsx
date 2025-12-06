@@ -122,11 +122,11 @@ function TickerItemPill({ item }: { item: TickerItem }) {
       {/* YES / NO chip */}
       {isEvent && item.lean && (
         <span
-          className={`ml-1 text-[10px] font-semibold uppercase tracking-wide ${
+          className={
             item.lean === 'YES'
-              ? 'text-blossom-success'
-              : 'text-blossom-danger'
-          }`}
+              ? 'ml-1 text-[10px] font-semibold uppercase tracking-wide text-blossom-success'
+              : 'ml-1 text-[10px] font-semibold uppercase tracking-wide text-blossom-danger'
+          }
         >
           {item.lean}
         </span>
