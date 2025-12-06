@@ -1,92 +1,67 @@
-import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChatSimulation } from './ChatSimulation';
-
-// Rotating asset types for the headline - can be easily updated here
-const ROTATING_WORDS = [
-  'Pre-IPO',
-  'Crypto',
-  'Stocks',
-  'Prediction Markets',
-  'Sports Markets',
-];
+import { HeroTerminal } from './HeroTerminal';
 
 export function HeroSection() {
   const navigate = useNavigate();
-  const [currentWordIndex, setCurrentWordIndex] = useState(0);
-  const [isVisible, setIsVisible] = useState(true);
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setIsVisible(false);
-      setTimeout(() => {
-        setCurrentWordIndex((prev) => (prev + 1) % ROTATING_WORDS.length);
-        setIsVisible(true);
-      }, 300); // Fade out duration
-    }, 3000); // Change word every 3 seconds
-
-    return () => clearInterval(interval);
-  }, []);
 
   return (
-    <section className="relative min-h-screen overflow-hidden">
-      <div className="max-w-6xl mx-auto px-6 lg:px-10 py-10 lg:py-16 relative z-10">
-        <div className="grid lg:grid-cols-2 gap-12 items-center min-h-[80vh]">
-          {/* Left Column - Copy */}
+    <section className="relative min-h-[85vh] overflow-hidden py-16 md:py-24">
+      <div className="max-w-7xl mx-auto px-6 lg:px-10 relative z-10">
+        <div className="grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
+          {/* Left Column - Text */}
           <div className="space-y-6 relative z-10">
-            {/* Eyebrow pill */}
-            <div className="inline-flex items-center gap-2.5 px-4 py-2 rounded-full border border-[#FFD6E6] bg-white shadow-sm">
-              <span className="text-xs font-medium text-[#FF5FA8]">● Blossom AI v1.0</span>
-              <span className="text-xs text-slate-400">·</span>
-              <span className="text-xs text-[#374151]">SIM only · No real trades</span>
+            {/* Top pill */}
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-[#FFD6E6] bg-white/80 backdrop-blur-sm">
+              <span className="text-xs font-medium text-[#F25AA2]">Blossom AI v1.0</span>
+              <span className="text-xs text-[#999999]">·</span>
+              <span className="text-xs text-[#666666]">SIM only · No real trades</span>
             </div>
 
-            {/* Main headline with rotating word - nearly black for readability */}
-            <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-[#111111] leading-tight">
-              The intelligent execution layer for{' '}
-              <span className="relative inline-block min-w-[220px]">
-                <span
-                  className={`inline-block transition-opacity duration-300 ${
-                    isVisible ? 'opacity-100' : 'opacity-0'
-                  } bg-gradient-to-r from-[#F25AA2] via-[#FF7EB3] to-[#C29FFF] bg-clip-text text-transparent font-bold`}
-                >
-                  {ROTATING_WORDS[currentWordIndex]}
+            {/* Headline - Serif font, two-line style */}
+            <h1 
+              className="text-5xl md:text-6xl lg:text-7xl font-bold text-[#111111] leading-[1.1]"
+              style={{ 
+                fontFamily: '"Playfair Display", "DM Serif Display", Georgia, "Times New Roman", serif',
+              }}
+            >
+              <div>The Intelligent</div>
+              <div>
+                <span className="bg-gradient-to-r from-[#F25AA2] via-[#FF7EB3] to-[#C29FFF] bg-clip-text text-transparent">
+                  Execution Layer
                 </span>
-              </span>
+              </div>
             </h1>
 
-            {/* Subheadline - dark gray for maximum readability */}
-            <p className="text-base md:text-lg text-[#222222] max-w-lg font-normal" style={{ lineHeight: '1.6' }}>
-              Your AI-native copilot for strategy, execution, and risk. Trade any asset on any venue with simple, natural-language commands.
+            {/* Subheadline */}
+            <p className="text-base md:text-lg text-[#3A3A3A] max-w-lg leading-relaxed">
+              Your AI-native copilot for strategy, execution, and risk management. Command perp, DeFi, and prediction market strategies in plain English.
             </p>
 
             {/* CTAs */}
             <div className="flex flex-col sm:flex-row gap-4 pt-2">
               <button
                 onClick={() => navigate('/app')}
-                className="px-6 py-3 text-sm font-medium text-white bg-[#F25AA2] rounded-full hover:bg-[#FF4B8A] transition-all shadow-md hover:shadow-lg"
+                className="px-6 py-3 text-base font-medium text-white bg-[#F25AA2] rounded-full hover:bg-[#FF4B8A] transition-all shadow-md hover:shadow-lg"
               >
-                Open App
+                Launch Terminal
               </button>
               <button
                 onClick={() => {
-                  // Placeholder for product deck
                   console.log('View product deck');
                 }}
-                className="px-6 py-3 text-sm font-medium text-[#111827] border border-[#F25AA2] rounded-full hover:bg-[#FFD6E6]/30 transition-all"
+                className="px-6 py-3 text-base font-medium text-[#111111] border border-[#F25AA2] rounded-full hover:bg-[#FFD6E6]/30 transition-all"
               >
                 View product deck
               </button>
             </div>
           </div>
 
-          {/* Right Column - Chat Simulation (in front of tree) */}
+          {/* Right Column - Terminal Preview */}
           <div className="relative z-20">
-            <ChatSimulation />
+            <HeroTerminal />
           </div>
         </div>
       </div>
     </section>
   );
 }
-
