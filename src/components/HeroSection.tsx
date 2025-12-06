@@ -41,8 +41,8 @@ export function HeroSection() {
               <span className="text-xs text-[#374151]">SIM only · No real trades</span>
             </div>
 
-            {/* Main headline with rotating word */}
-            <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-[#111827] leading-tight">
+            {/* Main headline with rotating word - nearly black for readability */}
+            <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-[#111111] leading-tight">
               The intelligent execution layer for{' '}
               <span className="relative inline-block min-w-[220px]">
                 <span
@@ -55,8 +55,8 @@ export function HeroSection() {
               </span>
             </h1>
 
-            {/* Subheadline */}
-            <p className="text-base md:text-lg text-[#374151] max-w-lg" style={{ lineHeight: '1.5' }}>
+            {/* Subheadline - dark gray for maximum readability */}
+            <p className="text-base md:text-lg text-[#222222] max-w-lg font-normal" style={{ lineHeight: '1.6' }}>
               Your AI-native copilot for strategy, execution, and risk. Trade any asset on any venue with simple, natural-language commands.
             </p>
 

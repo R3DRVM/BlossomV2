@@ -16,13 +16,15 @@ export default function LandingPage() {
       {/* Foreground content */}
       <div className="relative z-10 flex flex-col">
         {/* Top Navigation - Premium sticky header */}
-        <nav className="sticky top-0 w-full px-6 lg:px-10 py-4 flex items-center justify-between relative z-30 backdrop-blur-lg bg-white/80 border-b border-pink-100/50">
+        <nav className="sticky top-0 w-full px-6 lg:px-10 py-4 flex items-center justify-between relative z-30 backdrop-blur-lg bg-white/95" style={{
+          borderBottom: '1px solid #F3E5EC',
+        }}>
           <div className="flex items-center gap-2">
             <BlossomLogo size={28} className="drop-shadow-sm" />
-            <span className="text-lg font-semibold text-[#111827]">Blossom</span>
+            <span className="text-lg font-semibold text-[#111111]">Blossom</span>
           </div>
           <div className="flex items-center gap-4">
-            <a href="#" className="text-sm text-[#4B5563] hover:text-[#111827] transition-colors">
+            <a href="#" className="text-sm text-[#444444] hover:text-[#111111] transition-colors">
               Docs
             </a>
             <button

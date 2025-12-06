@@ -127,31 +127,27 @@ body {
   pointer-events: none;
 }
 
-/* Sakura petal wind animation - organic, believable drift */
+/* Sakura petal wind animation - subtle drift from top-right to bottom-left */
 @keyframes sakura-wind {
   0% {
     transform: translate(0, 0) rotate(0deg);
+    opacity: 0.35;
+  }
+  25% {
+    transform: translate(-12vw, 20vh) rotate(60deg);
     opacity: 0.4;
   }
-  20% {
-    transform: translate(-8vw, 15vh) rotate(45deg);
-    opacity: 0.5;
+  50% {
+    transform: translate(-25vw, 45vh) rotate(120deg);
+    opacity: 0.35;
   }
-  40% {
-    transform: translate(-15vw, 35vh) rotate(90deg);
-    opacity: 0.45;
-  }
-  60% {
-    transform: translate(-25vw, 55vh) rotate(135deg);
-    opacity: 0.5;
-  }
-  80% {
-    transform: translate(-35vw, 75vh) rotate(180deg);
-    opacity: 0.4;
+  75% {
+    transform: translate(-40vw, 70vh) rotate(180deg);
+    opacity: 0.3;
   }
   100% {
-    transform: translate(-45vw, 100vh) rotate(225deg);
-    opacity: 0.3;
+    transform: translate(-55vw, 100vh) rotate(240deg);
+    opacity: 0.25;
   }
 }
 
