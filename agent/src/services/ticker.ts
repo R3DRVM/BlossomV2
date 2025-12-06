@@ -243,24 +243,26 @@ export async function getEventMarketsTicker(): Promise<TickerPayload> {
     return {
       venue: 'event_demo',
       sections: [
-        {
-          id: 'kalshi',
-          label: 'Kalshi',
-          items: STATIC_EVENT_TICKER.filter(item => item.source === 'Kalshi').slice(0, 4).map(item => ({
-            label: item.label,
-            value: `${Math.round(item.impliedProb * 100)}%`,
-            meta: 'Kalshi',
-          })),
-        },
-        {
-          id: 'polymarket',
-          label: 'Polymarket',
-          items: STATIC_EVENT_TICKER.filter(item => item.source === 'Polymarket').slice(0, 4).map(item => ({
-            label: item.label,
-            value: `${Math.round(item.impliedProb * 100)}%`,
-            meta: 'Polymarket',
-          })),
-        },
+          {
+            id: 'kalshi',
+            label: 'Kalshi',
+            items: STATIC_EVENT_TICKER.filter(item => item.source === 'Kalshi').slice(0, 4).map(item => ({
+              label: item.label,
+              value: `${Math.round(item.impliedProb * 100)}%`,
+              meta: 'Kalshi',
+              lean: item.impliedProb > 0.5 ? 'YES' : 'NO',
+            })),
+          },
+          {
+            id: 'polymarket',
+            label: 'Polymarket',
+            items: STATIC_EVENT_TICKER.filter(item => item.source === 'Polymarket').slice(0, 4).map(item => ({
+              label: item.label,
+              value: `${Math.round(item.impliedProb * 100)}%`,
+              meta: 'Polymarket',
+              lean: item.impliedProb > 0.5 ? 'YES' : 'NO',
+            })),
+          },
       ],
     };
   }
