@@ -59,7 +59,7 @@ async function applyAction(action: BlossomAction): Promise<void> {
       action.amountUsd
     );
   } else if (action.type === 'event' && action.action === 'open') {
-    eventSim.openEventPosition(
+    await eventSim.openEventPosition(
       action.eventKey,
       action.side,
       action.stakeUsd
@@ -189,6 +189,7 @@ interface CloseRequest {
 interface CloseResponse {
   summaryMessage: string;
   portfolio: BlossomPortfolioSnapshot;
+  liveMarkToMarketUsd?: number; // Optional: live mark-to-market value for event positions
 }
 
 /**
@@ -210,10 +211,14 @@ app.post('/api/strategy/close', async (req, res) => {
       pnl = result.pnl;
       summaryMessage = `Closed ${result.position.market} ${result.position.side} position. Realized PnL: ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`;
     } else if (type === 'event') {
-      const result = eventSim.closeEventPosition(strategyId);
+      const result = await eventSim.closeEventPosition(strategyId);
       pnl = result.pnl;
       const outcome = result.position.outcome === 'won' ? 'Won' : 'Lost';
-      summaryMessage = `Settled event position "${result.position.label}" (${outcome}). Realized PnL: ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`;
+      let pnlMessage = `Realized PnL: ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`;
+      if (result.liveMarkToMarketUsd !== undefined) {
+        pnlMessage += ` (Live MTM: ${result.liveMarkToMarketUsd >= 0 ? '+' : ''}$${result.liveMarkToMarketUsd.toFixed(2)})`;
+      }
+      summaryMessage = `Settled event position "${result.position.label}" (${outcome}). ${pnlMessage}`;
     } else if (type === 'defi') {
       const result = defiSim.closeDefiPosition(strategyId);
       pnl = result.yieldEarned;

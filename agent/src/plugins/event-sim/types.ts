@@ -21,6 +21,9 @@ export interface EventPosition {
   isClosed: boolean;
   closedAt?: number;
   realizedPnlUsd?: number;
+  // Optional: live market data tracking
+  marketSource?: 'KALSHI' | 'POLYMARKET' | 'DEMO';
+  externalMarketId?: string;
 }
 
 export interface EventState {

@@ -5,6 +5,7 @@
 
 import { getPrice, PriceSymbol } from './prices';
 import { getEventSnapshot } from '../plugins/event-sim';
+import { fetchKalshiMarkets, fetchPolymarketMarkets, RawPredictionMarket } from './predictionData';
 
 // Unified ticker item structure
 export interface TickerItem {
@@ -12,6 +13,7 @@ export interface TickerItem {
   value: string;     // e.g. "$60,000" or "62%"
   change?: string;   // e.g. "+2.5%" or "+8% prob"
   meta?: string;     // e.g. "24h", "Kalshi", "Polymarket", "DeFi"
+  impliedProb?: number; // 0–1, for event markets
   lean?: 'YES' | 'NO'; // For event markets: indicates YES or NO leaning
 }
 
@@ -151,18 +153,70 @@ export async function getOnchainTicker(): Promise<TickerPayload> {
 }
 
 /**
- * Get event markets ticker - new unified format
+ * Get event markets ticker - new unified format with live data support
  */
 export async function getEventMarketsTicker(): Promise<TickerPayload> {
   try {
+    // Fetch live data from APIs (with fallback to static)
+    const kalshiMarkets = await fetchKalshiMarkets();
+    const polymarketMarkets = await fetchPolymarketMarkets();
+    
+    // Merge and sort by volume/open interest
+    const allMarkets: RawPredictionMarket[] = [...kalshiMarkets, ...polymarketMarkets];
+    const sorted = allMarkets.sort((a, b) => {
+      const aValue = a.openInterestUsd || a.volume24hUsd || 0;
+      const bValue = b.openInterestUsd || b.volume24hUsd || 0;
+      return bValue - aValue;
+    });
+
+    // Take top 10-12 markets
+    const topMarkets = sorted.slice(0, 12);
+
+    if (topMarkets.length > 0) {
+      // Convert to TickerItems
+      const tickerItems: TickerItem[] = topMarkets.map(market => {
+        const impliedProb = market.yesPrice;
+        const lean: 'YES' | 'NO' = impliedProb >= 0.5 ? 'YES' : 'NO';
+
+        return {
+          label: market.title,
+          value: `${Math.round(impliedProb * 100)}%`,
+          impliedProb,
+          meta: market.source,
+          lean,
+        };
+      });
+
+      // Group by source for sections
+      const kalshiItems = tickerItems.filter(item => item.meta === 'KALSHI');
+      const polymarketItems = tickerItems.filter(item => item.meta === 'POLYMARKET');
+
+      const sections: TickerSection[] = [];
+      if (kalshiItems.length > 0) {
+        sections.push({ id: 'kalshi', label: 'Kalshi', items: kalshiItems });
+      }
+      if (polymarketItems.length > 0) {
+        sections.push({ id: 'polymarket', label: 'Polymarket', items: polymarketItems });
+      }
+
+      return {
+        venue: 'event_demo',
+        sections: sections.length > 0 ? sections : [
+          { id: 'kalshi', label: 'Kalshi', items: kalshiItems },
+          { id: 'polymarket', label: 'Polymarket', items: polymarketItems },
+        ],
+      };
+    }
+
+    // Fallback to seeded markets if no live data
     const eventSnapshot = getEventSnapshot();
-    const allMarkets = eventSnapshot.markets;
+    const allMarketsSeeded = eventSnapshot.markets;
 
     // Separate markets by source
-    const kalshiMarkets: Array<{ label: string; impliedProb: number }> = [];
-    const polymarketMarkets: Array<{ label: string; impliedProb: number }> = [];
+    const kalshiMarketsSeeded: Array<{ label: string; impliedProb: number }> = [];
+    const polymarketMarketsSeeded: Array<{ label: string; impliedProb: number }> = [];
 
-    for (const market of allMarkets) {
+    for (const market of allMarketsSeeded) {
       let source: 'Kalshi' | 'Polymarket' | 'Demo' = 'Demo';
       if (market.key.includes('FED') || market.key.includes('ETF')) {
         source = 'Kalshi';
@@ -176,23 +230,25 @@ export async function getEventMarketsTicker(): Promise<TickerPayload> {
       };
 
       if (source === 'Kalshi') {
-        kalshiMarkets.push(item);
+        kalshiMarketsSeeded.push(item);
       } else if (source === 'Polymarket') {
-        polymarketMarkets.push(item);
+        polymarketMarketsSeeded.push(item);
       }
     }
 
     // Convert to TickerItems
-    const kalshiItems: TickerItem[] = kalshiMarkets.slice(0, 4).map(m => ({
+    const kalshiItems: TickerItem[] = kalshiMarketsSeeded.slice(0, 4).map(m => ({
       label: m.label,
       value: `${Math.round(m.impliedProb * 100)}%`,
+      impliedProb: m.impliedProb,
       meta: 'Kalshi',
       lean: m.impliedProb > 0.5 ? 'YES' : 'NO',
     }));
 
-    const polymarketItems: TickerItem[] = polymarketMarkets.slice(0, 4).map(m => ({
+    const polymarketItems: TickerItem[] = polymarketMarketsSeeded.slice(0, 4).map(m => ({
       label: m.label,
       value: `${Math.round(m.impliedProb * 100)}%`,
+      impliedProb: m.impliedProb,
       meta: 'Polymarket',
       lean: m.impliedProb > 0.5 ? 'YES' : 'NO',
     }));

@@ -5,6 +5,7 @@
 
 import { v4 as uuidv4 } from 'uuid';
 import { EventMarket, EventPosition, EventState } from './types';
+import { fetchKalshiMarkets, fetchPolymarketMarkets, RawPredictionMarket } from '../services/predictionData';
 
 // Seed markets matching front-end mock
 const SEEDED_MARKETS: EventMarket[] = [
@@ -66,11 +67,11 @@ export function setBalanceCallbacks(
 /**
  * Open an event position
  */
-export function openEventPosition(
+export async function openEventPosition(
   eventKey: string,
   side: 'YES' | 'NO',
   stakeUsd: number
-): EventPosition {
+): Promise<EventPosition> {
   const market = eventState.markets.find(m => m.key === eventKey);
   if (!market) {
     throw new Error(`Event market ${eventKey} not found`);
@@ -80,6 +81,30 @@ export function openEventPosition(
   const currentBalance = getUsdcBalance ? getUsdcBalance() : 0;
   if (currentBalance < stakeUsd) {
     throw new Error(`Insufficient REDACTED balance. Need $${stakeUsd.toFixed(2)}, have $${currentBalance.toFixed(2)}`);
+  }
+
+  // Try to find matching live market for mark-to-market tracking
+  let marketSource: 'KALSHI' | 'POLYMARKET' | 'DEMO' = 'DEMO';
+  let externalMarketId: string | undefined = undefined;
+
+  try {
+    const kalshiMarkets = await fetchKalshiMarkets();
+    const polymarketMarkets = await fetchPolymarketMarkets();
+    const allLiveMarkets = [...kalshiMarkets, ...polymarketMarkets];
+    
+    // Try to match by title (fuzzy match)
+    const matchedMarket = allLiveMarkets.find(m => 
+      m.title.toLowerCase().includes(market.label.toLowerCase()) ||
+      market.label.toLowerCase().includes(m.title.toLowerCase())
+    );
+
+    if (matchedMarket) {
+      marketSource = matchedMarket.source;
+      externalMarketId = matchedMarket.id;
+    }
+  } catch (error) {
+    // Silently fall back to DEMO if live market lookup fails
+    console.warn('[EventSim] Could not match to live market, using DEMO source');
   }
 
   // Deduct stake from REDACTED
@@ -101,6 +126,8 @@ export function openEventPosition(
     maxPayoutUsd,
     maxLossUsd,
     isClosed: false,
+    marketSource,
+    externalMarketId,
   };
 
   eventState.positions.push(position);
@@ -108,9 +135,33 @@ export function openEventPosition(
 }
 
 /**
+ * Get live market price for an event position (if available)
+ */
+export async function getLiveEventPrice(position: EventPosition): Promise<number | undefined> {
+  if (!position.externalMarketId || !position.marketSource || position.marketSource === 'DEMO') {
+    return undefined;
+  }
+
+  try {
+    const markets = position.marketSource === 'KALSHI'
+      ? await fetchKalshiMarkets()
+      : await fetchPolymarketMarkets();
+    
+    const liveMarket = markets.find(m => m.id === position.externalMarketId);
+    if (liveMarket) {
+      return liveMarket.yesPrice; // Return current YES probability
+    }
+  } catch (error) {
+    console.warn(`[EventSim] Failed to fetch live price for position ${position.id}:`, error);
+  }
+
+  return undefined;
+}
+
+/**
  * Close an event position
  */
-export function closeEventPosition(id: string): { position: EventPosition; pnl: number } {
+export async function closeEventPosition(id: string): Promise<{ position: EventPosition; pnl: number; liveMarkToMarketUsd?: number }> {
   const position = eventState.positions.find(p => p.id === id && !p.isClosed);
   if (!position) {
     throw new Error(`Position ${id} not found or already closed`);
@@ -121,7 +172,29 @@ export function closeEventPosition(id: string): { position: EventPosition; pnl: 
     throw new Error(`Market ${position.eventKey} not found`);
   }
 
-  // Sample outcome using win probability
+  // Try to get live mark-to-market price
+  let liveMarkToMarketUsd: number | undefined = undefined;
+  try {
+    const currentProb = await getLiveEventPrice(position);
+    if (currentProb !== undefined) {
+      // Calculate what PnL would be if settled at current market price
+      if (position.side === 'YES') {
+        // If YES wins at current prob, payout = stake * (1 / currentProb)
+        // Mark-to-market value = current payout value - stake
+        const currentPayoutValue = position.stakeUsd * (1 / currentProb);
+        liveMarkToMarketUsd = currentPayoutValue - position.stakeUsd;
+      } else {
+        // If NO wins at (1 - currentProb), payout = stake * (1 / (1 - currentProb))
+        const currentPayoutValue = position.stakeUsd * (1 / (1 - currentProb));
+        liveMarkToMarketUsd = currentPayoutValue - position.stakeUsd;
+      }
+    }
+  } catch (error) {
+    // Silently ignore mark-to-market errors
+    console.warn(`[EventSim] Could not compute live mark-to-market:`, error);
+  }
+
+  // Sample outcome using win probability (existing behavior)
   const isWin = Math.random() < market.winProbability;
   const outcome: 'won' | 'lost' = isWin ? 'won' : 'lost';
 
@@ -144,7 +217,7 @@ export function closeEventPosition(id: string): { position: EventPosition; pnl: 
   position.outcome = outcome;
   position.realizedPnlUsd = realizedPnlUsd;
 
-  return { position, pnl: realizedPnlUsd };
+  return { position, pnl: realizedPnlUsd, liveMarkToMarketUsd };
 }
 
 /**
