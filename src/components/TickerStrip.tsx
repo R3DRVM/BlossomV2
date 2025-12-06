@@ -107,19 +107,20 @@ function TickerItemPill({ item }: { item: TickerItem }) {
   const isEvent = !!item.lean; // event markets have lean; on-chain do not
 
   return (
-    <div className="flex items-center gap-1 whitespace-nowrap rounded-full bg-white/5 px-3 py-1 text-[11px] text-slate-700 mr-6 min-w-0 flex-shrink-0">
-      <span className="truncate max-w-[220px] font-medium">
+    <div className="flex items-center gap-1 whitespace-nowrap rounded-full bg-white/5 px-3 py-1 mr-6 min-w-0 flex-shrink-0">
+      {/* Label */}
+      <span className="truncate max-w-[220px] font-medium text-[11px] text-slate-700">
         {item.label}
       </span>
 
       <span className="mx-1 text-slate-400">·</span>
 
-      {/* percent */}
-      <span className="font-medium">
+      {/* Value (percentage or price) */}
+      <span className="text-xs tabular-nums text-slate-900 font-medium">
         {item.value}
       </span>
 
-      {/* YES / NO chip */}
+      {/* YES / NO lean (event markets only) */}
       {isEvent && item.lean && (
         <span
           className={
@@ -132,14 +133,14 @@ function TickerItemPill({ item }: { item: TickerItem }) {
         </span>
       )}
 
-      {/* change (for on-chain items) */}
+      {/* Change (for on-chain items) */}
       {item.change && (
         <span className={`ml-1 font-medium text-[11px] ${changeColor}`}>
           {item.change}
         </span>
       )}
 
-      {/* meta (KALSHI / POLYMARKET / 24h) */}
+      {/* Meta (KALSHI / POLYMARKET / 24h) */}
       {item.meta && (
         <>
           <span className="mx-1 text-slate-400">·</span>
