@@ -188,9 +188,10 @@ Example JSON output:
   }
 
   if (venue === 'hyperliquid') {
-    userPrompt += `**Venue Context:** Hyperliquid (Perpetuals). Prefer perps or DeFi actions.\n\n`;
+    userPrompt += `**Venue Context:** On-chain perps venue. Prefer perps or DeFi actions.\n\n`;
   } else if (venue === 'event_demo') {
     userPrompt += `**Venue Context:** Event Markets (Demo). Prefer event market actions.\n\n`;
+    userPrompt += `**Discovery Prompts:** When the user asks for "top markets on Kalshi" or "top markets on Polymarket", return a natural-language explanation listing 4-6 markets from the seeded event markets (Fed cuts in March 2025, BTC ETF approval, ETH ETF approval, US Election 2024, Crypto market cap threshold). Map Fed/ETF markets to "Kalshi" source, and election/crypto cap markets to "Polymarket" source. Only include event actions in the JSON if the user explicitly asks to "risk X% on the highest-volume market". Otherwise, only describe markets in text.\n\n`;
   }
 
   userPrompt += `**Remember:** This is a SIMULATED environment. No real orders are placed.`;
