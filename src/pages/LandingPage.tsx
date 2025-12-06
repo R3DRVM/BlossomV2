@@ -16,7 +16,7 @@ export default function LandingPage() {
       {/* Foreground content */}
       <div className="relative z-10 flex flex-col">
         {/* Top Navigation - Premium sticky header */}
-        <nav className="sticky top-0 w-full px-6 lg:px-10 py-4 flex items-center justify-between relative z-30 backdrop-blur-lg bg-white/95" style={{
+        <nav className="sticky top-0 w-full px-6 lg:px-10 py-4 flex items-center justify-between relative z-30 backdrop-blur-lg bg-white/80" style={{
           borderBottom: '1px solid #F3E5EC',
         }}>
           <div className="flex items-center gap-2">
