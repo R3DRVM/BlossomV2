@@ -1,9 +1,11 @@
 /**
  * Chat Preview Component
- * Miniature version of the real chat UI, cycling through Perps, DeFi, and Prediction Markets scenarios
+ * Miniature chat UI preview cycling through Perps, DeFi, and Prediction Markets scenarios
  */
 
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { Card } from '../ui/Card';
+import { Badge } from '../ui/Badge';
 import { BlossomLogo } from '../BlossomLogo';
 
 type ScenarioId = 'perps' | 'defi' | 'predictions';
@@ -21,21 +23,21 @@ const SCENARIOS: Scenario[] = [
     label: 'Perps',
     userMessage: 'Long ETH with 3% risk and manage liquidation for me.',
     blossomMessage:
-      "I'll size this position at 3% account risk, scan perp venues for best liquidity, and place TP/SL with a safe liquidation buffer.",
+      "Great. I'll size your position at 3% account risk, scan perp venues for best liquidity, and place TP/SL with a safe liquidation buffer.",
   },
   {
     id: 'defi',
     label: 'DeFi',
     userMessage: 'Park half my idle REDACTED into the safest yield on Kamino.',
     blossomMessage:
-      "Allocating 50% of idle REDACTED into a conservative Kamino vault with high TVL and low drawdown history. I'll monitor APY and rebalance if needed.",
+      'Allocating 50% of idle REDACTED into a conservative Kamino vault with high TVL and a stable yield profile. I'll monitor APY and rebalance if needed.',
   },
   {
     id: 'predictions',
     label: 'Prediction Markets',
     userMessage: 'Risk 2% of my account on the highest-volume BTC ETF prediction market.',
     blossomMessage:
-      'Routing 2% of account equity into the most liquid BTC ETF approval market, checking spreads and max payout before placing the trade.',
+      'Routing 2% of account equity into the most liquid BTC ETF approval market, checking spreads and max payout before placing your position.',
   },
 ];
 
@@ -44,69 +46,73 @@ export function ChatPreview() {
   const scenario = SCENARIOS[index];
 
   useEffect(() => {
-    const id = setInterval(() => {
-      setIndex((prev) => (prev + 1) % SCENARIOS.length);
-    }, 7500);
+    const id = setInterval(
+      () => setIndex((prev) => (prev + 1) % SCENARIOS.length),
+      7500
+    );
     return () => clearInterval(id);
   }, []);
 
   return (
-    <div className="relative max-w-md w-full mx-auto rounded-2xl shadow-lg border border-[#E5E5E5] bg-white p-5 md:p-6">
-      {/* Scenario label */}
+    <Card className="relative max-w-md w-full mx-auto rounded-2xl border border-[#FFD6E6] bg-white/90 shadow-xl backdrop-blur-sm">
+      {/* Header */}
       <div className="flex items-center justify-between mb-3">
-        <div className="px-3 py-1 bg-[#F25AA2] text-white text-xs font-medium rounded-full shadow-sm">
+        <Badge className="bg-[#F25AA2] text-white border border-[#F25AA2]/30">
           {scenario.label}
-        </div>
+        </Badge>
         <span className="text-xs text-gray-400">Preview only</span>
       </div>
 
-      {/* Getting started header - simplified version */}
-      <div className="mb-4 rounded-xl bg-white/80 backdrop-blur-sm px-3 py-2 text-xs border border-[#E5E5E5]/50 shadow-sm">
-        <p className="font-medium text-[#111111] mb-1.5">Getting started with Blossom</p>
-        <ul className="list-disc list-inside space-y-0.5 text-[#666666]">
+      {/* Getting started hint */}
+      <div className="mb-4 rounded-xl bg-white/80 backdrop-blur-sm px-3 py-2 text-[11px] text-[#666666] border border-[#E5E5E5]/50">
+        <p className="font-medium text-[#111111] mb-1">
+          Getting started with Blossom
+        </p>
+        <ul className="list-disc list-inside space-y-0.5">
           <li>Open a perp trade with defined risk.</li>
           <li>Park idle stablecoins into DeFi yield.</li>
           <li>Express views via prediction markets.</li>
         </ul>
       </div>
 
-      <div className="space-y-4">
-        {/* User bubble (right) - matching real chat styling */}
-        <div className="flex gap-3 mb-4 flex-row-reverse">
-          <div className="flex-shrink-0">
-            <div className="w-8 h-8 rounded-full flex items-center justify-center text-lg bg-[#F25AA2]">
-              👤
+      {/* Chat bubbles */}
+      <div className="space-y-3">
+        {/* User bubble (right) */}
+        <div className="flex justify-end">
+          <div className="max-w-[80%]">
+            <div className="flex justify-end mb-1">
+              <span className="text-[11px] text-gray-400">You</span>
             </div>
-          </div>
-          <div className="flex flex-col items-end max-w-[70%]">
-            <div className="text-sm font-medium text-gray-600 mb-1">You</div>
-            <div className="rounded-3xl px-4 py-3 bg-gradient-to-br from-[#F25AA2] to-[#FF5A96] text-white shadow-sm">
-              <div className="whitespace-pre-wrap text-sm">{scenario.userMessage}</div>
-            </div>
-            <div className="text-xs text-gray-400 mt-1">
-              {new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+            <div className="rounded-2xl rounded-br-sm bg-gradient-to-br from-[#F25AA2] to-[#FF7EB3] px-3 py-2 text-sm text-white shadow-sm">
+              {scenario.userMessage}
             </div>
           </div>
         </div>
 
-        {/* Blossom bubble (left) - matching real chat styling */}
-        <div className="flex gap-3 mb-4 flex-row">
-          <div className="flex-shrink-0">
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white shadow-sm ring-1 ring-[#F25AA2]/30">
-              <BlossomLogo size={20} />
-            </div>
+        {/* Blossom bubble (left) */}
+        <div
+          key={scenario.id}
+          className="flex items-start gap-2 animate-fade-in"
+        >
+          {/* Avatar – Blossom logo */}
+          <div className="mt-1 flex h-7 w-7 items-center justify-center rounded-full bg-white shadow-sm ring-1 ring-[#F25AA2]/30">
+            <BlossomLogo size={16} />
           </div>
-          <div className="flex flex-col items-start max-w-[70%]">
-            <div className="text-sm font-medium text-gray-600 mb-1">Blossom</div>
-            <div className="rounded-3xl px-4 py-3 card-glass text-[#111111]">
-              <div className="whitespace-pre-wrap text-sm">{scenario.blossomMessage}</div>
+          <div className="max-w-[82%]">
+            <div className="mb-1 text-[11px] text-gray-400">Blossom</div>
+            <div className="rounded-2xl rounded-bl-sm bg-white px-3 py-2 text-sm text-[#111111] shadow-sm border border-[#E5E5E5] backdrop-blur-sm" style={{
+              background: 'rgba(255, 255, 255, 0.85)',
+              backdropFilter: 'blur(12px)',
+              WebkitBackdropFilter: 'blur(12px)',
+            }}>
+              {scenario.blossomMessage}
             </div>
-            <div className="text-xs text-gray-400 mt-1">
-              Blossom • just now
-            </div>
+            <div className="mt-1 text-[10px] text-gray-400">Just now</div>
           </div>
         </div>
       </div>
-    </div>
+    </Card>
   );
 }
+
+export default ChatPreview;
