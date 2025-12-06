@@ -4,37 +4,25 @@ import { BlossomLogo } from './BlossomLogo';
 interface ChatScenario {
   id: string;
   userMessage: string;
-  blossomSteps: string[];
+  blossomResponse: string; // Single response instead of steps for cleaner UI
 }
 
+// Chat scenarios - can be easily updated here
 const SCENARIOS: ChatScenario[] = [
   {
     id: 'perps',
     userMessage: 'Long ETH with 3% risk and manage liquidation for me.',
-    blossomSteps: [
-      'Analyzing ETH market structure and funding.',
-      'Sizing position based on 3% account risk.',
-      'Placing entry on on-chain perps venue.',
-      'Setting TP/SL and liquidation buffer.',
-    ],
+    blossomResponse: 'I\'ll open a long ETH position with 3% account risk. Setting take profit at $3,450 and stop loss at $3,100 to maintain a safe liquidation buffer. Position size: $300 notional.',
   },
   {
     id: 'defi',
     userMessage: 'Park half my idle USDC into the safest yield on Kamino.',
-    blossomSteps: [
-      'Scanning Kamino vaults by risk and APY.',
-      'Allocating 50% of idle USDC to top-ranked vault.',
-      'Tracking yield and health in your portfolio.',
-    ],
+    blossomResponse: 'Allocating 50% of idle USDC ($2,000) to Kamino USDC vault. This is a conservative yield strategy with high TVL and low risk. Estimated APY: 9.2%.',
   },
   {
     id: 'events',
     userMessage: 'Risk 2% of my account on the highest-volume BTC ETF prediction market.',
-    blossomSteps: [
-      'Finding top BTC ETF markets on Kalshi & Polymarket.',
-      'Allocating 2% risk to the leading YES market.',
-      'Monitoring odds and marking-to-market in your dashboard.',
-    ],
+    blossomResponse: 'Selected BTC ETF approval by Dec 31 (Kalshi). Current odds: 68% YES. Staking $200 (2% of account) with max payout of $340 if YES wins.',
   },
 ];
 
@@ -42,8 +30,9 @@ export function ChatSimulation() {
   const [scenarioIndex, setScenarioIndex] = useState(0);
   const [showUserMessage, setShowUserMessage] = useState(false);
   const [userMessageComplete, setUserMessageComplete] = useState(false);
-  const [visibleSteps, setVisibleSteps] = useState(0);
+  const [showBlossomResponse, setShowBlossomResponse] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
+  const [isBlossomTyping, setIsBlossomTyping] = useState(false);
 
   const currentScenario = SCENARIOS[scenarioIndex];
 
@@ -51,8 +40,9 @@ export function ChatSimulation() {
     // Reset state when scenario changes
     setShowUserMessage(false);
     setUserMessageComplete(false);
-    setVisibleSteps(0);
+    setShowBlossomResponse(false);
     setIsTyping(false);
+    setIsBlossomTyping(false);
 
     // Start typing user message
     const userTimer = setTimeout(() => {
@@ -62,8 +52,8 @@ export function ChatSimulation() {
       setTimeout(() => {
         setIsTyping(false);
         setUserMessageComplete(true);
-      }, currentScenario.userMessage.length * 50); // ~50ms per character
-    }, 500);
+      }, currentScenario.userMessage.length * 40); // ~40ms per character
+    }, 800);
 
     return () => clearTimeout(userTimer);
   }, [scenarioIndex, currentScenario.userMessage.length]);
@@ -71,59 +61,79 @@ export function ChatSimulation() {
   useEffect(() => {
     if (!userMessageComplete) return;
 
-    // Show Blossom steps one by one
-    if (visibleSteps < currentScenario.blossomSteps.length) {
-      const timer = setTimeout(() => {
-        setVisibleSteps((prev) => prev + 1);
-      }, 800);
+    // Show Blossom typing indicator
+    const typingTimer = setTimeout(() => {
+      setIsBlossomTyping(true);
+      setTimeout(() => {
+        setIsBlossomTyping(false);
+        setShowBlossomResponse(true);
+      }, 1000); // Typing for 1 second
+    }, 500);
 
-      return () => clearTimeout(timer);
-    } else {
-      // Move to next scenario after showing all steps
-      const timer = setTimeout(() => {
-        setScenarioIndex((prev) => (prev + 1) % SCENARIOS.length);
-      }, 2000);
+    return () => clearTimeout(typingTimer);
+  }, [userMessageComplete]);
 
-      return () => clearTimeout(timer);
-    }
-  }, [userMessageComplete, visibleSteps, currentScenario.blossomSteps.length]);
+  useEffect(() => {
+    if (!showBlossomResponse) return;
+
+    // Move to next scenario after showing response
+    const nextTimer = setTimeout(() => {
+      setScenarioIndex((prev) => (prev + 1) % SCENARIOS.length);
+    }, 3000); // Show response for 3 seconds
+
+    return () => clearTimeout(nextTimer);
+  }, [showBlossomResponse]);
 
   return (
-    <div className="bg-white rounded-2xl shadow-lg border border-pink-100 p-4 md:p-6">
-      {/* SIM mode pill */}
-      <div className="flex items-center gap-2 mb-4">
-        <div className="w-1.5 h-1.5 rounded-full bg-blossom-pink" />
+    <div className="bg-white rounded-3xl shadow-md border border-pink-100 p-5 md:p-6">
+      {/* SIM mode info */}
+      <div className="flex items-center gap-2 mb-5 pb-3 border-b border-slate-100">
         <span className="text-[10px] text-slate-500">SIM mode · Mock data · No live orders</span>
       </div>
 
       {/* Chat thread */}
-      <div className="space-y-3 min-h-[300px]">
+      <div className="space-y-4 min-h-[280px]">
         {/* User message */}
         {showUserMessage && (
-          <div className="flex justify-end">
-            <div className="bg-white border border-slate-200 rounded-2xl rounded-tr-sm px-4 py-2 max-w-[80%]">
-              <p className="text-sm text-slate-800">
+          <div className="flex justify-end animate-fade-in">
+            <div className="bg-slate-50 border border-slate-200 rounded-2xl rounded-tr-sm px-4 py-2.5 max-w-[85%]">
+              <p className="text-sm text-[#171717] leading-relaxed">
                 {currentScenario.userMessage}
                 {isTyping && (
-                  <span className="inline-block w-2 h-4 bg-blossom-pink ml-1 animate-pulse" />
+                  <span className="inline-block w-2 h-4 bg-[#FF66A0] ml-1.5 animate-pulse" />
                 )}
               </p>
             </div>
           </div>
         )}
 
-        {/* Blossom responses */}
-        {userMessageComplete &&
-          currentScenario.blossomSteps.slice(0, visibleSteps).map((step, idx) => (
-            <div key={idx} className="flex items-start gap-2">
-              <div className="w-6 h-6 rounded-full bg-blossom-pink/10 flex items-center justify-center flex-shrink-0">
-                <BlossomLogo size={16} className="opacity-80" />
-              </div>
-              <div className="bg-pink-50 rounded-2xl rounded-tl-sm px-4 py-2 max-w-[80%]">
-                <p className="text-sm text-slate-700">{step}</p>
+        {/* Blossom typing indicator */}
+        {userMessageComplete && isBlossomTyping && (
+          <div className="flex items-start gap-2 animate-fade-in">
+            <div className="w-7 h-7 rounded-full bg-[#FFD6E6] flex items-center justify-center flex-shrink-0">
+              <BlossomLogo size={18} className="opacity-90" />
+            </div>
+            <div className="bg-[#FFD6E6] rounded-2xl rounded-tl-sm px-4 py-2.5">
+              <div className="flex gap-1">
+                <span className="w-2 h-2 rounded-full bg-[#FF66A0] animate-pulse" style={{ animationDelay: '0ms' }} />
+                <span className="w-2 h-2 rounded-full bg-[#FF66A0] animate-pulse" style={{ animationDelay: '150ms' }} />
+                <span className="w-2 h-2 rounded-full bg-[#FF66A0] animate-pulse" style={{ animationDelay: '300ms' }} />
               </div>
             </div>
-          ))}
+          </div>
+        )}
+
+        {/* Blossom response */}
+        {showBlossomResponse && (
+          <div className="flex items-start gap-2 animate-fade-in">
+            <div className="w-7 h-7 rounded-full bg-[#FFD6E6] flex items-center justify-center flex-shrink-0">
+              <BlossomLogo size={18} className="opacity-90" />
+            </div>
+            <div className="bg-[#FFD6E6] rounded-2xl rounded-tl-sm px-4 py-2.5 max-w-[85%]">
+              <p className="text-sm text-[#171717] leading-relaxed">{currentScenario.blossomResponse}</p>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

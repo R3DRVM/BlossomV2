@@ -16,18 +16,18 @@ export default function LandingPage() {
       {/* Foreground content */}
       <div className="relative z-10 flex flex-col">
         {/* Top Navigation */}
-        <nav className="w-full px-6 lg:px-10 py-4 flex items-center justify-between">
+        <nav className="w-full px-6 lg:px-10 py-4 flex items-center justify-between relative z-20">
           <div className="flex items-center gap-2">
             <BlossomLogo size={28} className="drop-shadow-sm" />
-            <span className="text-lg font-semibold text-[#1A1A1A]">Blossom</span>
+            <span className="text-lg font-semibold text-[#171717]">Blossom</span>
           </div>
           <div className="flex items-center gap-4">
-            <a href="#" className="text-sm text-slate-600 hover:text-[#1A1A1A] transition-colors">
+            <a href="#" className="text-sm text-[#555555] hover:text-[#171717] transition-colors">
               Docs
             </a>
             <button
               onClick={() => navigate('/app')}
-              className="px-4 py-2 text-sm font-medium text-white bg-blossom-pink rounded-full hover:bg-[#FF4B9A] transition-colors shadow-sm"
+              className="px-4 py-2 text-sm font-medium text-white bg-[#FF66A0] rounded-full hover:bg-[#FF4B8A] transition-colors shadow-sm"
             >
               Open SIM app
             </button>
