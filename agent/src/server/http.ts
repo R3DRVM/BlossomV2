@@ -266,35 +266,47 @@ app.get('/api/ticker', async (req, res) => {
     const venue = (req.query.venue as string) || 'hyperliquid';
     
     if (venue === 'event_demo') {
-      const events = await getEventMarketsTicker();
+      const payload = await getEventMarketsTicker();
       res.json({
-        venue: 'event_demo',
-        events,
+        venue: payload.venue,
+        sections: payload.sections,
       });
     } else {
-      const onchain = await getOnchainTicker();
+      const payload = await getOnchainTicker();
       res.json({
-        venue: 'hyperliquid',
-        onchain,
+        venue: payload.venue,
+        sections: payload.sections,
       });
     }
   } catch (error: any) {
     console.error('Ticker error:', error);
-    // Return fallback data instead of error
+    // Return fallback payload
     if (req.query.venue === 'event_demo') {
       res.json({
         venue: 'event_demo',
-        events: [
-          { id: 'FED_CUTS_MAR_2025', label: 'Fed cuts in March 2025', impliedProb: 0.62, source: 'Kalshi' },
-          { id: 'BTC_ETF_APPROVAL_2025', label: 'BTC ETF approved by Dec 31', impliedProb: 0.68, source: 'Kalshi' },
+        sections: [
+          {
+            id: 'kalshi',
+            label: 'Kalshi',
+            items: [
+              { label: 'Fed cuts in March 2025', value: '62%', meta: 'Kalshi' },
+              { label: 'BTC ETF approved by Dec 31', value: '68%', meta: 'Kalshi' },
+            ],
+          },
         ],
       });
     } else {
       res.json({
         venue: 'hyperliquid',
-        onchain: [
-          { symbol: 'BTC', priceUsd: 60000, change24hPct: 2.5 },
-          { symbol: 'ETH', priceUsd: 3000, change24hPct: 1.8 },
+        sections: [
+          {
+            id: 'majors',
+            label: 'Majors',
+            items: [
+              { label: 'BTC', value: '$60,000', change: '+2.5%', meta: '24h' },
+              { label: 'ETH', value: '$3,000', change: '+1.8%', meta: '24h' },
+            ],
+          },
         ],
       });
     }

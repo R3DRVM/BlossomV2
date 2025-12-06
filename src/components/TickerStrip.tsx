@@ -1,6 +1,6 @@
 /**
  * Ticker Strip Component
- * Displays live price ticker for on-chain assets or event markets
+ * Rotating ticker that displays sections of items, rotating every 5 seconds
  */
 
 import { useState, useEffect } from 'react';
@@ -8,88 +8,120 @@ import { USE_AGENT_BACKEND } from '../lib/config';
 
 const VITE_BLOSSOM_AGENT_URL = import.meta.env.VITE_BLOSSOM_AGENT_URL || 'http://localhost:3001';
 
-interface OnchainTickerItem {
-  symbol: string;
-  priceUsd: number;
-  change24hPct: number;
-}
-
-interface EventTickerItem {
-  id: string;
+interface TickerItem {
   label: string;
-  impliedProb: number;
-  source: 'Kalshi' | 'Polymarket' | 'Demo';
+  value: string;
+  change?: string;
+  meta?: string;
 }
 
-interface TickerResponse {
-  venue: string;
-  onchain?: OnchainTickerItem[];
-  events?: EventTickerItem[];
+interface TickerSection {
+  id: 'majors' | 'gainers' | 'defi' | 'kalshi' | 'polymarket';
+  label: string;
+  items: TickerItem[];
+}
+
+interface TickerPayload {
+  venue: 'hyperliquid' | 'event_demo';
+  sections: TickerSection[];
 }
 
 interface TickerStripProps {
   venue: 'hyperliquid' | 'event_demo';
 }
 
-// Static fallback for mock mode
-const STATIC_ONCHAIN: OnchainTickerItem[] = [
-  { symbol: 'BTC', priceUsd: 60000, change24hPct: 2.5 },
-  { symbol: 'ETH', priceUsd: 3000, change24hPct: 1.8 },
-  { symbol: 'SOL', priceUsd: 150, change24hPct: -0.5 },
-  { symbol: 'AVAX', priceUsd: 35, change24hPct: 3.2 },
-  { symbol: 'LINK', priceUsd: 14, change24hPct: 0.8 },
-];
+const ITEMS_PER_PAGE = 4;
+const ROTATE_INTERVAL_MS = 5000;
 
-const STATIC_EVENTS: EventTickerItem[] = [
-  { id: 'FED_CUTS_MAR_2025', label: 'Fed cuts in March 2025', impliedProb: 0.62, source: 'Kalshi' },
-  { id: 'BTC_ETF_APPROVAL_2025', label: 'BTC ETF approved by Dec 31', impliedProb: 0.68, source: 'Kalshi' },
-  { id: 'ETH_ETF_APPROVAL_2025', label: 'ETH ETF approved by June 2025', impliedProb: 0.58, source: 'Kalshi' },
-  { id: 'US_ELECTION_2024', label: 'US Election Winner 2024', impliedProb: 0.50, source: 'Polymarket' },
-  { id: 'CRYPTO_MCAP_THRESHOLD', label: 'Crypto market cap above $3T by year-end', impliedProb: 0.52, source: 'Polymarket' },
-];
+// Static fallback for mock mode
+const STATIC_ONCHAIN_PAYLOAD: TickerPayload = {
+  venue: 'hyperliquid',
+  sections: [
+    {
+      id: 'majors',
+      label: 'Majors',
+      items: [
+        { label: 'BTC', value: '$60,000', change: '+2.5%', meta: '24h' },
+        { label: 'ETH', value: '$3,000', change: '+1.8%', meta: '24h' },
+        { label: 'SOL', value: '$150', change: '-0.5%', meta: '24h' },
+        { label: 'AVAX', value: '$35', change: '+3.2%', meta: '24h' },
+        { label: 'LINK', value: '$14', change: '+0.8%', meta: '24h' },
+      ],
+    },
+    {
+      id: 'gainers',
+      label: 'Top gainers (24h)',
+      items: [
+        { label: 'AVAX', value: '$35', change: '+3.2%', meta: 'Top gainer' },
+        { label: 'BTC', value: '$60,000', change: '+2.5%', meta: 'Top gainer' },
+        { label: 'ETH', value: '$3,000', change: '+1.8%', meta: 'Top gainer' },
+        { label: 'LINK', value: '$14', change: '+0.8%', meta: 'Top gainer' },
+      ],
+    },
+    {
+      id: 'defi',
+      label: 'DeFi TVL',
+      items: [
+        { label: 'Lido', value: '$28B TVL', meta: 'DeFi' },
+        { label: 'Aave', value: '$12B TVL', meta: 'DeFi' },
+        { label: 'Uniswap', value: '$8.5B TVL', meta: 'DeFi' },
+        { label: 'Maker', value: '$6.2B TVL', meta: 'DeFi' },
+      ],
+    },
+  ],
+};
+
+const STATIC_EVENT_PAYLOAD: TickerPayload = {
+  venue: 'event_demo',
+  sections: [
+    {
+      id: 'kalshi',
+      label: 'Kalshi',
+      items: [
+        { label: 'Fed cuts in March 2025', value: '62%', meta: 'Kalshi' },
+        { label: 'BTC ETF approved by Dec 31', value: '68%', meta: 'Kalshi' },
+        { label: 'ETH ETF approved by June 2025', value: '58%', meta: 'Kalshi' },
+      ],
+    },
+    {
+      id: 'polymarket',
+      label: 'Polymarket',
+      items: [
+        { label: 'US Election Winner 2024', value: '50%', meta: 'Polymarket' },
+        { label: 'Crypto market cap above $3T by year-end', value: '52%', meta: 'Polymarket' },
+      ],
+    },
+  ],
+};
 
 export function TickerStrip({ venue }: TickerStripProps) {
   const [loading, setLoading] = useState(true);
-  const [onchainData, setOnchainData] = useState<OnchainTickerItem[]>([]);
-  const [eventsData, setEventsData] = useState<EventTickerItem[]>([]);
+  const [payload, setPayload] = useState<TickerPayload | null>(null);
+  const [pageIndex, setPageIndex] = useState(0);
 
   const fetchTicker = async () => {
     if (!USE_AGENT_BACKEND) {
       // Mock mode: use static data
-      if (venue === 'event_demo') {
-        setEventsData(STATIC_EVENTS);
-      } else {
-        setOnchainData(STATIC_ONCHAIN);
-      }
+      setPayload(venue === 'event_demo' ? STATIC_EVENT_PAYLOAD : STATIC_ONCHAIN_PAYLOAD);
       setLoading(false);
       return;
     }
 
     try {
-      const agentUrl = VITE_BLOSSOM_AGENT_URL || 'http://localhost:3001';
+      const agentUrl = VITE_BLOSSOM_AGENT_URL;
       const response = await fetch(`${agentUrl}/api/ticker?venue=${venue}`);
       
       if (!response.ok) {
         throw new Error(`Ticker API error: ${response.status}`);
       }
 
-      const data: TickerResponse = await response.json();
-      
-      if (venue === 'event_demo' && data.events) {
-        setEventsData(data.events);
-      } else if (data.onchain) {
-        setOnchainData(data.onchain);
-      }
-      
+      const data: TickerPayload = await response.json();
+      setPayload(data);
       setLoading(false);
     } catch (err: any) {
       console.warn('Failed to fetch ticker:', err);
       // Use fallback data
-      if (venue === 'event_demo') {
-        setEventsData(STATIC_EVENTS);
-      } else {
-        setOnchainData(STATIC_ONCHAIN);
-      }
+      setPayload(venue === 'event_demo' ? STATIC_EVENT_PAYLOAD : STATIC_ONCHAIN_PAYLOAD);
       setLoading(false);
     }
   };
@@ -103,7 +135,31 @@ export function TickerStrip({ venue }: TickerStripProps) {
     return () => clearInterval(interval);
   }, [venue]);
 
-  if (loading) {
+  // Flatten all sections into a single array of items
+  const allItems: TickerItem[] = payload
+    ? payload.sections.flatMap(section => section.items)
+    : [];
+
+  // Calculate total pages
+  const totalPages = Math.ceil(allItems.length / ITEMS_PER_PAGE) || 1;
+  const currentPage = pageIndex % totalPages;
+
+  // Get items for current page
+  const start = currentPage * ITEMS_PER_PAGE;
+  const pageItems = allItems.slice(start, start + ITEMS_PER_PAGE);
+
+  // Rotation effect
+  useEffect(() => {
+    if (allItems.length === 0) return;
+
+    const rotateInterval = setInterval(() => {
+      setPageIndex(prev => (prev + 1) % totalPages);
+    }, ROTATE_INTERVAL_MS);
+
+    return () => clearInterval(rotateInterval);
+  }, [allItems.length, totalPages]);
+
+  if (loading || !payload || allItems.length === 0) {
     return (
       <div className="text-xs text-blossom-slate">
         Fetching markets...
@@ -111,39 +167,37 @@ export function TickerStrip({ venue }: TickerStripProps) {
     );
   }
 
-  if (venue === 'event_demo') {
-    return (
-      <div className="flex items-center gap-3 overflow-x-auto text-xs text-blossom-slate">
-        {eventsData.map((item, idx) => (
-          <span key={item.id} className="flex-shrink-0 whitespace-nowrap">
-            {idx > 0 && <span className="mx-2">·</span>}
-            <span>{item.label}</span>
-            <span className="ml-1 font-medium">{Math.round(item.impliedProb * 100)}%</span>
-            <span className="ml-1 text-[10px] opacity-70">· {item.source}</span>
-          </span>
-        ))}
-      </div>
-    );
-  }
-
   return (
-    <div className="flex items-center gap-3 overflow-x-auto text-xs text-blossom-slate">
-      {onchainData.map((item, idx) => {
-        const isPositive = item.change24hPct >= 0;
-        const changeColor = isPositive ? 'text-green-600' : 'text-red-600';
-        
-        return (
-          <span key={item.symbol} className="flex-shrink-0 whitespace-nowrap">
-            {idx > 0 && <span className="mx-2">·</span>}
-            <span className="font-medium">{item.symbol}</span>
-            <span className="ml-1">${item.priceUsd.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
-            <span className={`ml-1 ${changeColor}`}>
-              {isPositive ? '+' : ''}{item.change24hPct.toFixed(1)}%
-            </span>
-          </span>
-        );
-      })}
+    <div className="flex-1 overflow-hidden">
+      <div className="flex items-center gap-6 whitespace-nowrap transition-opacity duration-300">
+        {pageItems.map((item, idx) => {
+          const isPositive = item.change && !item.change.startsWith('-');
+          const changeColor = item.change
+            ? (isPositive ? 'text-green-600' : 'text-red-600')
+            : '';
+
+          return (
+            <div
+              key={`${item.label}-${idx}-${currentPage}`}
+              className="flex items-center text-xs text-blossom-ink/80 gap-1 min-w-0 flex-shrink-0"
+            >
+              <span className="font-medium truncate">{item.label}</span>
+              <span className="text-blossom-slate">·</span>
+              <span className="truncate">{item.value}</span>
+              {item.change && (
+                <span className={`ml-1 font-medium ${changeColor}`}>
+                  {item.change}
+                </span>
+              )}
+              {item.meta && (
+                <span className="ml-1 text-[10px] uppercase tracking-wide text-blossom-slate">
+                  {item.meta}
+                </span>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
-
