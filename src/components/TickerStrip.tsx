@@ -13,6 +13,7 @@ interface TickerItem {
   value: string;
   change?: string;
   meta?: string;
+  lean?: 'YES' | 'NO';
 }
 
 interface TickerSection {
@@ -75,17 +76,17 @@ const STATIC_EVENT_PAYLOAD: TickerPayload = {
       id: 'kalshi',
       label: 'Kalshi',
       items: [
-        { label: 'Fed cuts in March 2025', value: '62%', meta: 'Kalshi' },
-        { label: 'BTC ETF approved by Dec 31', value: '68%', meta: 'Kalshi' },
-        { label: 'ETH ETF approved by June 2025', value: '58%', meta: 'Kalshi' },
+        { label: 'Fed cuts in March 2025', value: '62%', meta: 'Kalshi', lean: 'YES' },
+        { label: 'BTC ETF approved by Dec 31', value: '68%', meta: 'Kalshi', lean: 'YES' },
+        { label: 'ETH ETF approved by June 2025', value: '58%', meta: 'Kalshi', lean: 'YES' },
       ],
     },
     {
       id: 'polymarket',
       label: 'Polymarket',
       items: [
-        { label: 'US Election Winner 2024', value: '50%', meta: 'Polymarket' },
-        { label: 'Crypto market cap above $3T by year-end', value: '52%', meta: 'Polymarket' },
+        { label: 'US Election Winner 2024', value: '50%', meta: 'Polymarket', lean: 'YES' },
+        { label: 'Crypto market cap above $3T by year-end', value: '52%', meta: 'Polymarket', lean: 'YES' },
       ],
     },
   ],
@@ -102,6 +103,7 @@ function TickerItemPill({ item }: { item: TickerItem }) {
   const changeColor = item.change
     ? (isNeg ? 'text-red-600' : 'text-green-600')
     : '';
+  const isYes = item.lean === 'YES';
 
   return (
     <div className="flex items-center text-[11px] text-blossom-ink/80 gap-1 mr-6 min-w-0 flex-shrink-0">
@@ -110,6 +112,15 @@ function TickerItemPill({ item }: { item: TickerItem }) {
         <>
           <span className="text-blossom-slate">·</span>
           <span className="truncate">{item.value}</span>
+          {item.lean && (
+            <span
+              className={`ml-1 text-[10px] font-semibold uppercase ${
+                isYes ? 'text-blossom-success' : 'text-blossom-danger'
+              }`}
+            >
+              {item.lean}
+            </span>
+          )}
         </>
       )}
       {item.change && (

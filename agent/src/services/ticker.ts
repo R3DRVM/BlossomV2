@@ -12,6 +12,7 @@ export interface TickerItem {
   value: string;     // e.g. "$60,000" or "62%"
   change?: string;   // e.g. "+2.5%" or "+8% prob"
   meta?: string;     // e.g. "24h", "Kalshi", "Polymarket", "DeFi"
+  lean?: 'YES' | 'NO'; // For event markets: indicates YES or NO leaning
 }
 
 export interface TickerSection {
@@ -186,12 +187,14 @@ export async function getEventMarketsTicker(): Promise<TickerPayload> {
       label: m.label,
       value: `${Math.round(m.impliedProb * 100)}%`,
       meta: 'Kalshi',
+      lean: m.impliedProb > 0.5 ? 'YES' : 'NO',
     }));
 
     const polymarketItems: TickerItem[] = polymarketMarkets.slice(0, 4).map(m => ({
       label: m.label,
       value: `${Math.round(m.impliedProb * 100)}%`,
       meta: 'Polymarket',
+      lean: m.impliedProb > 0.5 ? 'YES' : 'NO',
     }));
 
     // If no markets found, use static fallback
@@ -206,6 +209,7 @@ export async function getEventMarketsTicker(): Promise<TickerPayload> {
               label: item.label,
               value: `${Math.round(item.impliedProb * 100)}%`,
               meta: 'Kalshi',
+              lean: item.impliedProb > 0.5 ? 'YES' : 'NO',
             })),
           },
           {
@@ -215,6 +219,7 @@ export async function getEventMarketsTicker(): Promise<TickerPayload> {
               label: item.label,
               value: `${Math.round(item.impliedProb * 100)}%`,
               meta: 'Polymarket',
+              lean: item.impliedProb > 0.5 ? 'YES' : 'NO',
             })),
           },
         ],
