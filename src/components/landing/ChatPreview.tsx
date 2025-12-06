@@ -30,7 +30,7 @@ const SCENARIOS: ChatScenario[] = [
       },
       {
         role: 'blossom',
-        text: 'I'll route your order to the venue with the best liquidity, size the position to 3% account risk, and manage liquidation with dynamic stop-losses and take-profit targets.',
+        text: "I'll route your order to the venue with the best liquidity, size the position to 3% account risk, and manage liquidation with dynamic stop-losses and take-profit targets.",
       },
     ],
   },
@@ -44,7 +44,7 @@ const SCENARIOS: ChatScenario[] = [
       },
       {
         role: 'blossom',
-        text: 'Scanning Kamino USDC vaults for risk-adjusted yield… Selected a conservative, high-TVL vault and allocating 50% of idle USDC. I'll track APY and risk for you.',
+        text: "Scanning Kamino USDC vaults for risk-adjusted yield… Selected a conservative, high-TVL vault and allocating 50% of idle USDC. I'll track APY and risk for you.",
       },
     ],
   },
@@ -58,7 +58,7 @@ const SCENARIOS: ChatScenario[] = [
       },
       {
         role: 'blossom',
-        text: 'Checking Kalshi and Polymarket for BTC ETF markets… Found the highest-volume market and staking 2% of your account notional. I'll monitor odds and P&L in your dashboard.',
+        text: "Checking Kalshi and Polymarket for BTC ETF markets… Found the highest-volume market and staking 2% of your account notional. I'll monitor odds and P&L in your dashboard.",
       },
     ],
   },
