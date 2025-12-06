@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { MarketingAgentTerminal } from './MarketingAgentTerminal';
+import { MarketingAgentPreview } from './MarketingAgentPreview';
 
 const ROTATING_WORDS = [
   'Pre-IPO',
@@ -29,42 +29,26 @@ export function HeroSection() {
   }, []);
 
   return (
-    <section className="relative min-h-screen landing-bg overflow-hidden">
-      {/* Subtle cherry blossom background elements */}
-      <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute top-20 right-10 w-32 h-32 opacity-10">
-          <div className="blossom-petal w-full h-full bg-blossom-pink rounded-full blur-2xl" />
-        </div>
-        <div className="absolute bottom-40 left-20 w-24 h-24 opacity-10" style={{ animationDelay: '2s' }}>
-          <div className="blossom-petal w-full h-full bg-blossom-pink rounded-full blur-xl" />
-        </div>
-        <div className="absolute top-1/2 right-1/4 w-20 h-20 opacity-10" style={{ animationDelay: '4s' }}>
-          <div className="blossom-petal w-full h-full bg-blossom-pink rounded-full blur-lg" />
-        </div>
-      </div>
-
-      {/* Radial gradient overlay */}
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_30%,rgba(255,107,160,0.08),transparent_70%)]" />
-
-      <div className="container mx-auto px-6 py-20 relative z-10">
+    <section className="relative min-h-screen overflow-hidden">
+      <div className="max-w-6xl mx-auto px-6 lg:px-10 py-10 lg:py-16 relative z-10">
         <div className="grid lg:grid-cols-2 gap-12 items-center min-h-[80vh]">
           {/* Left Column - Copy */}
           <div className="space-y-6">
             {/* Eyebrow pill */}
-            <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-blossom-pink/30 bg-white/60 backdrop-blur-sm">
+            <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-white/20 bg-white/5 backdrop-blur-sm">
               <span className="text-xs font-medium text-blossom-pink">Blossom AI v1.0</span>
-              <span className="text-xs text-blossom-slate">·</span>
-              <span className="text-xs text-blossom-slate">SIM only</span>
+              <span className="text-xs text-slate-400">·</span>
+              <span className="text-xs text-slate-400">SIM only</span>
             </div>
 
             {/* Main headline with rotating word */}
-            <h1 className="text-5xl lg:text-6xl font-bold text-blossom-ink leading-tight">
+            <h1 className="text-4xl md:text-5xl lg:text-6xl font-semibold text-white leading-tight">
               The intelligent execution layer for{' '}
               <span className="relative inline-block min-w-[200px]">
                 <span
                   className={`inline-block transition-opacity duration-300 ${
                     isVisible ? 'opacity-100' : 'opacity-0'
-                  } bg-gradient-to-r from-blossom-pink to-pink-600 bg-clip-text text-transparent`}
+                  } bg-gradient-to-r from-blossom-pink via-purple-400 to-cyan-400 bg-clip-text text-transparent`}
                 >
                   {ROTATING_WORDS[currentWordIndex]}
                 </span>
@@ -72,7 +56,7 @@ export function HeroSection() {
             </h1>
 
             {/* Subheadline */}
-            <p className="text-xl text-blossom-slate leading-relaxed max-w-lg">
+            <p className="text-lg text-slate-200 leading-relaxed max-w-lg">
               Your AI-native copilot for strategy, execution, and risk. Trade any asset on any chain or venue with simple natural-language commands.
             </p>
 
@@ -80,7 +64,7 @@ export function HeroSection() {
             <div className="flex flex-col sm:flex-row gap-4 pt-4">
               <button
                 onClick={() => navigate('/app')}
-                className="px-6 py-3 text-base font-medium text-white bg-blossom-pink rounded-full hover:bg-blossom-pink/90 transition-all shadow-lg hover:shadow-xl"
+                className="px-6 py-3 text-sm font-medium text-white bg-blossom-pink rounded-full hover:bg-[#FF4B9A] transition-all shadow-lg hover:shadow-xl"
               >
                 Open Blossom SIM
               </button>
@@ -89,16 +73,16 @@ export function HeroSection() {
                   // Placeholder for product deck
                   console.log('View product deck');
                 }}
-                className="px-6 py-3 text-base font-medium text-blossom-ink bg-white/80 backdrop-blur-sm rounded-full hover:bg-white transition-all border border-blossom-outline/50"
+                className="px-6 py-3 text-sm font-medium text-white/80 border border-white/30 rounded-full hover:bg-white/5 transition-all"
               >
                 View product deck
               </button>
             </div>
           </div>
 
-          {/* Right Column - Agent Terminal */}
+          {/* Right Column - Agent Preview */}
           <div className="relative">
-            <MarketingAgentTerminal />
+            <MarketingAgentPreview />
           </div>
         </div>
       </div>

@@ -17,13 +17,13 @@ export function FeatureSections() {
   return (
     <>
       {/* Intelligence for Modern Markets */}
-      <section className="py-24 px-6">
-        <div className="container mx-auto max-w-6xl">
+      <section className="py-24 px-6 relative z-10">
+        <div className="max-w-6xl mx-auto">
           <div className="text-center mb-16">
-            <h2 className="text-4xl font-bold text-blossom-ink mb-4">
+            <h2 className="text-3xl md:text-4xl font-bold text-white mb-4">
               Intelligence for Modern Markets
             </h2>
-            <p className="text-xl text-blossom-slate max-w-2xl mx-auto">
+            <p className="text-lg md:text-xl text-slate-200 max-w-2xl mx-auto">
               Blossom combines AI reasoning with execution infrastructure to give you a single interface for all markets.
             </p>
           </div>
@@ -51,10 +51,10 @@ export function FeatureSections() {
                 icon: '🌐',
               },
             ].map((feature, idx) => (
-              <div key={idx} className="landing-card p-6 hover:shadow-xl transition-shadow">
-                <div className="text-4xl mb-4">{feature.icon}</div>
-                <h3 className="text-xl font-semibold text-blossom-ink mb-2">{feature.title}</h3>
-                <p className="text-blossom-slate text-sm leading-relaxed">{feature.description}</p>
+              <div key={idx} className="bg-white/5 border border-white/10 rounded-2xl p-6 hover:bg-white/10 transition-all">
+                <div className="text-4xl mb-4 bg-gradient-to-br from-blossom-pink to-purple-400 bg-clip-text text-transparent">{feature.icon}</div>
+                <h3 className="text-xl font-semibold text-white mb-2">{feature.title}</h3>
+                <p className="text-slate-300 text-sm leading-relaxed">{feature.description}</p>
               </div>
             ))}
           </div>
@@ -62,19 +62,19 @@ export function FeatureSections() {
       </section>
 
       {/* Cross-Chain & Cross-Venue */}
-      <section className="py-24 px-6 bg-white/50">
-        <div className="container mx-auto max-w-6xl">
+      <section className="py-24 px-6 relative z-10">
+        <div className="max-w-6xl mx-auto">
           <div className="grid lg:grid-cols-2 gap-12 items-center">
             <div>
-              <h2 className="text-4xl font-bold text-blossom-ink mb-4">
+              <h2 className="text-3xl md:text-4xl font-bold text-white mb-4">
                 Cross-Chain & Cross-Venue
               </h2>
-              <p className="text-lg text-blossom-slate mb-6 leading-relaxed">
+              <p className="text-lg text-slate-200 mb-6 leading-relaxed">
                 Blossom abstracts away the complexity of multiple chains and venues. Whether you're trading on-chain perps, 
                 deploying DeFi strategies, or participating in prediction markets, Blossom provides a unified interface 
                 that routes your intent to the optimal execution venue.
               </p>
-              <ul className="space-y-3 text-blossom-slate">
+              <ul className="space-y-3 text-slate-300">
                 <li className="flex items-start gap-2">
                   <span className="text-blossom-pink mt-1">✓</span>
                   <span>On-chain perps (Hyperliquid, GMX, etc.)</span>
@@ -93,19 +93,20 @@ export function FeatureSections() {
                 </li>
               </ul>
             </div>
-            <div className="landing-card p-8">
-              <div className="grid grid-cols-3 gap-4">
+            <div className="bg-white/5 border border-white/10 rounded-3xl p-8">
+              <div className="grid grid-cols-3 gap-4 mb-4">
                 {['On-chain', 'CeFi', 'Prediction Markets'].map((label, idx) => (
                   <div
                     key={idx}
-                    className="aspect-square rounded-2xl bg-gradient-to-br from-blossom-pink/20 to-blossom-pinkSoft/40 flex items-center justify-center"
+                    className="aspect-square rounded-2xl bg-gradient-to-br from-blossom-pink/20 to-purple-500/20 flex items-center justify-center border border-white/10"
                   >
-                    <span className="text-sm font-medium text-blossom-ink text-center">{label}</span>
+                    <span className="text-sm font-medium text-white text-center">{label}</span>
                   </div>
                 ))}
               </div>
-              <div className="mt-4 text-center text-sm text-blossom-slate">
-                Unified execution layer
+              <div className="text-center">
+                <div className="text-sm text-slate-300 mb-2">↓</div>
+                <div className="text-sm font-medium text-white">Blossom Execution Layer</div>
               </div>
             </div>
           </div>
@@ -113,10 +114,10 @@ export function FeatureSections() {
       </section>
 
       {/* Ready to Bloom? Waitlist */}
-      <section className="py-24 px-6 bg-gradient-to-b from-blossom-pinkSoft to-white">
-        <div className="container mx-auto max-w-2xl text-center">
-          <h2 className="text-4xl font-bold text-blossom-ink mb-4">Ready to Bloom?</h2>
-          <p className="text-lg text-blossom-slate mb-8">
+      <section className="py-24 px-6 relative z-10">
+        <div className="max-w-2xl mx-auto text-center">
+          <h2 className="text-3xl md:text-4xl font-bold text-white mb-4">Ready to Bloom?</h2>
+          <p className="text-lg text-slate-200 mb-8">
             Join the waitlist for early access to the intelligent execution layer.
           </p>
 
@@ -128,12 +129,12 @@ export function FeatureSections() {
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="Enter your email"
                 required
-                className="flex-1 px-4 py-3 rounded-full border border-blossom-outline/50 bg-white/80 backdrop-blur-sm focus:outline-none focus:ring-2 focus:ring-blossom-pink/50 text-blossom-ink placeholder:text-blossom-slate"
+                className="flex-1 px-4 py-3 rounded-full border border-white/20 bg-white/5 backdrop-blur-sm focus:outline-none focus:ring-2 focus:ring-blossom-pink/50 text-white placeholder:text-slate-400"
               />
               <button
                 type="submit"
                 disabled={submitted}
-                className="px-6 py-3 text-base font-medium text-white bg-blossom-pink rounded-full hover:bg-blossom-pink/90 transition-all shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-6 py-3 text-base font-medium text-white bg-blossom-pink rounded-full hover:bg-[#FF4B9A] transition-all shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {submitted ? 'Joined!' : 'Join Waitlist'}
               </button>
