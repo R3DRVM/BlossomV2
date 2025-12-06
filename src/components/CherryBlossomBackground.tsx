@@ -42,9 +42,9 @@ export function CherryBlossomBackground() {
           alt="Cherry blossom tree"
           className="w-full h-full object-contain"
           style={{
-            opacity: 0.65, // Clearly visible
-            mixBlendMode: 'multiply', // Better visibility than soft-light
-            filter: 'blur(2px)', // Reduced blur for more visibility
+            opacity: 0.75, // More visible
+            mixBlendMode: 'normal', // No blend mode for maximum visibility
+            filter: 'blur(1px)', // Minimal blur
           }}
           onError={(e) => {
             // Fallback SVG - always show something
@@ -52,13 +52,13 @@ export function CherryBlossomBackground() {
             const parent = target.parentElement;
             if (parent) {
               parent.innerHTML = `
-                <svg viewBox="0 0 400 600" class="w-full h-full" fill="none" xmlns="http://www.w3.org/2000/svg" style="opacity: 0.65; mix-blend-mode: multiply; filter: blur(2px);">
+                <svg viewBox="0 0 400 600" class="w-full h-full" fill="none" xmlns="http://www.w3.org/2000/svg" style="opacity: 0.75;">
                   <path d="M200 600 L200 400 Q200 350 180 320 Q160 290 140 320 Q120 350 120 400 L120 600" 
-                        stroke="#F25AA2" stroke-width="4" fill="none" opacity="0.6"/>
-                  <ellipse cx="150" cy="250" rx="100" ry="120" fill="#FFB6D9" opacity="0.4"/>
-                  <ellipse cx="250" cy="200" rx="110" ry="130" fill="#FFB6D9" opacity="0.4"/>
-                  <ellipse cx="180" cy="150" rx="90" ry="110" fill="#FFB6D9" opacity="0.35"/>
-                  <ellipse cx="220" cy="180" rx="80" ry="100" fill="#FFB6D9" opacity="0.3"/>
+                        stroke="#F25AA2" stroke-width="5" fill="none" opacity="0.7"/>
+                  <ellipse cx="150" cy="250" rx="100" ry="120" fill="#FFB6D9" opacity="0.5"/>
+                  <ellipse cx="250" cy="200" rx="110" ry="130" fill="#FFB6D9" opacity="0.5"/>
+                  <ellipse cx="180" cy="150" rx="90" ry="110" fill="#FFB6D9" opacity="0.45"/>
+                  <ellipse cx="220" cy="180" rx="80" ry="100" fill="#FFB6D9" opacity="0.4"/>
                 </svg>
               `;
             }
@@ -73,9 +73,9 @@ export function CherryBlossomBackground() {
           alt="Cherry blossom tree"
           className="w-[400px] h-[500px] object-contain"
           style={{
-            opacity: 0.5,
-            mixBlendMode: 'multiply',
-            filter: 'blur(2px)',
+            opacity: 0.6,
+            mixBlendMode: 'normal',
+            filter: 'blur(1px)',
           }}
           onError={(e) => {
             const target = e.target as HTMLImageElement;
@@ -115,9 +115,9 @@ export function CherryBlossomBackground() {
           <svg width="100%" height="100%" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
             <path
               d={PETAL_SHAPES[petal.shapeIndex]}
-              fill="rgba(242, 90, 162, 0.5)"
-              stroke="rgba(255, 182, 217, 0.3)"
-              strokeWidth="0.5"
+              fill="rgba(242, 90, 162, 0.6)"
+              stroke="rgba(255, 182, 217, 0.4)"
+              strokeWidth="1"
             />
           </svg>
         </div>
