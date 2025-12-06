@@ -12,6 +12,7 @@ import * as perpsSim from '../plugins/perps-sim';
 import * as defiSim from '../plugins/defi-sim';
 import * as eventSim from '../plugins/event-sim';
 import { resetAllSims, getPortfolioSnapshot } from '../services/state';
+import { getOnchainTicker, getEventMarketsTicker } from '../services/ticker';
 
 const app = express();
 app.use(cors());
@@ -258,6 +259,49 @@ app.post('/api/reset', async (req, res) => {
 });
 
 /**
+ * GET /api/ticker
+ */
+app.get('/api/ticker', async (req, res) => {
+  try {
+    const venue = (req.query.venue as string) || 'hyperliquid';
+    
+    if (venue === 'event_demo') {
+      const events = await getEventMarketsTicker();
+      res.json({
+        venue: 'event_demo',
+        events,
+      });
+    } else {
+      const onchain = await getOnchainTicker();
+      res.json({
+        venue: 'hyperliquid',
+        onchain,
+      });
+    }
+  } catch (error: any) {
+    console.error('Ticker error:', error);
+    // Return fallback data instead of error
+    if (req.query.venue === 'event_demo') {
+      res.json({
+        venue: 'event_demo',
+        events: [
+          { id: 'FED_CUTS_MAR_2025', label: 'Fed cuts in March 2025', impliedProb: 0.62, source: 'Kalshi' },
+          { id: 'BTC_ETF_APPROVAL_2025', label: 'BTC ETF approved by Dec 31', impliedProb: 0.68, source: 'Kalshi' },
+        ],
+      });
+    } else {
+      res.json({
+        venue: 'hyperliquid',
+        onchain: [
+          { symbol: 'BTC', priceUsd: 60000, change24hPct: 2.5 },
+          { symbol: 'ETH', priceUsd: 3000, change24hPct: 1.8 },
+        ],
+      });
+    }
+  }
+});
+
+/**
  * Health check endpoint
  */
 app.get('/health', (req, res) => {
@@ -271,6 +315,7 @@ app.listen(PORT, () => {
   console.log(`   API endpoints:`);
   console.log(`   - POST /api/chat`);
   console.log(`   - POST /api/strategy/close`);
+  console.log(`   - GET  /api/ticker`);
   console.log(`   - GET  /health`);
 });
 

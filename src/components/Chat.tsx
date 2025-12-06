@@ -35,10 +35,9 @@ const QUICK_PROMPTS_PERPS = [
 ];
 
 const QUICK_PROMPTS_EVENTS = [
-  'Take YES on Fed cuts in March with 2% account risk.',
-  'Bet $500 that BTC ETF is approved by Dec 31.',
-  'Take NO on ETH ETF approval by June.',
-  'Stake $300 on YES for crypto market cap above $3T.',
+  'What are the top 5 prediction markets on Kalshi right now?',
+  'What are the top 5 trending prediction markets on Polymarket?',
+  'Risk 2% of my account on the highest-volume prediction market.',
 ];
 
 export default function Chat({ selectedStrategyId }: ChatProps) {
