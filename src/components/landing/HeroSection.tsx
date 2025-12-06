@@ -33,10 +33,10 @@ export function HeroSection() {
             Your AI-native copilot for on-chain perps and DeFi. Command strategy, execution, and risk management with natural language.
           </p>
 
-          {/* Terminal Preview */}
-            <div className="w-full max-w-xl mx-auto mt-12">
-              <ChatPreview />
-            </div>
+          {/* Chat Preview */}
+          <div className="w-full max-w-xl mx-auto mt-12">
+            <ChatPreview />
+          </div>
         </div>
       </div>
     </section>
