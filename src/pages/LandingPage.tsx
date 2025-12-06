@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import { BlossomLogo } from '../components/BlossomLogo';
+import { HeroSection } from '../components/HeroSection';
 
 export default function LandingPage() {
   const navigate = useNavigate();
@@ -7,7 +8,7 @@ export default function LandingPage() {
   return (
     <div className="min-h-screen landing-bg">
       {/* Top Navigation */}
-      <nav className="w-full px-6 py-4 flex items-center justify-between">
+      <nav className="w-full px-6 py-4 flex items-center justify-between relative z-20">
         <div className="flex items-center gap-2">
           <BlossomLogo size={28} className="drop-shadow-sm" />
           <span className="text-lg font-semibold text-blossom-ink">Blossom</span>
@@ -25,17 +26,8 @@ export default function LandingPage() {
         </div>
       </nav>
 
-      {/* Hero Section - Placeholder for now */}
-      <section className="container mx-auto px-6 py-16">
-        <div className="text-center">
-          <h1 className="text-4xl font-bold text-blossom-ink mb-4">
-            Landing Page
-          </h1>
-          <p className="text-blossom-slate">
-            Hero section coming in Phase 3
-          </p>
-        </div>
-      </section>
+      {/* Hero Section */}
+      <HeroSection />
     </div>
   );
 }
