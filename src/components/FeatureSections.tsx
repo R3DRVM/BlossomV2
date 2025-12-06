@@ -21,10 +21,10 @@ export function FeatureSections() {
       <section className="py-20 px-6 relative z-10 bg-white">
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-12">
-            <h2 className="text-3xl md:text-4xl font-bold text-[#111827] mb-4">
+            <h2 className="text-3xl md:text-4xl font-bold text-[#111111] mb-4">
               Intelligence for Modern Markets
             </h2>
-            <p className="text-lg md:text-xl text-[#4B5563] max-w-2xl mx-auto" style={{ lineHeight: '1.5' }}>
+            <p className="text-lg md:text-xl text-[#333333] max-w-2xl mx-auto" style={{ lineHeight: '1.5' }}>
               Blossom combines AI reasoning with execution infrastructure to give you a single interface for all markets.
             </p>
           </div>
@@ -55,12 +55,16 @@ export function FeatureSections() {
               // Alternate between pink and purple for visual interest
               const iconColor = idx % 2 === 0 ? '#F25AA2' : '#C29FFF';
               return (
-                <div key={idx} className="bg-white rounded-2xl p-6 shadow-sm hover:shadow-md transition-all border border-pink-50">
+                <div key={idx} className="bg-white p-6 hover:shadow-lg transition-all" style={{
+                  borderRadius: '16px',
+                  boxShadow: '0 10px 30px rgba(0, 0, 0, 0.04)',
+                  border: '1px solid #F3E5EC',
+                }}>
                   <div className="w-14 h-14 rounded-full bg-[#FFD6E6] flex items-center justify-center mb-4">
-                    <feature.Icon className="w-7 h-7" style={{ color: iconColor }} />
+                    <feature.Icon className="w-7 h-7" style={{ color: iconColor }} strokeWidth={2} />
                   </div>
-                  <h3 className="text-xl font-semibold text-[#111827] mb-2">{feature.title}</h3>
-                  <p className="text-[#4B5563] text-sm leading-relaxed" style={{ lineHeight: '1.5' }}>{feature.description}</p>
+                  <h3 className="text-xl font-semibold text-[#111111] mb-2">{feature.title}</h3>
+                  <p className="text-[#444444] text-sm" style={{ lineHeight: '1.5' }}>{feature.description}</p>
                 </div>
               );
             })}
@@ -73,15 +77,15 @@ export function FeatureSections() {
         <div className="max-w-6xl mx-auto">
           <div className="grid lg:grid-cols-2 gap-12 items-center">
             <div>
-              <h2 className="text-3xl md:text-4xl font-bold text-[#111827] mb-4">
+              <h2 className="text-3xl md:text-4xl font-bold text-[#111111] mb-4">
                 Cross-Chain & Cross-Venue
               </h2>
-              <p className="text-lg text-[#4B5563] mb-6" style={{ lineHeight: '1.5' }}>
+              <p className="text-lg text-[#333333] mb-6" style={{ lineHeight: '1.5' }}>
                 Blossom abstracts away the complexity of multiple chains and venues. Whether you're trading on-chain perps, 
                 deploying DeFi strategies, or participating in prediction markets, Blossom provides a unified interface 
                 that routes your intent to the optimal execution venue.
               </p>
-              <ul className="space-y-3 text-[#4B5563]">
+              <ul className="space-y-3 text-[#444444]">
                 <li className="flex items-start gap-2">
                   <span className="text-[#FF5FA8] mt-1">✓</span>
                   <span>On-chain perps (Hyperliquid, GMX, etc.)</span>
@@ -100,20 +104,28 @@ export function FeatureSections() {
                 </li>
               </ul>
             </div>
-            <div className="bg-white rounded-3xl p-8 shadow-sm border border-pink-100">
+            <div className="bg-white p-8" style={{
+              borderRadius: '16px',
+              boxShadow: '0 10px 30px rgba(0, 0, 0, 0.04)',
+              border: '1px solid #F3E5EC',
+            }}>
               <div className="grid grid-cols-3 gap-4 mb-4">
                 {['On-chain', 'CeFi', 'Prediction Markets'].map((label, idx) => (
                   <div
                     key={idx}
-                    className="aspect-square rounded-2xl bg-[#FFD6E6] flex items-center justify-center border border-pink-200"
+                    className="aspect-square flex items-center justify-center" style={{
+                      borderRadius: '16px',
+                      backgroundColor: '#FFD6E6',
+                      border: '1px solid #F3E5EC',
+                    }}
                   >
-                    <span className="text-sm font-medium text-[#111827] text-center">{label}</span>
+                    <span className="text-sm font-medium text-[#111111] text-center">{label}</span>
                   </div>
                 ))}
               </div>
               <div className="text-center">
-                <div className="text-sm text-[#4B5563] mb-2">↓</div>
-                <div className="text-sm font-medium text-[#111827]">Blossom Execution Layer</div>
+                <div className="text-sm text-[#444444] mb-2">↓</div>
+                <div className="text-sm font-medium text-[#111111]">Blossom Execution Layer</div>
               </div>
             </div>
           </div>
@@ -123,8 +135,8 @@ export function FeatureSections() {
       {/* Ready to Bloom? Waitlist */}
       <section className="py-20 px-6 relative z-10 bg-[#FFF7FB]">
         <div className="max-w-2xl mx-auto text-center">
-          <h2 className="text-3xl md:text-4xl font-bold text-[#111827] mb-4">Ready to Bloom?</h2>
-          <p className="text-lg text-[#4B5563] mb-8" style={{ lineHeight: '1.5' }}>
+          <h2 className="text-3xl md:text-4xl font-bold text-[#111111] mb-4">Ready to Bloom?</h2>
+          <p className="text-lg text-[#333333] mb-8" style={{ lineHeight: '1.5' }}>
             Join the waitlist for early access to the intelligent execution layer.
           </p>
 

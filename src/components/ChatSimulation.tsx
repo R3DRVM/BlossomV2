@@ -85,8 +85,9 @@ export function ChatSimulation() {
   }, [showBlossomResponse]);
 
   return (
-    <div className="bg-white rounded-3xl p-5 md:p-6 relative z-20" style={{ 
-      boxShadow: '0px 4px 12px rgba(0, 0, 0, 0.06)',
+    <div className="bg-white p-5 md:p-6 relative z-20" style={{ 
+      borderRadius: '20px',
+      boxShadow: '0 10px 30px rgba(0, 0, 0, 0.04)',
       border: '1px solid #EDEDED',
     }}>
       {/* SIM mode info */}
@@ -99,11 +100,11 @@ export function ChatSimulation() {
         {/* User message */}
         {showUserMessage && (
           <div className="flex justify-end animate-fade-in">
-            <div className="bg-white border border-[#EDEDED] rounded-2xl rounded-tr-sm px-4 py-2.5 max-w-[85%]" style={{
-              borderRadius: '16px 16px 16px 4px',
+            <div className="bg-white border border-[#EDEDED] px-4 py-2.5 max-w-[85%]" style={{
+              borderRadius: '16px 16px 4px 16px',
               boxShadow: '0px 2px 8px rgba(0, 0, 0, 0.04)',
             }}>
-              <p className="text-sm text-[#1A1A1A] leading-relaxed">
+              <p className="text-sm text-[#333333] leading-relaxed">
                 {currentScenario.userMessage}
                 {isTyping && (
                   <span className="inline-block w-2 h-4 bg-[#F25AA2] ml-1.5 animate-pulse" />
@@ -119,7 +120,7 @@ export function ChatSimulation() {
             <div className="w-7 h-7 rounded-full bg-[#FFD6E6] flex items-center justify-center flex-shrink-0">
               <BlossomLogo size={18} className="opacity-90" />
             </div>
-            <div className="bg-[#FFD6E6] rounded-2xl rounded-tl-sm px-4 py-2.5" style={{
+            <div className="bg-[#FFD6E6] px-4 py-2.5" style={{
               borderRadius: '4px 16px 16px 16px',
             }}>
               <div className="flex gap-1">
@@ -137,11 +138,11 @@ export function ChatSimulation() {
             <div className="w-7 h-7 rounded-full bg-[#FFD6E6] flex items-center justify-center flex-shrink-0">
               <BlossomLogo size={18} className="opacity-90" />
             </div>
-            <div className="bg-[#FFD6E6] rounded-2xl rounded-tl-sm px-4 py-2.5 max-w-[85%]" style={{
+            <div className="bg-[#FFD6E6] px-4 py-2.5 max-w-[85%]" style={{
               borderRadius: '4px 16px 16px 16px',
               boxShadow: '0px 2px 8px rgba(0, 0, 0, 0.04)',
             }}>
-              <p className="text-sm text-[#1A1A1A] leading-relaxed">{currentScenario.blossomResponse}</p>
+              <p className="text-sm text-[#333333] leading-relaxed">{currentScenario.blossomResponse}</p>
             </div>
           </div>
         )}
