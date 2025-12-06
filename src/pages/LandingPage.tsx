@@ -10,7 +10,7 @@ import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { BlossomLogo } from '../components/BlossomLogo';
 import { CherryBlossomBackground } from '../components/landing/CherryBlossomBackground';
-import { HeroTerminal } from '../components/landing/HeroTerminal';
+import { ChatPreview } from '../components/landing/ChatPreview';
 
 const Navigation = ({ navigate }: { navigate: (path: string) => void }) => (
   <nav className="fixed top-0 left-0 right-0 z-50 border-b border-[#E5E5E5]/40 bg-white/80 backdrop-blur-md">
@@ -92,7 +92,7 @@ export default function LandingPage() {
             </p>
             
             <div className="w-full max-w-xl mx-auto mt-12">
-              <HeroTerminal />
+              <ChatPreview />
             </div>
           </div>
         </div>

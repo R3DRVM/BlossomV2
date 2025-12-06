@@ -1,7 +1,6 @@
 /**
- * Hero Terminal Preview
- * macOS-style terminal window with cycling scenarios
- * Based on SuddenGreenCad reference design
+ * Legacy terminal preview component – not used on the landing page.
+ * This component has been replaced by ChatPreview for a pure chat UI experience.
  */
 
 import { useState, useEffect } from 'react';
