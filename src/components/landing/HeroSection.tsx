@@ -34,9 +34,9 @@ export function HeroSection() {
           </p>
 
           {/* Terminal Preview */}
-          <div className="w-full max-w-xl mx-auto mt-12">
-            <HeroTerminal />
-          </div>
+            <div className="w-full max-w-xl mx-auto mt-12">
+              <ChatPreview />
+            </div>
         </div>
       </div>
     </section>

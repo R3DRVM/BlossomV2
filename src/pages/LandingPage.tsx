@@ -33,7 +33,7 @@ const Navigation = ({ navigate }: { navigate: (path: string) => void }) => (
       <Button onClick={() => navigate('/app')} className="shadow-lg" style={{
         boxShadow: '0 4px 14px rgba(242, 90, 162, 0.2)',
       }}>
-        Launch Terminal
+        Open App
       </Button>
     </div>
   </nav>
