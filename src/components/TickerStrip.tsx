@@ -104,35 +104,49 @@ function TickerItemPill({ item }: { item: TickerItem }) {
   const changeColor = item.change
     ? (isNeg ? 'text-red-600' : 'text-green-600')
     : '';
-  const isYes = item.lean === 'YES';
+  const isEvent = !!item.lean; // event markets have lean; on-chain do not
 
   return (
-    <div className="flex items-center gap-1 whitespace-nowrap px-3 py-1 rounded-full bg-white/5 mr-6 min-w-0 flex-shrink-0">
-      <span className="font-medium truncate text-[11px] text-blossom-ink/80">{item.label}</span>
-      {item.value && (
-        <>
-          <span className="text-blossom-slate">·</span>
-          <span className="truncate text-[11px] text-blossom-ink/80">{item.value}</span>
-          {item.lean && (
-            <span
-              className={`ml-1 text-[10px] font-semibold uppercase tracking-wide ${
-                isYes ? 'text-blossom-success' : 'text-blossom-danger'
-              }`}
-            >
-              {item.lean}
-            </span>
-          )}
-        </>
+    <div className="flex items-center gap-1 whitespace-nowrap rounded-full bg-white/5 px-3 py-1 text-[11px] text-slate-700 mr-6 min-w-0 flex-shrink-0">
+      <span className="truncate max-w-[220px] font-medium">
+        {item.label}
+      </span>
+
+      <span className="mx-1 text-slate-400">·</span>
+
+      {/* percent */}
+      <span className="font-medium">
+        {item.value}
+      </span>
+
+      {/* YES / NO chip */}
+      {isEvent && item.lean && (
+        <span
+          className={`ml-1 text-[10px] font-semibold uppercase tracking-wide ${
+            item.lean === 'YES'
+              ? 'text-blossom-success'
+              : 'text-blossom-danger'
+          }`}
+        >
+          {item.lean}
+        </span>
       )}
+
+      {/* change (for on-chain items) */}
       {item.change && (
         <span className={`ml-1 font-medium text-[11px] ${changeColor}`}>
           {item.change}
         </span>
       )}
+
+      {/* meta (KALSHI / POLYMARKET / 24h) */}
       {item.meta && (
-        <span className="ml-1 text-[9px] uppercase tracking-wide text-blossom-slate">
-          {item.meta}
-        </span>
+        <>
+          <span className="mx-1 text-slate-400">·</span>
+          <span className="text-[10px] uppercase tracking-wide text-slate-400">
+            {item.meta}
+          </span>
+        </>
       )}
     </div>
   );

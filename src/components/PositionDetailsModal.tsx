@@ -184,6 +184,33 @@ export function PositionDetailsModal({
                   </div>
                 </div>
               )}
+              {strategy.liveMarkToMarketUsd != null && (
+                <div className="mt-4 rounded-xl bg-blossom-pinkSoft/20 px-4 py-3 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-600">
+                      If this settled at current odds:
+                    </span>
+                    <span
+                      className={`font-semibold ${
+                        strategy.liveMarkToMarketUsd >= 0
+                          ? 'text-blossom-success'
+                          : 'text-blossom-danger'
+                      }`}
+                    >
+                      {strategy.liveMarkToMarketUsd >= 0 ? '+' : '-'}
+                      {Math.abs(strategy.liveMarkToMarketUsd).toLocaleString('en-US', {
+                        style: 'currency',
+                        currency: 'USD',
+                        maximumFractionDigits: 2,
+                      })}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Based on current Kalshi / Polymarket prices, purely for SIM
+                    mark-to-market. No live orders are placed.
+                  </p>
+                </div>
+              )}
             </>
           ) : null}
 

@@ -28,6 +28,7 @@ export interface Strategy {
   maxLossUsd?: number;
   eventSide?: 'YES' | 'NO';
   eventOutcome?: 'won' | 'lost' | 'pending';
+  liveMarkToMarketUsd?: number; // Optional: live mark-to-market value for event positions
 }
 
 export interface AssetBalance {

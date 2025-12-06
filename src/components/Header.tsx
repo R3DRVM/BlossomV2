@@ -24,9 +24,9 @@ export default function Header() {
             }`}
           >
             {venue === 'hyperliquid' && (
-              <span className="h-1.5 w-1.5 rounded-full bg-blossom-pink" />
+              <span className="mr-2 inline-flex h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_0_2px_rgba(255,255,255,0.8)]" />
             )}
-            On-chain
+            <span>On-chain</span>
           </button>
           <button
             onClick={() => setVenue('event_demo')}
@@ -37,9 +37,9 @@ export default function Header() {
             }`}
           >
             {venue === 'event_demo' && (
-              <span className="h-1.5 w-1.5 rounded-full bg-blossom-pink" />
+              <span className="mr-2 inline-flex h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_0_2px_rgba(255,255,255,0.8)]" />
             )}
-            Event Markets
+            <span>Event Markets</span>
           </button>
         </div>
       </div>

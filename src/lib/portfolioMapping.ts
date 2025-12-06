@@ -52,6 +52,7 @@ export function mapBackendPortfolioToFrontendState(
       baseStrategy.maxLossUsd = s.maxLossUsd;
       baseStrategy.eventSide = s.side === 'YES' ? 'YES' : 'NO';
       baseStrategy.eventOutcome = s.outcome || 'pending';
+      baseStrategy.liveMarkToMarketUsd = s.liveMarkToMarketUsd; // Carry through live MTM if present
     } else if (s.type === 'perp' || !s.type) {
       baseStrategy.instrumentType = 'perp';
     }
