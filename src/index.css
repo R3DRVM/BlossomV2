@@ -27,3 +27,17 @@ body {
   box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
 }
 
+/* Bloomberg-style marquee animation for ticker */
+@keyframes blossom-ticker-marquee {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+.ticker-track {
+  animation: blossom-ticker-marquee 40s linear infinite;
+}
+

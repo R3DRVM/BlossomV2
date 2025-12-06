@@ -1,9 +1,9 @@
 /**
  * Ticker Strip Component
- * Rotating ticker that displays sections of items, rotating every 5 seconds
+ * Bloomberg-style continuous marquee that scrolls from right to left
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { USE_AGENT_BACKEND } from '../lib/config';
 
 const VITE_BLOSSOM_AGENT_URL = import.meta.env.VITE_BLOSSOM_AGENT_URL || 'http://localhost:3001';
@@ -29,9 +29,6 @@ interface TickerPayload {
 interface TickerStripProps {
   venue: 'hyperliquid' | 'event_demo';
 }
-
-const ITEMS_PER_PAGE = 4;
-const ROTATE_INTERVAL_MS = 5000;
 
 // Static fallback for mock mode
 const STATIC_ONCHAIN_PAYLOAD: TickerPayload = {
@@ -94,10 +91,44 @@ const STATIC_EVENT_PAYLOAD: TickerPayload = {
   ],
 };
 
+// Fallback items if payload is empty
+const FALLBACK_ITEMS: TickerItem[] = [
+  { label: 'BTC', value: '$60,000', change: '+2.5%', meta: '24h' },
+  { label: 'ETH', value: '$3,000', change: '+1.8%', meta: '24h' },
+];
+
+function TickerItemPill({ item }: { item: TickerItem }) {
+  const isNeg = item.change?.trim().startsWith('-');
+  const changeColor = item.change
+    ? (isNeg ? 'text-red-600' : 'text-green-600')
+    : '';
+
+  return (
+    <div className="flex items-center text-[11px] text-blossom-ink/80 gap-1 mr-6 min-w-0 flex-shrink-0">
+      <span className="font-medium truncate">{item.label}</span>
+      {item.value && (
+        <>
+          <span className="text-blossom-slate">·</span>
+          <span className="truncate">{item.value}</span>
+        </>
+      )}
+      {item.change && (
+        <span className={`ml-1 font-medium ${changeColor}`}>
+          {item.change}
+        </span>
+      )}
+      {item.meta && (
+        <span className="ml-1 text-[9px] uppercase tracking-wide text-blossom-slate">
+          {item.meta}
+        </span>
+      )}
+    </div>
+  );
+}
+
 export function TickerStrip({ venue }: TickerStripProps) {
   const [loading, setLoading] = useState(true);
   const [payload, setPayload] = useState<TickerPayload | null>(null);
-  const [pageIndex, setPageIndex] = useState(0);
 
   const fetchTicker = async () => {
     if (!USE_AGENT_BACKEND) {
@@ -136,67 +167,40 @@ export function TickerStrip({ venue }: TickerStripProps) {
   }, [venue]);
 
   // Flatten all sections into a single array of items
-  const allItems: TickerItem[] = payload
-    ? payload.sections.flatMap(section => section.items)
-    : [];
+  const allItems: TickerItem[] = useMemo(() => {
+    if (!payload) return FALLBACK_ITEMS;
+    
+    const flattened = payload.sections.flatMap(section =>
+      section.items.map(item => ({
+        ...item,
+        // Use section label as meta if meta is not present
+        meta: item.meta ?? section.label,
+      }))
+    );
+    
+    return flattened.length > 0 ? flattened : FALLBACK_ITEMS;
+  }, [payload]);
 
-  // Calculate total pages
-  const totalPages = Math.ceil(allItems.length / ITEMS_PER_PAGE) || 1;
-  const currentPage = pageIndex % totalPages;
-
-  // Get items for current page
-  const start = currentPage * ITEMS_PER_PAGE;
-  const pageItems = allItems.slice(start, start + ITEMS_PER_PAGE);
-
-  // Rotation effect
-  useEffect(() => {
-    if (allItems.length === 0) return;
-
-    const rotateInterval = setInterval(() => {
-      setPageIndex(prev => (prev + 1) % totalPages);
-    }, ROTATE_INTERVAL_MS);
-
-    return () => clearInterval(rotateInterval);
-  }, [allItems.length, totalPages]);
-
-  if (loading || !payload || allItems.length === 0) {
+  if (loading) {
     return (
-      <div className="text-xs text-blossom-slate">
+      <div className="text-[11px] text-blossom-slate whitespace-nowrap">
         Fetching markets...
       </div>
     );
   }
 
   return (
-    <div className="flex-1 overflow-hidden">
-      <div className="flex items-center gap-6 whitespace-nowrap transition-opacity duration-300">
-        {pageItems.map((item, idx) => {
-          const isPositive = item.change && !item.change.startsWith('-');
-          const changeColor = item.change
-            ? (isPositive ? 'text-green-600' : 'text-red-600')
-            : '';
-
-          return (
-            <div
-              key={`${item.label}-${idx}-${currentPage}`}
-              className="flex items-center text-xs text-blossom-ink/80 gap-1 min-w-0 flex-shrink-0"
-            >
-              <span className="font-medium truncate">{item.label}</span>
-              <span className="text-blossom-slate">·</span>
-              <span className="truncate">{item.value}</span>
-              {item.change && (
-                <span className={`ml-1 font-medium ${changeColor}`}>
-                  {item.change}
-                </span>
-              )}
-              {item.meta && (
-                <span className="ml-1 text-[10px] uppercase tracking-wide text-blossom-slate">
-                  {item.meta}
-                </span>
-              )}
-            </div>
-          );
-        })}
+    <div className="flex-1 overflow-hidden h-7 flex items-center">
+      <div className="relative w-full overflow-hidden">
+        <div className="ticker-track flex items-center whitespace-nowrap">
+          {/* Render items twice for seamless looping */}
+          {allItems.map((item, idx) => (
+            <TickerItemPill key={`a-${idx}`} item={item} />
+          ))}
+          {allItems.map((item, idx) => (
+            <TickerItemPill key={`b-${idx}`} item={item} />
+          ))}
+        </div>
       </div>
     </div>
   );
