@@ -88,19 +88,19 @@ body {
 /* Import serif font for hero headline */
 @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&display=swap');
 
-/* Sakura petal fall animation - gentle drift from top to bottom */
-@keyframes sakura-fall {
+/* Sakura petal drift animation - from left to right, top to bottom */
+@keyframes sakura-drift {
   0% {
     transform: translate(0, 0) rotate(0deg);
-    opacity: 0.35;
+    opacity: 0.8;
   }
   50% {
-    transform: translate(15vw, 50vh) rotate(180deg);
-    opacity: 0.3;
+    transform: translate(calc(100vw + 100px), 50vh) rotate(180deg);
+    opacity: 0.5;
   }
   100% {
-    transform: translate(30vw, 100vh) rotate(360deg);
-    opacity: 0.25;
+    transform: translate(calc(100vw + 200px), 100vh) rotate(360deg);
+    opacity: 0.3;
   }
 }
 
