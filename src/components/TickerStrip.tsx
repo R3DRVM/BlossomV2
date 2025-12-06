@@ -123,11 +123,8 @@ function TickerItemPill({ item }: { item: TickerItem }) {
       {/* YES / NO lean (event markets only) */}
       {isEvent && item.lean && (
         <span
-          className={
-            item.lean === 'YES'
-              ? 'ml-1 text-[10px] font-semibold uppercase tracking-wide text-blossom-success'
-              : 'ml-1 text-[10px] font-semibold uppercase tracking-wide text-blossom-danger'
-          }
+          className="ml-1 text-[10px] font-semibold uppercase tracking-wide"
+          style={{ color: item.lean === 'YES' ? '#16A34A' : '#EF4444' }}
         >
           {item.lean}
         </span>
