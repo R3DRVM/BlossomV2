@@ -13,6 +13,7 @@ interface TickerItem {
   value: string;
   change?: string;
   meta?: string;
+  impliedProb?: number; // 0–1, for event markets
   lean?: 'YES' | 'NO';
 }
 
@@ -106,15 +107,15 @@ function TickerItemPill({ item }: { item: TickerItem }) {
   const isYes = item.lean === 'YES';
 
   return (
-    <div className="flex items-center text-[11px] text-blossom-ink/80 gap-1 mr-6 min-w-0 flex-shrink-0">
-      <span className="font-medium truncate">{item.label}</span>
+    <div className="flex items-center gap-1 whitespace-nowrap px-3 py-1 rounded-full bg-white/5 mr-6 min-w-0 flex-shrink-0">
+      <span className="font-medium truncate text-[11px] text-blossom-ink/80">{item.label}</span>
       {item.value && (
         <>
           <span className="text-blossom-slate">·</span>
-          <span className="truncate">{item.value}</span>
+          <span className="truncate text-[11px] text-blossom-ink/80">{item.value}</span>
           {item.lean && (
             <span
-              className={`ml-1 text-[10px] font-semibold uppercase ${
+              className={`ml-1 text-[10px] font-semibold uppercase tracking-wide ${
                 isYes ? 'text-blossom-success' : 'text-blossom-danger'
               }`}
             >
@@ -124,7 +125,7 @@ function TickerItemPill({ item }: { item: TickerItem }) {
         </>
       )}
       {item.change && (
-        <span className={`ml-1 font-medium ${changeColor}`}>
+        <span className={`ml-1 font-medium text-[11px] ${changeColor}`}>
           {item.change}
         </span>
       )}
