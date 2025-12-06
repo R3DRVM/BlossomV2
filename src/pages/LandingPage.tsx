@@ -19,10 +19,10 @@ export default function LandingPage() {
         <nav className="w-full px-6 lg:px-10 py-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <BlossomLogo size={28} className="drop-shadow-sm" />
-            <span className="text-lg font-semibold text-white">Blossom</span>
+            <span className="text-lg font-semibold text-[#1A1A1A]">Blossom</span>
           </div>
-          <div className="flex items-center gap-4 bg-black/40 backdrop-blur-xl border border-white/10 rounded-full px-4 py-2">
-            <a href="#" className="text-sm text-white/70 hover:text-white transition-colors">
+          <div className="flex items-center gap-4">
+            <a href="#" className="text-sm text-slate-600 hover:text-[#1A1A1A] transition-colors">
               Docs
             </a>
             <button

@@ -85,27 +85,42 @@ body {
   animation: fade-in 0.5s ease-in forwards;
 }
 
-/* Cherry blossom petal drift animation */
-@keyframes driftBlossom {
+/* Light cherry blossom background */
+.sakura-hero-bg {
+  background: linear-gradient(to bottom, #FFFFFF 0%, #FFEFF7 50%, #FFE2F0 100%);
+}
+
+/* Cherry blossom tree styling */
+.sakura-tree {
+  right: -120px;
+  bottom: 0;
+}
+
+/* Sakura petal fall animation */
+@keyframes sakura-fall {
   0% {
     transform: translate(0, 0) rotate(0deg);
-    opacity: 0.6;
+    opacity: 0.3;
   }
   25% {
-    transform: translate(20px, -30px) rotate(90deg);
-    opacity: 0.8;
+    transform: translate(15vw, 25vh) rotate(90deg);
+    opacity: 0.5;
   }
   50% {
-    transform: translate(-15px, -60px) rotate(180deg);
+    transform: translate(30vw, 50vh) rotate(180deg);
     opacity: 0.4;
   }
   75% {
-    transform: translate(30px, -90px) rotate(270deg);
-    opacity: 0.7;
+    transform: translate(45vw, 75vh) rotate(270deg);
+    opacity: 0.6;
   }
   100% {
-    transform: translate(0, -120px) rotate(360deg);
-    opacity: 0.3;
+    transform: translate(60vw, 100vh) rotate(360deg);
+    opacity: 0.2;
   }
+}
+
+.sakura-petal {
+  will-change: transform, opacity;
 }
 
