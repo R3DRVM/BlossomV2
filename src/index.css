@@ -85,42 +85,45 @@ body {
   animation: fade-in 0.5s ease-in forwards;
 }
 
-/* Light cherry blossom background */
+/* Light cherry blossom background - premium Japanese fintech aesthetic */
 .sakura-hero-bg {
-  background: linear-gradient(to bottom, #FFFFFF 0%, #FFEFF7 50%, #FFE2F0 100%);
+  background: linear-gradient(to bottom, #FDF7FA 0%, #FCE4F1 100%);
 }
 
 /* Cherry blossom tree styling */
 .sakura-tree {
   right: -120px;
   bottom: 0;
+  opacity: 0.4;
+  mix-blend-mode: multiply;
 }
 
-/* Sakura petal fall animation */
+/* Sakura petal fall animation - subtle and slow */
 @keyframes sakura-fall {
   0% {
     transform: translate(0, 0) rotate(0deg);
-    opacity: 0.3;
+    opacity: 0.12;
   }
   25% {
     transform: translate(15vw, 25vh) rotate(90deg);
-    opacity: 0.5;
+    opacity: 0.16;
   }
   50% {
     transform: translate(30vw, 50vh) rotate(180deg);
-    opacity: 0.4;
+    opacity: 0.14;
   }
   75% {
     transform: translate(45vw, 75vh) rotate(270deg);
-    opacity: 0.6;
+    opacity: 0.18;
   }
   100% {
     transform: translate(60vw, 100vh) rotate(360deg);
-    opacity: 0.2;
+    opacity: 0.1;
   }
 }
 
 .sakura-petal {
   will-change: transform, opacity;
+  pointer-events: none;
 }
 

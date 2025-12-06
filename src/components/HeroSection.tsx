@@ -2,12 +2,11 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ChatSimulation } from './ChatSimulation';
 
-// Rotating words for the headline - can be easily updated here
+// Rotating asset types for the headline - can be easily updated here
 const ROTATING_WORDS = [
   'Pre-IPO',
-  'Live Assets',
-  'Stocks',
   'Crypto',
+  'Stocks',
   'Prediction Markets',
   'Sports Markets',
 ];
@@ -36,20 +35,20 @@ export function HeroSection() {
           {/* Left Column - Copy */}
           <div className="space-y-6">
             {/* Eyebrow pill */}
-            <div className="inline-flex items-center gap-3 px-4 py-2 rounded-full border border-pink-200 bg-white/80 backdrop-blur-sm shadow-sm">
-              <span className="text-xs font-medium text-blossom-pink">● Blossom AI v1.0</span>
+            <div className="inline-flex items-center gap-2.5 px-4 py-2 rounded-full border border-[#FFD6E6] bg-white shadow-sm">
+              <span className="text-xs font-medium text-[#FF66A0]">● Blossom AI v1.0</span>
               <span className="text-xs text-slate-400">·</span>
-              <span className="text-xs text-slate-500">SIM only · No real trades</span>
+              <span className="text-xs text-[#444444]">SIM only · No real trades</span>
             </div>
 
             {/* Main headline with rotating word */}
-            <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-[#1A1A1A] leading-tight">
+            <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-[#171717] leading-[1.1]">
               The intelligent execution layer for{' '}
-              <span className="relative inline-block min-w-[200px]">
+              <span className="relative inline-block min-w-[220px]">
                 <span
                   className={`inline-block transition-opacity duration-300 ${
                     isVisible ? 'opacity-100' : 'opacity-0'
-                  } bg-gradient-to-r from-blossom-pink via-pink-500 to-rose-400 bg-clip-text text-transparent`}
+                  } bg-gradient-to-r from-[#FF66A0] via-[#FF7EB3] to-[#C084FC] bg-clip-text text-transparent`}
                 >
                   {ROTATING_WORDS[currentWordIndex]}
                 </span>
@@ -57,15 +56,15 @@ export function HeroSection() {
             </h1>
 
             {/* Subheadline */}
-            <p className="text-lg text-slate-600 leading-relaxed max-w-lg">
-              Your AI-native copilot for strategy, execution, and risk. Trade any asset on any venue with simple natural-language commands.
+            <p className="text-lg text-[#444444] leading-relaxed max-w-lg">
+              Your AI-native copilot for strategy, execution, and risk. Trade any asset on any venue with simple, natural-language commands.
             </p>
 
             {/* CTAs */}
-            <div className="flex flex-col sm:flex-row gap-4 pt-4">
+            <div className="flex flex-col sm:flex-row gap-4 pt-2">
               <button
                 onClick={() => navigate('/app')}
-                className="px-6 py-3 text-sm font-medium text-white bg-blossom-pink rounded-full hover:bg-[#FF4B9A] transition-all shadow-lg hover:shadow-xl"
+                className="px-6 py-3 text-sm font-medium text-white bg-[#FF66A0] rounded-full hover:bg-[#FF4B8A] transition-all shadow-md hover:shadow-lg"
               >
                 Open Blossom SIM
               </button>
@@ -74,7 +73,7 @@ export function HeroSection() {
                   // Placeholder for product deck
                   console.log('View product deck');
                 }}
-                className="px-6 py-3 text-sm font-medium text-[#1A1A1A] border border-slate-300 rounded-full hover:bg-slate-50 transition-all"
+                className="px-6 py-3 text-sm font-medium text-[#171717] border border-[#FF66A0] rounded-full hover:bg-[#FFD6E6]/30 transition-all"
               >
                 View product deck
               </button>
