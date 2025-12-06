@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { MarketingAgentTerminal } from './MarketingAgentTerminal';
 
 const ROTATING_WORDS = [
   'Pre-IPO',
@@ -95,14 +96,9 @@ export function HeroSection() {
             </div>
           </div>
 
-          {/* Right Column - Agent Terminal (placeholder for Phase 4) */}
+          {/* Right Column - Agent Terminal */}
           <div className="relative">
-            <div className="landing-card p-8 min-h-[400px] flex items-center justify-center">
-              <p className="text-blossom-slate text-center">
-                Agent Terminal<br />
-                <span className="text-sm">Coming in Phase 4</span>
-              </p>
-            </div>
+            <MarketingAgentTerminal />
           </div>
         </div>
       </div>
