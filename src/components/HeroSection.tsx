@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { MarketingAgentPreview } from './MarketingAgentPreview';
+import { ChatSimulation } from './ChatSimulation';
 
+// Rotating words for the headline - can be easily updated here
 const ROTATING_WORDS = [
   'Pre-IPO',
   'Live Assets',
@@ -35,20 +36,20 @@ export function HeroSection() {
           {/* Left Column - Copy */}
           <div className="space-y-6">
             {/* Eyebrow pill */}
-            <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-white/20 bg-white/5 backdrop-blur-sm">
-              <span className="text-xs font-medium text-blossom-pink">Blossom AI v1.0</span>
+            <div className="inline-flex items-center gap-3 px-4 py-2 rounded-full border border-pink-200 bg-white/80 backdrop-blur-sm shadow-sm">
+              <span className="text-xs font-medium text-blossom-pink">● Blossom AI v1.0</span>
               <span className="text-xs text-slate-400">·</span>
-              <span className="text-xs text-slate-400">SIM only</span>
+              <span className="text-xs text-slate-500">SIM only · No real trades</span>
             </div>
 
             {/* Main headline with rotating word */}
-            <h1 className="text-4xl md:text-5xl lg:text-6xl font-semibold text-white leading-tight">
+            <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-[#1A1A1A] leading-tight">
               The intelligent execution layer for{' '}
               <span className="relative inline-block min-w-[200px]">
                 <span
                   className={`inline-block transition-opacity duration-300 ${
                     isVisible ? 'opacity-100' : 'opacity-0'
-                  } bg-gradient-to-r from-blossom-pink via-purple-400 to-cyan-400 bg-clip-text text-transparent`}
+                  } bg-gradient-to-r from-blossom-pink via-pink-500 to-rose-400 bg-clip-text text-transparent`}
                 >
                   {ROTATING_WORDS[currentWordIndex]}
                 </span>
@@ -56,8 +57,8 @@ export function HeroSection() {
             </h1>
 
             {/* Subheadline */}
-            <p className="text-lg text-slate-200 leading-relaxed max-w-lg">
-              Your AI-native copilot for strategy, execution, and risk. Trade any asset on any chain or venue with simple natural-language commands.
+            <p className="text-lg text-slate-600 leading-relaxed max-w-lg">
+              Your AI-native copilot for strategy, execution, and risk. Trade any asset on any venue with simple natural-language commands.
             </p>
 
             {/* CTAs */}
@@ -73,16 +74,16 @@ export function HeroSection() {
                   // Placeholder for product deck
                   console.log('View product deck');
                 }}
-                className="px-6 py-3 text-sm font-medium text-white/80 border border-white/30 rounded-full hover:bg-white/5 transition-all"
+                className="px-6 py-3 text-sm font-medium text-[#1A1A1A] border border-slate-300 rounded-full hover:bg-slate-50 transition-all"
               >
                 View product deck
               </button>
             </div>
           </div>
 
-          {/* Right Column - Agent Preview */}
+          {/* Right Column - Chat Simulation */}
           <div className="relative">
-            <MarketingAgentPreview />
+            <ChatSimulation />
           </div>
         </div>
       </div>

@@ -1,66 +1,50 @@
 /**
  * Cherry Blossom Background
- * Dark premium background with animated cherry blossom scene
+ * Light premium background with cherry blossom tree and animated petals
  */
 
 export function CherryBlossomBackground() {
-  // Generate 10-12 petals with random positions and delays
-  const petals = Array.from({ length: 12 }, (_, i) => ({
+  // Generate 8-10 petals with random positions and delays
+  const petals = Array.from({ length: 8 }, (_, i) => ({
     id: i,
-    left: `${Math.random() * 100}%`,
-    top: `${Math.random() * 100}%`,
-    delay: `${Math.random() * 15}s`,
-    duration: `${15 + Math.random() * 15}s`, // 15-30s
-    size: `${8 + Math.random() * 12}px`, // 8-20px
+    startX: `${-10 + Math.random() * 20}%`, // Start slightly off-screen
+    startY: `${-5 + Math.random() * 10}%`,
+    delay: `${Math.random() * 10}s`,
+    duration: `${10 + Math.random() * 10}s`, // 10-20s
+    size: `${6 + Math.random() * 8}px`, // 6-14px
+    rotation: Math.random() * 360,
   }));
 
   return (
-    <div className="fixed inset-0 z-0 overflow-hidden">
-      {/* Base gradient background */}
-      <div
-        className="absolute inset-0"
-        style={{
-          background: 'radial-gradient(ellipse at top, #1B1024 0%, #050816 50%, #0A0E1A 100%)',
-        }}
-      />
-
-      {/* Cherry blossom tree silhouette (bottom-left) */}
-      <div className="absolute bottom-0 left-0 w-96 h-96 opacity-20 pointer-events-none">
-        <svg
-          viewBox="0 0 400 400"
-          className="w-full h-full"
-          fill="none"
-          xmlns="http://www.w3.org/2000/svg"
-        >
-          {/* Tree trunk */}
-          <path
-            d="M 200 400 L 200 250 Q 200 200 180 180 Q 160 160 140 180 Q 120 200 120 250 L 120 400"
-            stroke="#FF7EB3"
-            strokeWidth="2"
-            fill="none"
-            opacity="0.3"
-          />
-          {/* Canopy blobs */}
-          <ellipse cx="150" cy="150" rx="80" ry="100" fill="#FF7EB3" opacity="0.15" />
-          <ellipse cx="250" cy="120" rx="90" ry="110" fill="#FFD1E8" opacity="0.15" />
-          <ellipse cx="180" cy="100" rx="70" ry="90" fill="#FF7EB3" opacity="0.12" />
-        </svg>
+    <div className="fixed inset-0 z-0 overflow-hidden sakura-hero-bg">
+      {/* Cherry blossom tree illustration (right side, desktop only) */}
+      <div className="hidden lg:block absolute right-0 bottom-0 w-[600px] h-[800px] opacity-40 mix-blend-multiply pointer-events-none sakura-tree">
+        <img
+          src="/cherry-tree.png"
+          alt="Cherry blossom tree"
+          className="w-full h-full object-contain"
+          onError={(e) => {
+            // Fallback if image doesn't exist yet
+            (e.target as HTMLImageElement).style.display = 'none';
+          }}
+        />
       </div>
 
-      {/* Animated petals */}
+      {/* Animated sakura petals */}
       {petals.map((petal) => (
         <div
           key={petal.id}
-          className="absolute rounded-full blur-sm pointer-events-none"
+          className="absolute sakura-petal pointer-events-none"
           style={{
-            left: petal.left,
-            top: petal.top,
+            left: petal.startX,
+            top: petal.startY,
             width: petal.size,
             height: petal.size,
-            background: `radial-gradient(circle, rgba(255,214,232,0.6) 0%, rgba(255,126,179,0.4) 100%)`,
-            animation: `driftBlossom ${petal.duration} linear infinite`,
+            background: `radial-gradient(circle, rgba(255,182,193,0.4) 0%, rgba(255,105,180,0.3) 100%)`,
+            borderRadius: '50% 0 50% 50%',
+            transform: `rotate(${petal.rotation}deg)`,
+            animation: `sakura-fall ${petal.duration} linear infinite`,
             animationDelay: petal.delay,
-            transform: 'rotate(45deg)',
           }}
         />
       ))}
