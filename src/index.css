@@ -85,80 +85,27 @@ body {
   animation: fade-in 0.5s ease-in forwards;
 }
 
-/* Light cherry blossom background - premium Japanese fintech aesthetic */
-.sakura-hero-bg {
-  background: linear-gradient(to bottom, #FFFFFF 0%, #FFF5F9 30%, #FFEBF3 60%, #FFE0ED 100%);
-  position: relative;
-}
+/* Import serif font for hero headline */
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&display=swap');
 
-/* Soft circular bloom shapes for depth */
-.sakura-hero-bg::before {
-  content: '';
-  position: absolute;
-  top: 20%;
-  right: 10%;
-  width: 400px;
-  height: 400px;
-  background: radial-gradient(circle, rgba(255, 95, 168, 0.08) 0%, transparent 70%);
-  border-radius: 50%;
-  pointer-events: none;
-}
-
-.sakura-hero-bg::after {
-  content: '';
-  position: absolute;
-  bottom: 10%;
-  left: 5%;
-  width: 300px;
-  height: 300px;
-  background: radial-gradient(circle, rgba(194, 159, 255, 0.06) 0%, transparent 70%);
-  border-radius: 50%;
-  pointer-events: none;
-}
-
-/* Cherry blossom tree styling - premium photography feel */
-.sakura-tree {
-  position: absolute;
-  right: -100px;
-  bottom: 0;
-  opacity: 0.5;
-  mix-blend-mode: soft-light;
-  filter: blur(6px);
-  pointer-events: none;
-}
-
-/* Sakura petal wind animation - subtle drift from top-right to bottom-left */
-@keyframes sakura-wind {
+/* Sakura petal fall animation - gentle drift from top to bottom */
+@keyframes sakura-fall {
   0% {
     transform: translate(0, 0) rotate(0deg);
-    opacity: 0.4;
-  }
-  25% {
-    transform: translate(-12vw, 20vh) rotate(60deg);
-    opacity: 0.45;
-  }
-  50% {
-    transform: translate(-25vw, 45vh) rotate(120deg);
-    opacity: 0.4;
-  }
-  75% {
-    transform: translate(-40vw, 70vh) rotate(180deg);
     opacity: 0.35;
   }
-  100% {
-    transform: translate(-55vw, 100vh) rotate(240deg);
+  50% {
+    transform: translate(15vw, 50vh) rotate(180deg);
     opacity: 0.3;
+  }
+  100% {
+    transform: translate(30vw, 100vh) rotate(360deg);
+    opacity: 0.25;
   }
 }
 
 .sakura-petal {
   will-change: transform, opacity;
   pointer-events: none;
-}
-
-.sakura-petal {
-  will-change: transform, opacity;
-  pointer-events: none;
-  border-radius: 50% 0 50% 50%;
 }
 
