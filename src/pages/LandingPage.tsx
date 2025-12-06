@@ -2,12 +2,13 @@ import { useNavigate } from 'react-router-dom';
 import { BlossomLogo } from '../components/BlossomLogo';
 import { HeroSection } from '../components/HeroSection';
 import { FeatureSections } from '../components/FeatureSections';
+import { LandingFooter } from '../components/LandingFooter';
 
 export default function LandingPage() {
   const navigate = useNavigate();
 
   return (
-    <div className="min-h-screen landing-bg">
+    <div className="min-h-screen landing-bg flex flex-col">
       {/* Top Navigation */}
       <nav className="w-full px-6 py-4 flex items-center justify-between relative z-20">
         <div className="flex items-center gap-2">
@@ -32,6 +33,9 @@ export default function LandingPage() {
 
       {/* Feature Sections */}
       <FeatureSections />
+
+      {/* Footer */}
+      <LandingFooter />
     </div>
   );
 }
