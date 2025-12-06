@@ -1,10 +1,10 @@
 /**
  * Hero Section
- * Two-line serif headline with terminal preview
+ * Two-line serif headline with chat preview
  * Based on SuddenGreenCad reference design
  */
 
-import { HeroTerminal } from './HeroTerminal';
+import { ChatPreview } from './ChatPreview';
 
 export function HeroSection() {
 
