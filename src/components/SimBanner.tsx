@@ -12,24 +12,21 @@ export function SimBanner() {
   const { venue } = useBlossomContext();
 
   return (
-    <div className="w-full border-b border-blossom-outline/60 bg-blossom-pinkSoft/50 text-xs text-blossom-slate px-4 py-2">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <BlossomLogo size={18} className="opacity-60" />
-          <span>
-            SIM mode · {USE_AGENT_BACKEND ? 'Real prices' : 'Mock data'} · No live orders
-          </span>
+    <section className="w-full border-b border-blossom-outline/40 bg-white/70 backdrop-blur-md">
+      <div className="mx-auto flex items-center justify-between px-4 py-2 gap-4">
+        <div className="flex items-center gap-2 min-w-0">
+          <BlossomLogo size={14} className="opacity-70 flex-shrink-0" />
+          <div className="flex items-center gap-2 text-[11px] text-blossom-slate whitespace-nowrap">
+            <span>SIM mode</span>
+            <span className="text-blossom-slate/50">·</span>
+            <span>{USE_AGENT_BACKEND ? 'Real prices' : 'Mock data'}</span>
+            <span className="text-blossom-slate/50">·</span>
+            <span>No live orders</span>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <TickerStrip venue={venue} />
-          {USE_AGENT_BACKEND && (
-            <span className="text-[11px] text-blossom-slate ml-2 hidden sm:inline">
-              Powered by Blossom Agent
-            </span>
-          )}
-        </div>
+        <TickerStrip venue={venue} />
       </div>
-    </div>
+    </section>
   );
 }
 
