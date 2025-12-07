@@ -105,28 +105,28 @@ export default function LandingPage() {
             <h2 className="text-3xl md:text-4xl font-bold mb-4 text-[#111111]" style={{
               fontFamily: '"Playfair Display", Georgia, serif',
             }}>
-              Engineered for Alpha
+              Precision, Powered by AI
             </h2>
             <p className="text-[#666666] max-w-2xl mx-auto bg-white/40 backdrop-blur-[2px] rounded-lg p-2">
-              Blossom translates your intent into precise on-chain execution, handling the complexities of DeFi while you focus on strategy.
+              AI that interprets your intent, allocates capital intelligently, and safeguards every position — automatically.
             </p>
           </div>
 
           <div className="grid md:grid-cols-3 gap-6">
             <FeatureCard
               icon={Brain}
-              title="Intelligent Strategy"
-              description="Describe your thesis in plain English. Blossom analyzes market structure, identifies setups, and validates entry criteria automatically."
+              title="Intent Understanding"
+              description="Blossom translates natural language instructions into structured strategies, backed by market context and technical reasoning."
             />
             <FeatureCard
               icon={Zap}
-              title="Execution & Routing"
-              description="Best-price execution across multiple AMMs and Perp DEXs. Smart routing minimizes slippage and maximizes capital efficiency."
+              title="Optimized Execution"
+              description="Capital flows to the highest-efficiency paths across AMMs, perp DEXs, and prediction markets. Smart routing minimizes slippage and maximizes capital efficiency."
             />
             <FeatureCard
               icon={Shield}
-              title="Autonomous Risk"
-              description="Set-and-forget risk parameters. Blossom monitors positions 24/7, managing liquidation risk and dynamic stop-losses."
+              title="Risk Controls"
+              description="Set-and-forget risk parameters. Blossom monitors positions with dynamic liquidation alerts, volatility adjustments, and automated hedge protection before risk materializes."
             />
           </div>
         </div>
@@ -145,13 +145,13 @@ export default function LandingPage() {
               </h2>
               <div className="space-y-6 text-lg text-[#666666]">
                 <p>
-                  We envision Blossom as the universal interface for value exchange. Today, it's perps. Tomorrow, it's everything.
+                  Blossom is building the unified execution layer for on-chain markets — a single interface to deploy capital across assets, chains, and protocols with AI precision.
                 </p>
                 <ul className="space-y-3 mt-8">
                   {[
                     "Pre-IPO Companies",
                     "Event Contracts & Prediction Markets",
-                    "Exotic Futures (Labubu, Sneakers, Art)",
+                    "Exotic Futures (RWAs, Art, Synthetic Assets)",
                     "Cross-chain Arbitrage"
                   ].map((item, i) => (
                     <li key={i} className="flex items-center gap-3 text-[#111111]/80 font-medium">
@@ -161,8 +161,8 @@ export default function LandingPage() {
                   ))}
                 </ul>
               </div>
-              <Button variant="outline" className="mt-10 h-12 px-8 rounded-full text-[#111111] bg-white/50">
-                Read the Vision Paper
+              <Button variant="outline" onClick={() => navigate('/app')} className="mt-10 h-12 px-8 rounded-full text-[#111111] bg-white/50">
+                Try Demo
               </Button>
             </div>
 
@@ -170,23 +170,26 @@ export default function LandingPage() {
               <div className="grid grid-cols-2 gap-4">
                 <Card className="translate-y-8">
                   <Activity className="w-8 h-8 text-[#F25AA2] mb-4" />
-                  <div className="text-2xl font-mono font-bold mb-1 text-[#111111]">$24.5M</div>
-                  <div className="text-sm text-[#666666]">Volume Processed</div>
+                  <div className="text-2xl font-mono font-bold mb-1 text-[#111111]">v1</div>
+                  <div className="text-sm text-[#666666]">AI Strategy Engine</div>
+                  <div className="text-xs text-[#666666] mt-1">Strategy orchestration</div>
                 </Card>
                 <Card>
                   <Terminal className="w-8 h-8 text-blue-500 mb-4" />
-                  <div className="text-2xl font-mono font-bold mb-1 text-[#111111]">12ms</div>
-                  <div className="text-sm text-[#666666]">Execution Latency</div>
+                  <div className="text-2xl font-mono font-bold mb-1 text-[#111111]">12 ms</div>
+                  <div className="text-sm text-[#666666]">Latency-Aware Routing</div>
                 </Card>
                 <Card className="translate-y-8">
                   <Globe className="w-8 h-8 text-purple-500 mb-4" />
-                  <div className="text-2xl font-mono font-bold mb-1 text-[#111111]">12</div>
-                  <div className="text-sm text-[#666666]">Chains Supported</div>
+                  <div className="text-2xl font-mono font-bold mb-1 text-[#111111]">12+</div>
+                  <div className="text-sm text-[#666666]">Multi-Chain Execution Layer</div>
+                  <div className="text-xs text-[#666666] mt-1">Chains Supported</div>
                 </Card>
                 <Card>
                   <BarChart3 className="w-8 h-8 text-green-500 mb-4" />
-                  <div className="text-2xl font-mono font-bold mb-1 text-[#111111]">99.9%</div>
-                  <div className="text-sm text-[#666666]">Uptime</div>
+                  <div className="text-2xl font-mono font-bold mb-1 text-[#111111]">24/7</div>
+                  <div className="text-sm text-[#666666]">24/7 Autonomous Risk Monitoring</div>
+                  <div className="text-xs text-[#666666] mt-1">Live oversight</div>
                 </Card>
               </div>
             </div>
