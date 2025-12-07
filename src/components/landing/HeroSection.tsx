@@ -4,9 +4,20 @@
  * Based on SuddenGreenCad reference design
  */
 
+import { useState, useEffect } from 'react';
 import { ChatPreview } from './ChatPreview';
 
+const ROTATING_WORDS = ['Crypto', 'Stocks', 'Pre-IPO', 'Token Sales', 'Futures', 'Prediction Markets', 'Sports Betting'];
+
 export function HeroSection() {
+  const [rotatingIndex, setRotatingIndex] = useState(0);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setRotatingIndex((prev) => (prev + 1) % ROTATING_WORDS.length);
+    }, 2750); // 2.75s interval
+    return () => clearInterval(interval);
+  }, []);
 
   return (
     <section className="relative pt-32 pb-20 lg:pt-48 lg:pb-32 overflow-hidden z-10">
@@ -25,12 +36,14 @@ export function HeroSection() {
             }}
           >
             The Intelligent <br />
-            <span className="text-[#F25AA2] italic">Execution Layer</span>
+            <span className="text-[#F25AA2] italic">Execution Layer</span> <br />
+            <span className="text-[#111111]">for </span>
+            <span className="text-[#F25AA2] italic">{ROTATING_WORDS[rotatingIndex]}</span>
           </h1>
 
           {/* Supporting text */}
           <p className="text-lg md:text-xl text-[#444444] max-w-2xl mb-10 leading-relaxed">
-            Your AI-native copilot for on-chain perps and DeFi. Command strategy, execution, and risk management with natural language.
+            Blossom converts natural language into algorithmic execution — optimizing entries, sizing, routing, and risk parameters across all venues.
           </p>
 
           {/* Chat Preview */}
