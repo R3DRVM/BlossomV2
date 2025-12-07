@@ -5,7 +5,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { USE_AGENT_BACKEND } from '../lib/config';
-import { AGENT_API_BASE_URL } from '../lib/apiClient';
+import { callAgent } from '../lib/apiClient';
 
 interface TickerItem {
   label: string;
@@ -162,7 +162,7 @@ export function TickerStrip({ venue }: TickerStripProps) {
     }
 
     try {
-      const response = await fetch(`${AGENT_API_BASE_URL}/api/ticker?venue=${venue}`);
+      const response = await callAgent(`/api/ticker?venue=${venue}`);
       
       if (!response.ok) {
         throw new Error(`Ticker API error: ${response.status}`);
