@@ -59,14 +59,10 @@ export function HeroSection() {
               </span>
               <span
                 aria-hidden
-                className="pointer-events-none absolute inset-0 blur-[8px] opacity-40"
-                style={{
-                  background: 'linear-gradient(to right, #F25AA2, #FF7EB3, #C29FFF)',
-                  WebkitBackgroundClip: 'text',
-                  WebkitTextFillColor: 'transparent',
-                  backgroundClip: 'text',
-                }}
-              />
+                className="pointer-events-none absolute inset-0 blur-[8px] opacity-40 bg-gradient-to-r from-[#F25AA2] via-[#FF7EB3] to-[#C29FFF] bg-clip-text text-transparent"
+              >
+                {ROTATING_WORDS[currentWordIndex]}
+              </span>
             </span>
           </p>
 
