@@ -109,7 +109,7 @@ export default function LandingPage() {
             </h1>
             
             <p 
-              className="mt-2 text-4xl md:text-6xl text-center font-medium leading-[1.1] tracking-tight text-[#111111]"
+              className="mt-0 text-4xl md:text-6xl text-center font-medium leading-[1.1] tracking-tight text-[#111111]"
               style={{
                 fontFamily: '"Playfair Display", "DM Serif Display", Georgia, "Times New Roman", serif',
               }}
@@ -120,7 +120,7 @@ export default function LandingPage() {
               </span>
             </p>
             
-            <p className="text-lg md:text-xl text-[#666666] max-w-2xl mb-10 leading-relaxed bg-white/30 backdrop-blur-[2px] rounded-xl p-4">
+            <p className="text-lg md:text-xl text-[#666666] max-w-2xl mb-10 mt-8 leading-relaxed bg-white/30 backdrop-blur-[2px] rounded-xl p-4">
               Your AI-native copilot for on-chain perps and DeFi. 
               Command strategy, execution, and risk management with natural language.
             </p>
