@@ -3,9 +3,7 @@
  * Front-end integration layer for calling the backend agent service
  */
 
-import { AGENT_API_BASE_URL } from './apiClient';
-
-const BASE_URL = AGENT_API_BASE_URL;
+import { callAgent } from './apiClient';
 
 export interface ChatRequest {
   userMessage: string;
@@ -84,9 +82,8 @@ export interface BlossomPortfolioSnapshot {
  * Call Blossom chat endpoint
  */
 export async function callBlossomChat(req: ChatRequest): Promise<ChatResponse> {
-  const res = await fetch(`${BASE_URL}/api/chat`, {
+  const res = await callAgent('/api/chat', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(req),
   });
 
@@ -101,9 +98,8 @@ export async function callBlossomChat(req: ChatRequest): Promise<ChatResponse> {
  * Close a strategy
  */
 export async function closeStrategy(req: CloseRequest): Promise<CloseResponse> {
-  const res = await fetch(`${BASE_URL}/api/strategy/close`, {
+  const res = await callAgent('/api/strategy/close', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(req),
   });
 
@@ -118,9 +114,8 @@ export async function closeStrategy(req: CloseRequest): Promise<CloseResponse> {
  * Reset simulation state
  */
 export async function resetSim(): Promise<{ portfolio: any; message: string }> {
-  const res = await fetch(`${BASE_URL}/api/reset`, {
+  const res = await callAgent('/api/reset', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
   });
 
   if (!res.ok) {
