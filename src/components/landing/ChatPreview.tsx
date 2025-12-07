@@ -76,7 +76,9 @@ export function ChatPreview() {
   }, [index]);
 
   return (
-    <Card className="w-full max-w-xl mx-auto rounded-3xl shadow-xl border border-[#FFD6E6] bg-white/95 backdrop-blur p-6 md:p-7">
+    <div className="w-full flex justify-center">
+      <div className="w-full max-w-xl min-h-[360px] md:min-h-[400px] flex items-center">
+        <Card className="w-full rounded-3xl shadow-xl border border-[#FFD6E6] bg-white/95 backdrop-blur p-6 md:p-7">
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <div className="inline-flex items-center px-3 py-1 rounded-full border border-[#F9A4C8] bg-white/90 text-xs font-medium text-[#F25AA2] shadow-sm">
@@ -160,7 +162,9 @@ export function ChatPreview() {
           </div>
         )}
       </div>
-    </Card>
+        </Card>
+      </div>
+    </div>
   );
 }
 

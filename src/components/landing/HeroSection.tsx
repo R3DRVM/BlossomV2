@@ -7,16 +7,27 @@
 import { useState, useEffect } from 'react';
 import { ChatPreview } from './ChatPreview';
 
-const ROTATING_WORDS = ['Crypto', 'Stocks', 'Pre-IPO', 'Token Sales', 'Futures', 'Prediction Markets', 'Sports Betting'];
+const ROTATING_WORDS = [
+  'Crypto',
+  'Stocks',
+  'Pre-IPO',
+  'Token Sales',
+  'Futures',
+  'Prediction Markets',
+  'Sports Betting',
+];
+
+const ROTATION_INTERVAL_MS = 2600;
 
 export function HeroSection() {
-  const [rotatingIndex, setRotatingIndex] = useState(0);
+  const [currentWordIndex, setCurrentWordIndex] = useState(0);
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      setRotatingIndex((prev) => (prev + 1) % ROTATING_WORDS.length);
-    }, 2750); // 2.75s interval
-    return () => clearInterval(interval);
+    const id = setInterval(() => {
+      setCurrentWordIndex((prev) => (prev + 1) % ROTATING_WORDS.length);
+    }, ROTATION_INTERVAL_MS);
+
+    return () => clearInterval(id);
   }, []);
 
   return (
@@ -36,10 +47,28 @@ export function HeroSection() {
             }}
           >
             The Intelligent <br />
-            <span className="text-[#F25AA2] italic">Execution Layer</span> <br />
-            <span className="text-[#111111]">for </span>
-            <span className="text-[#F25AA2] italic">{ROTATING_WORDS[rotatingIndex]}</span>
+            <span className="text-[#F25AA2] italic">Execution Layer</span>
           </h1>
+
+          {/* Rotating "For ..." line */}
+          <p className="mt-3 text-lg md:text-xl text-center text-[#444444]">
+            For{' '}
+            <span className="relative font-medium text-[#111111]">
+              <span className="bg-gradient-to-r from-[#F25AA2] via-[#FF7EB3] to-[#C29FFF] bg-clip-text text-transparent">
+                {ROTATING_WORDS[currentWordIndex]}
+              </span>
+              <span
+                aria-hidden
+                className="pointer-events-none absolute inset-0 blur-[8px] opacity-40"
+                style={{
+                  background: 'linear-gradient(to right, #F25AA2, #FF7EB3, #C29FFF)',
+                  WebkitBackgroundClip: 'text',
+                  WebkitTextFillColor: 'transparent',
+                  backgroundClip: 'text',
+                }}
+              />
+            </span>
+          </p>
 
           {/* Supporting text */}
           <p className="text-lg md:text-xl text-[#444444] max-w-2xl mb-10 leading-relaxed">
