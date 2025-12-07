@@ -266,3 +266,50 @@ export async function fetchPolymarketMarkets(): Promise<RawPredictionMarket[]> {
   }
 }
 
+/**
+ * Get top N markets by volume from Kalshi
+ */
+export async function getTopKalshiMarketsByVolume(limit: number = 5): Promise<RawPredictionMarket[]> {
+  const markets = await fetchKalshiMarkets();
+  const sorted = markets.sort((a, b) => {
+    const aValue = a.volume24hUsd || a.openInterestUsd || 0;
+    const bValue = b.volume24hUsd || b.openInterestUsd || 0;
+    return bValue - aValue;
+  });
+  return sorted.slice(0, limit);
+}
+
+/**
+ * Get top N markets by volume from Polymarket
+ */
+export async function getTopPolymarketMarketsByVolume(limit: number = 5): Promise<RawPredictionMarket[]> {
+  const markets = await fetchPolymarketMarkets();
+  const sorted = markets.sort((a, b) => {
+    const aValue = a.volume24hUsd || a.openInterestUsd || 0;
+    const bValue = b.volume24hUsd || b.openInterestUsd || 0;
+    return bValue - aValue;
+  });
+  return sorted.slice(0, limit);
+}
+
+/**
+ * Get highest volume market across both platforms
+ */
+export async function getHighestVolumeMarket(): Promise<RawPredictionMarket | null> {
+  const [kalshiMarkets, polymarketMarkets] = await Promise.all([
+    fetchKalshiMarkets(),
+    fetchPolymarketMarkets(),
+  ]);
+  
+  const allMarkets = [...kalshiMarkets, ...polymarketMarkets];
+  if (allMarkets.length === 0) return null;
+  
+  const sorted = allMarkets.sort((a, b) => {
+    const aValue = a.volume24hUsd || a.openInterestUsd || 0;
+    const bValue = b.volume24hUsd || b.openInterestUsd || 0;
+    return bValue - aValue;
+  });
+  
+  return sorted[0] || null;
+}
+

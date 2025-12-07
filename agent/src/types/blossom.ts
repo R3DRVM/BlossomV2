@@ -26,7 +26,7 @@ export type BlossomAction =
     }
   | {
       type: 'event';
-      action: 'open' | 'close';
+      action: 'open' | 'close' | 'update';
       eventKey: string; // 'FED_CUTS_MAR_2025'
       label: string; // human-readable
       side: 'YES' | 'NO';
@@ -34,6 +34,9 @@ export type BlossomAction =
       maxPayoutUsd: number;
       maxLossUsd: number;
       reasoning: string[];
+      positionId?: string; // Required for 'update' action
+      overrideRiskCap?: boolean; // For 'update' action
+      requestedStakeUsd?: number; // For 'update' action
     };
 
 export interface BlossomPortfolioSnapshot {

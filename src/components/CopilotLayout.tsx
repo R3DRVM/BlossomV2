@@ -1,9 +1,11 @@
+import { useRef } from 'react';
 import { useBlossomContext } from '../context/BlossomContext';
 import Chat from './Chat';
-import SidePanel from './SidePanel';
+import ContextualPanel from './ContextualPanel';
 
 export default function CopilotLayout() {
   const { selectedStrategyId, onboarding, setOnboarding, strategies, defiPositions } = useBlossomContext();
+  const insertPromptRef = useRef<((text: string) => void) | null>(null);
   // Check if user has tried all three: perp, defi, event
   const hasPerp = strategies.some(s => s.instrumentType === 'perp' && s.status !== 'draft');
   const hasDefi = defiPositions.length > 0 || onboarding.queuedStrategy;
@@ -52,9 +54,31 @@ export default function CopilotLayout() {
             </button>
           </div>
         )}
-        <Chat selectedStrategyId={selectedStrategyId} />
+        <Chat 
+          selectedStrategyId={selectedStrategyId}
+          onRegisterInsertPrompt={(handler) => {
+            insertPromptRef.current = handler;
+          }}
+        />
       </div>
-      <SidePanel selectedStrategyId={selectedStrategyId} />
+      <ContextualPanel 
+        selectedStrategyId={selectedStrategyId}
+        onQuickAction={(action) => {
+          const prompts = {
+            perp: 'Long ETH with 3% risk and manage liquidation for me',
+            defi: 'Park half my idle REDACTED into the safest yield on Kamino',
+            event: 'Risk 2% of my account on the highest-volume prediction market.'
+          };
+          if (insertPromptRef.current) {
+            insertPromptRef.current(prompts[action]);
+          }
+        }}
+        onInsertPrompt={(text) => {
+          if (insertPromptRef.current) {
+            insertPromptRef.current(text);
+          }
+        }}
+      />
     </div>
   );
 }

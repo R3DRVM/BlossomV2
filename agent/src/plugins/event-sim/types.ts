@@ -24,6 +24,9 @@ export interface EventPosition {
   // Optional: live market data tracking
   marketSource?: 'KALSHI' | 'POLYMARKET' | 'DEMO';
   externalMarketId?: string;
+  // Risk cap override
+  overrideRiskCap?: boolean; // default false
+  requestedStakeUsd?: number; // original user request
 }
 
 export interface EventState {

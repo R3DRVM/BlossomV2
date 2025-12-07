@@ -136,10 +136,15 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
         </div>
         <div className={`rounded-3xl px-4 py-3 ${
           isUser 
-            ? 'bg-gradient-to-br from-blossom-pink to-[#FF5A96] text-white shadow-sm' 
-            : 'card-glass text-blossom-ink'
+            ? 'bg-gradient-to-br from-blossom-pink to-[#FF5A96] shadow-sm' 
+            : 'card-glass'
         }`}>
-          <div className="whitespace-pre-wrap">{text}</div>
+          <p 
+            className={`whitespace-pre-wrap m-0 ${isUser ? 'chat-message-text-user' : 'chat-message-text-assistant'}`}
+            style={isUser ? { fontWeight: 400 } : { fontWeight: 400 }}
+          >
+            {text}
+          </p>
         </div>
         {!isUser && strategy && (
           <div 
@@ -264,12 +269,17 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                   disabled={isVeryHighRisk}
                 className={`w-full h-10 px-4 text-sm font-medium rounded-xl transition-all ${
                   !isVeryHighRisk
-                    ? 'bg-blossom-pink text-white hover:bg-[#FF5A96] shadow-[0_10px_25px_rgba(255,107,160,0.35)]'
-                    : 'bg-blossom-outline/40 text-blossom-slate cursor-not-allowed'
+                    ? 'bg-blossom-pink hover:bg-[#FF5A96] shadow-[0_10px_25px_rgba(255,107,160,0.35)]'
+                    : 'bg-blossom-outline/40 cursor-not-allowed'
                 }`}
                   title={isVeryHighRisk ? 'Risk too high' : undefined}
                 >
-                  Confirm & Queue
+                  <span 
+                    className={!isVeryHighRisk ? 'chat-button-text-enabled' : 'chat-button-text-disabled'}
+                    style={{ display: 'inline-block', width: '100%' }}
+                  >
+                    Confirm & Queue
+                  </span>
                 </button>
               </div>
             )}

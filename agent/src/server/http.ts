@@ -59,11 +59,54 @@ async function applyAction(action: BlossomAction): Promise<void> {
       action.amountUsd
     );
   } else if (action.type === 'event' && action.action === 'open') {
+    // Apply 3% risk cap for event positions (unless override is explicitly set)
+    const portfolio = buildPortfolioSnapshot();
+    const accountValue = portfolio.accountValueUsd;
+    const maxEventRiskPct = 0.03; // 3% per-strategy cap (same as perps)
+    const maxStakeUsd = Math.round(accountValue * maxEventRiskPct);
+    
+    // Cap stake at 3% of account value (unless overrideRiskCap is true)
+    if (!action.overrideRiskCap) {
+      const cappedStakeUsd = Math.min(action.stakeUsd, maxStakeUsd);
+      
+      // Update action with capped stake if it was reduced
+      if (cappedStakeUsd < action.stakeUsd) {
+        action.stakeUsd = cappedStakeUsd;
+        action.maxLossUsd = cappedStakeUsd;
+        // Recalculate max payout based on capped stake
+        // This is a simplified calculation - in reality we'd need market prices
+        const payoutMultiple = action.maxPayoutUsd / action.stakeUsd;
+        action.maxPayoutUsd = cappedStakeUsd * payoutMultiple;
+      }
+    } else {
+      // Override: only cap at account value (sanity check)
+      const maxAllowedUsd = accountValue;
+      if (action.stakeUsd > maxAllowedUsd) {
+        action.stakeUsd = maxAllowedUsd;
+        action.maxLossUsd = maxAllowedUsd;
+        const payoutMultiple = action.maxPayoutUsd / action.stakeUsd;
+        action.maxPayoutUsd = maxAllowedUsd * payoutMultiple;
+      }
+    }
+    
     await eventSim.openEventPosition(
       action.eventKey,
       action.side,
-      action.stakeUsd
+      action.stakeUsd,
+      action.label // Pass label for live markets
     );
+  } else if (action.type === 'event' && action.action === 'update') {
+    // Update event position stake
+    if (!action.positionId) {
+      throw new Error('positionId is required for event update action');
+    }
+    
+    await eventSim.updateEventStake({
+      positionId: action.positionId,
+      newStakeUsd: action.stakeUsd,
+      overrideRiskCap: action.overrideRiskCap || false,
+      requestedStakeUsd: action.requestedStakeUsd,
+    });
   }
 }
 
@@ -122,12 +165,19 @@ app.post('/api/chat', async (req, res) => {
       return res.status(400).json({ error: 'userMessage is required' });
     }
 
+    // Log incoming request for debugging
+    console.log('[api/chat] Received request:', { 
+      userMessage: userMessage.substring(0, 100), 
+      venue,
+      messageLength: userMessage.length 
+    });
+
     // Get current portfolio snapshot before applying new actions
     const portfolioBefore = buildPortfolioSnapshot();
     const portfolioForPrompt = clientPortfolio ? { ...portfolioBefore, ...clientPortfolio } : portfolioBefore;
 
-    // Build prompts for LLM
-    const { systemPrompt, userPrompt } = buildBlossomPrompts({
+    // Build prompts for LLM (now async to fetch live market data)
+    const { systemPrompt, userPrompt, isPredictionMarketQuery } = await buildBlossomPrompts({
       userMessage,
       portfolio: portfolioForPrompt,
       venue: venue || 'hyperliquid',
@@ -136,19 +186,67 @@ app.post('/api/chat', async (req, res) => {
     let assistantMessage = '';
     let actions: BlossomAction[] = [];
 
-    try {
-      // Call LLM
-      const llmOutput = await callLlm({ systemPrompt, userPrompt });
+    // Check if we're in stub mode and this is a prediction market query
+    const hasOpenAIKey = !!process.env.BLOSSOM_OPENAI_API_KEY;
+    const hasAnthropicKey = !!process.env.BLOSSOM_ANTHROPIC_API_KEY;
+    const provider = process.env.BLOSSOM_MODEL_PROVIDER || 'stub';
+    const isStubMode = provider === 'stub' || (!hasOpenAIKey && !hasAnthropicKey);
 
-      // Parse JSON response
-      const modelResponse = parseModelResponse(llmOutput.rawJson);
-      assistantMessage = modelResponse.assistantMessage;
-      actions = modelResponse.actions;
-    } catch (error: any) {
-      console.error('LLM call or parsing error:', error.message);
-      // Fallback: return safe response with no actions
-      assistantMessage = "I couldn't safely parse a trading plan, so I didn't execute any actions. Please rephrase or try a simpler command.";
-      actions = [];
+    // Log stub mode detection for debugging
+    console.log('[api/chat] Stub mode check:', {
+      provider,
+      hasOpenAIKey,
+      hasAnthropicKey,
+      isStubMode,
+      isPredictionMarketQuery,
+      userMessage: userMessage.substring(0, 100)
+    });
+
+    if (isStubMode && isPredictionMarketQuery) {
+      // Short-circuit: build deterministic response for prediction markets in stub mode
+      console.log('[api/chat] ✅ STUB SHORT-CIRCUIT: Building deterministic prediction market response');
+      
+      try {
+        const { buildPredictionMarketResponse } = await import('../utils/actionParser');
+        const accountValue = portfolioForPrompt?.accountValueUsd || 10000;
+        const stubResponse = await buildPredictionMarketResponse(
+          userMessage, 
+          venue || 'hyperliquid',
+          accountValue
+        );
+        assistantMessage = stubResponse.assistantMessage;
+        actions = stubResponse.actions;
+        console.log('[api/chat] ✅ Stub response built:', { 
+          messageLength: assistantMessage.length, 
+          actionCount: actions.length,
+          preview: assistantMessage.substring(0, 150)
+        });
+      } catch (error: any) {
+        console.error('[api/chat] ❌ Failed to build stub prediction market response:', error.message);
+        // Fall through to normal stub LLM call
+        const llmOutput = await callLlm({ systemPrompt, userPrompt });
+        const modelResponse = parseModelResponse(llmOutput.rawJson);
+        assistantMessage = modelResponse.assistantMessage;
+        actions = modelResponse.actions;
+      }
+    } else {
+      // Normal flow: call LLM (stub or real)
+      console.log('[api/chat] → Normal LLM flow (stub or real)');
+      // Normal flow: call LLM (stub or real)
+      try {
+        // Call LLM
+        const llmOutput = await callLlm({ systemPrompt, userPrompt });
+
+        // Parse JSON response
+        const modelResponse = parseModelResponse(llmOutput.rawJson);
+        assistantMessage = modelResponse.assistantMessage;
+        actions = modelResponse.actions;
+      } catch (error: any) {
+        console.error('LLM call or parsing error:', error.message);
+        // Fallback: return safe response with no actions
+        assistantMessage = "I couldn't safely parse a trading plan, so I didn't execute any actions. Please rephrase or try a simpler command.";
+        actions = [];
+      }
     }
 
     // Apply validated actions to sims
