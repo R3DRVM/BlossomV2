@@ -4,6 +4,7 @@
  */
 
 import { useNavigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
 import { Terminal, Shield, Zap, Brain, Activity, BarChart3, Globe, ArrowRight } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
@@ -11,6 +12,18 @@ import { Badge } from '../components/ui/Badge';
 import { BlossomLogo } from '../components/BlossomLogo';
 import { CherryBlossomBackground } from '../components/landing/CherryBlossomBackground';
 import { ChatPreview } from '../components/landing/ChatPreview';
+
+const ROTATING_WORDS = [
+  'Crypto',
+  'Stocks',
+  'Pre-IPO',
+  'Token Sales',
+  'Futures',
+  'Prediction Markets',
+  'Sports Betting',
+];
+
+const ROTATION_INTERVAL_MS = 2600;
 
 const Navigation = ({ navigate }: { navigate: (path: string) => void }) => (
   <nav className="fixed top-0 left-0 right-0 z-50 border-b border-[#E5E5E5]/40 bg-white/80 backdrop-blur-md">
@@ -60,6 +73,15 @@ const FeatureCard = ({ icon: Icon, title, description }: { icon: any, title: str
 
 export default function LandingPage() {
   const navigate = useNavigate();
+  const [currentWordIndex, setCurrentWordIndex] = useState(0);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setCurrentWordIndex((prev) => (prev + 1) % ROTATING_WORDS.length);
+    }, ROTATION_INTERVAL_MS);
+
+    return () => clearInterval(id);
+  }, []);
 
   return (
     <div className="min-h-screen bg-white text-[#111111] font-sans relative overflow-x-hidden">
@@ -89,6 +111,13 @@ export default function LandingPage() {
             <p className="text-lg md:text-xl text-[#666666] max-w-2xl mb-10 leading-relaxed bg-white/30 backdrop-blur-[2px] rounded-xl p-4">
               Your AI-native copilot for on-chain perps and DeFi. 
               Command strategy, execution, and risk management with natural language.
+            </p>
+            
+            <p className="mt-4 text-lg md:text-xl text-center text-[#444444]">
+              For{' '}
+              <span className="font-semibold text-[#F25AA2]">
+                {ROTATING_WORDS[currentWordIndex]}
+              </span>
             </p>
             
             <div className="w-full max-w-xl mx-auto mt-12">
