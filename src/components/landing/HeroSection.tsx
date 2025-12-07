@@ -89,40 +89,6 @@ export function HeroSection() {
             </span>
           </p>
 
-          {/* Rotating "For ..." line */}
-          <p className="mt-4 text-lg md:text-xl text-center text-[#555555]">
-            For{' '}
-            <span className="relative inline-block">
-              <span
-                className="
-                  bg-gradient-to-r
-                  from-[#F25AA2]
-                  via-[#FF7EB3]
-                  to-[#C29FFF]
-                  bg-clip-text
-                  text-transparent
-                  font-semibold
-                "
-              >
-                {ROTATING_WORDS[currentWordIndex]}
-              </span>
-              <span
-                aria-hidden
-                className="
-                  absolute
-                  inset-0
-                  -z-10
-                  blur-md
-                  opacity-50
-                  bg-gradient-to-r
-                  from-[#F25AA2]
-                  via-[#FF7EB3]
-                  to-[#C29FFF]
-                "
-              />
-            </span>
-          </p>
-
           {/* Chat Preview */}
           <div className="w-full max-w-xl mx-auto mt-12">
             <ChatPreview />
