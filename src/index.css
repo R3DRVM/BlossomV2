@@ -158,3 +158,24 @@ body {
   animation: fadeIn 0.3s ease-in forwards;
 }
 
+/* Force text visibility in chat messages - override any conflicting styles */
+.chat-message-text-user {
+  color: #FFFFFF !important;
+  opacity: 1 !important;
+}
+
+.chat-message-text-assistant {
+  color: #1E293B !important;
+  opacity: 1 !important;
+}
+
+.chat-button-text-enabled {
+  color: #FFFFFF !important;
+  opacity: 1 !important;
+}
+
+.chat-button-text-disabled {
+  color: #64748B !important;
+  opacity: 1 !important;
+}
+

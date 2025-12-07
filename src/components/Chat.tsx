@@ -18,6 +18,7 @@ export interface Message {
 
 interface ChatProps {
   selectedStrategyId: string | null;
+  onRegisterInsertPrompt?: (handler: (text: string) => void) => void;
 }
 
 const SUGGESTIONS = [
@@ -40,8 +41,8 @@ const QUICK_PROMPTS_EVENTS = [
   'Risk 2% of my account on the highest-volume prediction market.',
 ];
 
-export default function Chat({ selectedStrategyId }: ChatProps) {
-  const { addDraftStrategy, setOnboarding, activeTab, venue, account, createDefiPlanFromCommand, updateFromBackendPortfolio } = useBlossomContext();
+export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: ChatProps) {
+  const { addDraftStrategy, setOnboarding, activeTab, venue, account, createDefiPlanFromCommand, updateFromBackendPortfolio, strategies, updateEventStake } = useBlossomContext();
   const [messages, setMessages] = useState<Message[]>([
     {
       id: '0',
@@ -112,7 +113,8 @@ export default function Chat({ selectedStrategyId }: ChatProps) {
     if (!inputValue.trim() || isTyping) return;
 
     const userText = inputValue.trim();
-    const userMessageId = Date.now().toString();
+    // Ensure unique message ID with timestamp + random component
+    const userMessageId = `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const userMessage: Message = {
       id: userMessageId,
       text: userText,
@@ -120,13 +122,29 @@ export default function Chat({ selectedStrategyId }: ChatProps) {
       timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
     };
 
-    setMessages(prev => [...prev, userMessage]);
+    // Always append - never replace
+    setMessages(prev => {
+      // Defensive check: ensure we're not accidentally clearing messages
+      if (prev.length === 0 && userMessage.id !== '0') {
+        return [
+          {
+            id: '0',
+            text: 'Hi, I\'m your trading copilot. Tell me what you\'d like to trade and how much risk you want to take.\n\nYou can scroll up to review past strategies, and select any strategy from the Execution Queue on the right.',
+            isUser: false,
+            timestamp: '10:22 AM',
+          },
+          userMessage,
+        ];
+      }
+      return [...prev, userMessage];
+    });
     setInputValue('');
     setIsTyping(true);
     setIsAtBottom(true);
 
     if (USE_AGENT_BACKEND) {
       // Agent mode: call backend
+      console.log('[Chat] Using AGENT backend mode - request will go to backend');
       try {
         const response = await callBlossomChat({
           userMessage: userText,
@@ -206,7 +224,7 @@ export default function Chat({ selectedStrategyId }: ChatProps) {
         }
 
         const blossomResponse: Message = {
-          id: (Date.now() + 1).toString(),
+          id: `assistant-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
           text: response.assistantMessage,
           isUser: false,
           timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
@@ -214,26 +232,28 @@ export default function Chat({ selectedStrategyId }: ChatProps) {
           strategyId: strategyId,
           defiProposalId: defiProposalId,
         };
+        // Always append - never replace
         setMessages(prev => [...prev, blossomResponse]);
         setIsTyping(false);
       } catch (error: any) {
         console.error('Agent backend error:', error);
         const errorMessage: Message = {
-          id: (Date.now() + 1).toString(),
+          id: `error-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
           text: "I couldn't reach the agent backend, so I didn't execute anything. Please try again.",
           isUser: false,
           timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
         };
+        // Always append - never replace
         setMessages(prev => [...prev, errorMessage]);
         setIsTyping(false);
       }
     } else {
       // Mock mode: existing behavior
+      console.log('[Chat] Using MOCK mode - request handled locally, backend not called');
       const parsed = parseUserMessage(userText, { venue });
 
       // Simulate thinking delay
       setTimeout(() => {
-        const blossomResponseId = (Date.now() + 1).toString();
         let strategyId: string | null = null;
         let strategy: ParsedStrategy | null = null;
         let defiProposalId: string | null = null;
@@ -247,20 +267,37 @@ export default function Chat({ selectedStrategyId }: ChatProps) {
           // Create event strategy
           const eventStrat = parsed.eventStrategy;
           
-          // Calculate stake
+          // Calculate stake with 3% risk cap
+          const maxEventRiskPct = 0.03; // 3% per-strategy cap (same as perps)
+          const maxStakeUsd = Math.round(account.accountValue * maxEventRiskPct);
+          
           let stakeUsd: number;
+          let requestedStakeUsd: number | undefined = undefined;
+          let wasCapped = false;
+          
           if (eventStrat.stakeUsd) {
-            stakeUsd = eventStrat.stakeUsd;
+            requestedStakeUsd = eventStrat.stakeUsd;
+            stakeUsd = Math.min(eventStrat.stakeUsd, maxStakeUsd);
+            wasCapped = eventStrat.stakeUsd > maxStakeUsd;
           } else {
             const riskPct = eventStrat.riskPercent || 1;
             stakeUsd = (account.accountValue * riskPct) / 100;
-            const usdcBalance = account.balances.find(b => b.symbol === 'USDC');
-            const availableUsdc = usdcBalance?.balanceUsd || 0;
-            stakeUsd = Math.min(stakeUsd, availableUsdc);
+            stakeUsd = Math.min(stakeUsd, maxStakeUsd);
+            wasCapped = (eventStrat.riskPercent || 1) * account.accountValue / 100 > maxStakeUsd;
           }
           
+          // Also check available USDC balance
+          const usdcBalance = account.balances.find(b => b.symbol === 'USDC');
+          const availableUsdc = usdcBalance?.balanceUsd || 0;
+          stakeUsd = Math.min(stakeUsd, availableUsdc);
+          
           const maxPayoutUsd = stakeUsd * 1.7;
-          const riskPct = eventStrat.riskPercent || (stakeUsd / account.accountValue) * 100;
+          const riskPct = (stakeUsd / account.accountValue) * 100;
+          
+          // Store capping info for response message
+          (eventStrat as any).requestedStakeUsd = requestedStakeUsd;
+          (eventStrat as any).wasCapped = wasCapped;
+          (eventStrat as any).finalStakeUsd = stakeUsd;
           
           const newStrategy = addDraftStrategy({
             side: eventStrat.eventSide === 'YES' ? 'Long' : 'Short',
@@ -277,6 +314,8 @@ export default function Chat({ selectedStrategyId }: ChatProps) {
             stakeUsd: stakeUsd,
             maxPayoutUsd: maxPayoutUsd,
             maxLossUsd: stakeUsd,
+            overrideRiskCap: false, // Default: no override
+            requestedStakeUsd: requestedStakeUsd, // Store original request
           });
           strategyId = newStrategy.id;
           strategy = {
@@ -290,6 +329,73 @@ export default function Chat({ selectedStrategyId }: ChatProps) {
             fundingImpact: 'Low',
           };
           setOnboarding(prev => ({ ...prev, openedTrade: true }));
+        } else if (parsed.intent === 'update_event_stake' && parsed.updateEventStake) {
+          // Update existing event strategy stake
+          const update = parsed.updateEventStake;
+          
+          // Find the most recent event strategy (or use strategyId if provided)
+          const eventStrategies = strategies.filter(s => 
+            s.instrumentType === 'event' && 
+            (s.status === 'executed' || s.status === 'executing') && 
+            !s.isClosed
+          );
+          
+          if (eventStrategies.length === 0) {
+            const errorMessage: Message = {
+              id: `error-${Date.now()}`,
+              text: "I couldn't find an active event position to update. Please create an event position first.",
+              isUser: false,
+              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+            };
+            setMessages(prev => [...prev, errorMessage]);
+            setIsTyping(false);
+            return;
+          }
+          
+          const targetStrategy = update.strategyId 
+            ? eventStrategies.find(s => s.id === update.strategyId)
+            : eventStrategies[0]; // Use most recent if no ID specified
+          
+          if (!targetStrategy) {
+            const errorMessage: Message = {
+              id: `error-${Date.now()}`,
+              text: "I couldn't find the event position to update.",
+              isUser: false,
+              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+            };
+            setMessages(prev => [...prev, errorMessage]);
+            setIsTyping(false);
+            return;
+          }
+          
+          // Determine new stake amount
+          const accountValue = account.accountValue;
+          const maxAllowedUsd = accountValue; // Hard sanity cap
+          const requestedStake = update.newStakeUsd || targetStrategy.requestedStakeUsd || targetStrategy.stakeUsd || 0;
+          const newStakeUsd = Math.min(requestedStake, maxAllowedUsd);
+          
+          // Calculate new values
+          const maxPayoutUsd = newStakeUsd * (targetStrategy.maxPayoutUsd || 0) / (targetStrategy.stakeUsd || 1);
+          const riskPct = (newStakeUsd / accountValue) * 100;
+          
+          // Update the strategy
+          updateEventStake(targetStrategy.id, {
+            stakeUsd: newStakeUsd,
+            maxPayoutUsd,
+            maxLossUsd: newStakeUsd,
+            riskPercent: riskPct,
+            overrideRiskCap: update.overrideRiskCap || false,
+            requestedStakeUsd: requestedStake,
+          });
+          
+          const blossomResponse: Message = {
+            id: `update-${Date.now()}`,
+            text: generateBlossomResponse(parsed, userText),
+            isUser: false,
+            timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+          };
+          setMessages(prev => [...prev, blossomResponse]);
+          setIsTyping(false);
         } else if (parsed.intent === 'trade' && parsed.strategy) {
           // Create perp strategy (existing behavior)
           const newStrategy = addDraftStrategy({
@@ -307,15 +413,19 @@ export default function Chat({ selectedStrategyId }: ChatProps) {
           setOnboarding(prev => ({ ...prev, openedTrade: true }));
         }
 
+        // Pass account value to response generator for capping messages
+        (parsed as any).accountValue = account.accountValue;
+        
         const blossomResponse: Message = {
-          id: blossomResponseId,
-          text: generateBlossomResponse(parsed),
+          id: `mock-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          text: generateBlossomResponse(parsed, userText),
           isUser: false,
           timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
           strategy: strategy,
           strategyId: strategyId,
           defiProposalId: defiProposalId,
         };
+        // Always append - never replace
         setMessages(prev => [...prev, blossomResponse]);
         setIsTyping(false);
       }, 1500);
@@ -326,6 +436,13 @@ export default function Chat({ selectedStrategyId }: ChatProps) {
     setInputValue(prompt);
     textareaRef.current?.focus();
   };
+
+  // Expose insertPrompt handler to parent
+  useEffect(() => {
+    if (onRegisterInsertPrompt) {
+      onRegisterInsertPrompt(handleQuickPrompt);
+    }
+  }, [onRegisterInsertPrompt]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -346,9 +463,9 @@ export default function Chat({ selectedStrategyId }: ChatProps) {
       <div 
         ref={messagesContainerRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto min-h-0 px-6 py-8"
+        className="flex-1 overflow-y-auto min-h-0 px-6 py-8 min-h-[400px]"
       >
-        <div className="max-w-3xl mx-auto">
+        <div className="max-w-3xl mx-auto min-h-[300px]">
           {messages.map(msg => (
             <MessageBubble
               key={msg.id}

@@ -29,6 +29,8 @@ export interface Strategy {
   eventSide?: 'YES' | 'NO';
   eventOutcome?: 'won' | 'lost' | 'pending';
   liveMarkToMarketUsd?: number; // Optional: live mark-to-market value for event positions
+  overrideRiskCap?: boolean; // default false - allows stake above 3% cap
+  requestedStakeUsd?: number; // original user request before capping
 }
 
 export interface AssetBalance {
@@ -93,12 +95,14 @@ interface BlossomContextType {
   closeStrategy: (id: string) => void;
   autoCloseProfitableStrategies: () => number;
   closeEventStrategy: (id: string) => void;
+  updateEventStake: (id: string, updates: Partial<Strategy>) => void;
   venue: Venue;
   setVenue: (v: Venue) => void;
   defiPositions: DefiPosition[];
   latestDefiProposal: DefiPosition | null;
   createDefiPlanFromCommand: (command: string) => DefiPosition;
   confirmDefiPlan: (id: string) => void;
+  updateDeFiPlanDeposit: (id: string, newDepositUsd: number) => void;
   updateFromBackendPortfolio: (portfolio: any) => void; // For agent mode
 }
 
@@ -252,6 +256,8 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
       maxPayoutUsd: strategyInput.maxPayoutUsd,
       maxLossUsd: strategyInput.maxLossUsd,
       eventSide: strategyInput.eventSide,
+      overrideRiskCap: strategyInput.overrideRiskCap,
+      requestedStakeUsd: strategyInput.requestedStakeUsd,
     };
 
     setStrategies(prev => [newStrategy, ...prev]);
@@ -429,6 +435,20 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
     return closedCount;
   }, [strategies, closeStrategy]);
 
+  const updateEventStake = useCallback((id: string, updates: Partial<Strategy>) => {
+    setStrategies(prev => prev.map(s => {
+      if (s.id === id && s.instrumentType === 'event') {
+        return { ...s, ...updates };
+      }
+      return s;
+    }));
+    
+    // Recompute account if stake changed
+    if (updates.stakeUsd !== undefined) {
+      recomputeAccountFromStrategies();
+    }
+  }, [recomputeAccountFromStrategies]);
+
   const closeEventStrategy = useCallback((id: string) => {
     setStrategies(prev => {
       const strategy = prev.find(s => s.id === id);
@@ -524,11 +544,18 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
         return prev;
       }
 
-      // Update account balances
+      // Update account balances - DeFi deposit is a zero-sum reallocation: USDC → DEFI
       setAccount(current => {
+        const usdcBalance = current.balances.find(b => b.symbol === 'USDC');
+        if (!usdcBalance || usdcBalance.balanceUsd < position.depositUsd) {
+          // Insufficient USDC - don't proceed
+          return current;
+        }
+
+        // Subtract from USDC
         const newBalances = current.balances.map(balance => {
           if (balance.symbol === 'USDC') {
-            return { ...balance, balanceUsd: balance.balanceUsd - position.depositUsd };
+            return { ...balance, balanceUsd: Math.max(0, balance.balanceUsd - position.depositUsd) };
           }
           return balance;
         });
@@ -536,22 +563,26 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
         // Add or update DEFI balance
         const defiBalance = newBalances.find(b => b.symbol === 'DEFI');
         if (defiBalance) {
+          // Update existing DEFI balance
           const updatedBalances = newBalances.map(b =>
             b.symbol === 'DEFI' ? { ...b, balanceUsd: b.balanceUsd + position.depositUsd } : b
           );
+          // Recompute account value as sum of all balances (zero-sum reallocation)
           const newAccountValue = updatedBalances.reduce((sum, b) => sum + b.balanceUsd, 0);
           return {
             ...current,
             balances: updatedBalances,
-            accountValue: newAccountValue,
+            accountValue: newAccountValue, // Should equal previous accountValue (zero-sum)
           };
         } else {
+          // Create DEFI balance if it doesn't exist
           newBalances.push({ symbol: 'DEFI', balanceUsd: position.depositUsd });
+          // Recompute account value as sum of all balances (zero-sum reallocation)
           const newAccountValue = newBalances.reduce((sum, b) => sum + b.balanceUsd, 0);
           return {
             ...current,
             balances: newBalances,
-            accountValue: newAccountValue,
+            accountValue: newAccountValue, // Should equal previous accountValue (zero-sum)
           };
         }
       });
@@ -568,6 +599,83 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
       return updated;
     });
   }, [latestDefiProposal]);
+
+  const updateDeFiPlanDeposit = useCallback((id: string, newDepositUsd: number) => {
+    setDefiPositions(prev => {
+      const position = prev.find(p => p.id === id);
+      if (!position) {
+        return prev;
+      }
+
+      // Only allow updates for active positions
+      if (position.status !== 'active') {
+        return prev;
+      }
+
+      const oldDeposit = position.depositUsd;
+      const depositDelta = newDepositUsd - oldDeposit;
+
+      if (depositDelta === 0) {
+        // No change needed
+        return prev;
+      }
+
+      // Update account balances - DeFi deposit change is a zero-sum reallocation
+      setAccount(current => {
+        const usdcBalance = current.balances.find(b => b.symbol === 'USDC');
+        const defiBalance = current.balances.find(b => b.symbol === 'DEFI');
+
+        if (!usdcBalance) {
+          return current; // Can't update without USDC balance
+        }
+
+        // Ensure DEFI balance exists
+        if (!defiBalance) {
+          // This shouldn't happen for active positions, but handle it gracefully
+          return current;
+        }
+
+        // Validate sufficient balance for increase
+        if (depositDelta > 0 && usdcBalance.balanceUsd < depositDelta) {
+          return current; // Insufficient USDC
+        }
+
+        // Validate sufficient DEFI for decrease
+        if (depositDelta < 0 && defiBalance.balanceUsd < Math.abs(depositDelta)) {
+          return current; // Insufficient DEFI to refund
+        }
+
+        // Apply delta: move funds between USDC and DEFI
+        const newBalances = current.balances.map(balance => {
+          if (balance.symbol === 'USDC') {
+            // If increasing deposit: subtract from USDC
+            // If decreasing deposit: add to USDC (refund)
+            return { ...balance, balanceUsd: Math.max(0, balance.balanceUsd - depositDelta) };
+          }
+          if (balance.symbol === 'DEFI') {
+            // If increasing deposit: add to DEFI
+            // If decreasing deposit: subtract from DEFI (refund)
+            return { ...balance, balanceUsd: Math.max(0, balance.balanceUsd + depositDelta) };
+          }
+          return balance;
+        });
+
+        // Recompute account value as sum of all balances (zero-sum reallocation)
+        const newAccountValue = newBalances.reduce((sum, b) => sum + b.balanceUsd, 0);
+
+        return {
+          ...current,
+          balances: newBalances,
+          accountValue: newAccountValue, // Should equal previous accountValue (zero-sum)
+        };
+      });
+
+      // Update position deposit
+      return prev.map(p =>
+        p.id === id ? { ...p, depositUsd: newDepositUsd } : p
+      );
+    });
+  }, []);
 
   const updateFromBackendPortfolio = useCallback((portfolio: any) => {
     const mapped = mapBackendPortfolioToFrontendState(portfolio);
@@ -611,15 +719,17 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
         setOnboarding,
         lastRiskSnapshot,
         setLastRiskSnapshot,
-        closeStrategy,
-        autoCloseProfitableStrategies,
-        closeEventStrategy,
+    closeStrategy,
+    autoCloseProfitableStrategies,
+    closeEventStrategy,
+    updateEventStake,
         venue,
         setVenue,
         defiPositions,
         latestDefiProposal,
         createDefiPlanFromCommand,
         confirmDefiPlan,
+        updateDeFiPlanDeposit,
         updateFromBackendPortfolio,
       }}
     >

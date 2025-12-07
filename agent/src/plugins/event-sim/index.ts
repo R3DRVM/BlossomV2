@@ -5,7 +5,7 @@
 
 import { v4 as uuidv4 } from 'uuid';
 import { EventMarket, EventPosition, EventState } from './types';
-import { fetchKalshiMarkets, fetchPolymarketMarkets, RawPredictionMarket } from '../services/predictionData';
+import { fetchKalshiMarkets, fetchPolymarketMarkets, RawPredictionMarket } from '../../services/predictionData';
 
 // Seed markets matching front-end mock
 const SEEDED_MARKETS: EventMarket[] = [
@@ -70,11 +70,44 @@ export function setBalanceCallbacks(
 export async function openEventPosition(
   eventKey: string,
   side: 'YES' | 'NO',
-  stakeUsd: number
+  stakeUsd: number,
+  label?: string // Optional label for live markets
 ): Promise<EventPosition> {
-  const market = eventState.markets.find(m => m.key === eventKey);
+  let market = eventState.markets.find(m => m.key === eventKey);
+  
+  // If market not found in seeded markets, try to find it in live markets
   if (!market) {
-    throw new Error(`Event market ${eventKey} not found`);
+    try {
+      const kalshiMarkets = await fetchKalshiMarkets();
+      const polymarketMarkets = await fetchPolymarketMarkets();
+      const allLiveMarkets = [...kalshiMarkets, ...polymarketMarkets];
+      
+      const liveMarket = allLiveMarkets.find(m => m.id === eventKey);
+      
+      if (liveMarket) {
+        // Create a temporary market entry for this live market
+        const yesPrice = liveMarket.yesPrice;
+        const winProbability = side === 'YES' ? yesPrice : 1 - yesPrice;
+        const payoutMultiple = 1 / winProbability; // Inverse of probability
+        
+        market = {
+          key: eventKey,
+          label: label || liveMarket.title,
+          winProbability,
+          payoutMultiple,
+        };
+        
+        // Add to state temporarily (won't persist across resets, but that's fine)
+        eventState.markets.push(market);
+        console.log(`[EventSim] Created temporary market entry for live market: ${market.label}`);
+      }
+    } catch (error) {
+      console.warn('[EventSim] Could not lookup live market:', error);
+    }
+  }
+  
+  if (!market) {
+    throw new Error(`Event market ${eventKey} not found in seeded or live markets`);
   }
 
   // Check USDC balance
@@ -156,6 +189,55 @@ export async function getLiveEventPrice(position: EventPosition): Promise<number
   }
 
   return undefined;
+}
+
+/**
+ * Update an event position's stake
+ */
+export async function updateEventStake(params: {
+  positionId: string;
+  newStakeUsd: number;
+  overrideRiskCap: boolean;
+  requestedStakeUsd?: number;
+}): Promise<EventPosition> {
+  const position = eventState.positions.find(p => p.id === params.positionId && !p.isClosed);
+  if (!position) {
+    throw new Error(`Event position ${params.positionId} not found or already closed`);
+  }
+
+  const currentBalance = getUsdcBalance ? getUsdcBalance() : 0;
+  const stakeDelta = params.newStakeUsd - position.stakeUsd;
+
+  // Check if we have enough balance for the increase
+  if (stakeDelta > 0 && currentBalance < stakeDelta) {
+    throw new Error(`Insufficient USDC balance. Need $${stakeDelta.toFixed(2)} more, have $${currentBalance.toFixed(2)}`);
+  }
+
+  // Find the market to recalculate payout
+  const market = eventState.markets.find(m => m.key === position.eventKey);
+  if (!market) {
+    throw new Error(`Market ${position.eventKey} not found`);
+  }
+
+  // Update USDC balance
+  if (updateUsdcBalance) {
+    updateUsdcBalance(-stakeDelta);
+  }
+
+  // Recalculate max payout and loss
+  const maxPayoutUsd = params.newStakeUsd * market.payoutMultiple;
+  const maxLossUsd = params.newStakeUsd;
+
+  // Update position
+  position.stakeUsd = params.newStakeUsd;
+  position.maxPayoutUsd = maxPayoutUsd;
+  position.maxLossUsd = maxLossUsd;
+  position.overrideRiskCap = params.overrideRiskCap;
+  if (params.requestedStakeUsd !== undefined) {
+    position.requestedStakeUsd = params.requestedStakeUsd;
+  }
+
+  return position;
 }
 
 /**
