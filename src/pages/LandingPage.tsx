@@ -109,7 +109,7 @@ export default function LandingPage() {
             </h1>
             
             <p 
-              className="mt-2 text-2xl md:text-3xl text-center font-medium text-[#111111]"
+              className="mt-2 text-4xl md:text-6xl text-center font-medium leading-[1.1] tracking-tight text-[#111111]"
               style={{
                 fontFamily: '"Playfair Display", "DM Serif Display", Georgia, "Times New Roman", serif',
               }}
