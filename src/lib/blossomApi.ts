@@ -3,7 +3,9 @@
  * Front-end integration layer for calling the backend agent service
  */
 
-const BASE_URL = import.meta.env.VITE_BLOSSOM_AGENT_URL || 'http://localhost:3001';
+import { AGENT_API_BASE_URL } from './apiClient';
+
+const BASE_URL = AGENT_API_BASE_URL;
 
 export interface ChatRequest {
   userMessage: string;

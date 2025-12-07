@@ -2,7 +2,7 @@
 
 interface ImportMetaEnv {
   readonly VITE_USE_AGENT_BACKEND?: string;
-  readonly VITE_BLOSSOM_AGENT_URL?: string;
+  readonly VITE_AGENT_API_URL?: string;
 }
 
 interface ImportMeta {

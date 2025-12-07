@@ -5,8 +5,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { USE_AGENT_BACKEND } from '../lib/config';
-
-const VITE_BLOSSOM_AGENT_URL = import.meta.env.VITE_BLOSSOM_AGENT_URL || 'http://localhost:3001';
+import { AGENT_API_BASE_URL } from '../lib/apiClient';
 
 interface TickerItem {
   label: string;
@@ -163,8 +162,7 @@ export function TickerStrip({ venue }: TickerStripProps) {
     }
 
     try {
-      const agentUrl = VITE_BLOSSOM_AGENT_URL;
-      const response = await fetch(`${agentUrl}/api/ticker?venue=${venue}`);
+      const response = await fetch(`${AGENT_API_BASE_URL}/api/ticker?venue=${venue}`);
       
       if (!response.ok) {
         throw new Error(`Ticker API error: ${response.status}`);
