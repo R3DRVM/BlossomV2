@@ -108,16 +108,21 @@ export default function LandingPage() {
               <span className="text-[#F25AA2] italic">Execution Layer</span>
             </h1>
             
+            <p 
+              className="mt-2 text-2xl md:text-3xl text-center font-medium text-[#111111]"
+              style={{
+                fontFamily: '"Playfair Display", "DM Serif Display", Georgia, "Times New Roman", serif',
+              }}
+            >
+              For{' '}
+              <span className="italic text-[#F25AA2]">
+                {ROTATING_WORDS[currentWordIndex]}
+              </span>
+            </p>
+            
             <p className="text-lg md:text-xl text-[#666666] max-w-2xl mb-10 leading-relaxed bg-white/30 backdrop-blur-[2px] rounded-xl p-4">
               Your AI-native copilot for on-chain perps and DeFi. 
               Command strategy, execution, and risk management with natural language.
-            </p>
-            
-            <p className="mt-4 text-lg md:text-xl text-center text-[#444444]">
-              For{' '}
-              <span className="font-semibold text-[#F25AA2]">
-                {ROTATING_WORDS[currentWordIndex]}
-              </span>
             </p>
             
             <div className="w-full max-w-xl mx-auto mt-12">
