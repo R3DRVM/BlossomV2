@@ -4,7 +4,7 @@
  * Based on SuddenGreenCad reference design
  */
 
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { ChatPreview } from './ChatPreview';
 
 const ROTATING_WORDS = [
@@ -50,25 +50,77 @@ export function HeroSection() {
             <span className="text-[#F25AA2] italic">Execution Layer</span>
           </h1>
 
+          {/* Supporting text */}
+          <p className="text-lg md:text-xl text-[#444444] max-w-2xl mb-10 leading-relaxed">
+            Blossom converts natural language into algorithmic execution — optimizing entries, sizing, routing, and risk parameters across all venues.
+          </p>
+
           {/* Rotating "For ..." line */}
-          <p className="mt-3 text-lg md:text-xl text-center text-[#444444]">
+          <p className="mt-4 text-lg md:text-xl text-center text-[#555555]">
             For{' '}
-            <span className="relative font-medium text-[#111111]">
-              <span className="bg-gradient-to-r from-[#F25AA2] via-[#FF7EB3] to-[#C29FFF] bg-clip-text text-transparent">
+            <span className="relative inline-block">
+              <span
+                className="
+                  bg-gradient-to-r
+                  from-[#F25AA2]
+                  via-[#FF7EB3]
+                  to-[#C29FFF]
+                  bg-clip-text
+                  text-transparent
+                  font-semibold
+                "
+              >
                 {ROTATING_WORDS[currentWordIndex]}
               </span>
               <span
                 aria-hidden
-                className="pointer-events-none absolute inset-0 blur-[8px] opacity-40 bg-gradient-to-r from-[#F25AA2] via-[#FF7EB3] to-[#C29FFF] bg-clip-text text-transparent"
-              >
-                {ROTATING_WORDS[currentWordIndex]}
-              </span>
+                className="
+                  absolute
+                  inset-0
+                  -z-10
+                  blur-md
+                  opacity-50
+                  bg-gradient-to-r
+                  from-[#F25AA2]
+                  via-[#FF7EB3]
+                  to-[#C29FFF]
+                "
+              />
             </span>
           </p>
 
-          {/* Supporting text */}
-          <p className="text-lg md:text-xl text-[#444444] max-w-2xl mb-10 leading-relaxed">
-            Blossom converts natural language into algorithmic execution — optimizing entries, sizing, routing, and risk parameters across all venues.
+          {/* Rotating "For ..." line */}
+          <p className="mt-4 text-lg md:text-xl text-center text-[#555555]">
+            For{' '}
+            <span className="relative inline-block">
+              <span
+                className="
+                  bg-gradient-to-r
+                  from-[#F25AA2]
+                  via-[#FF7EB3]
+                  to-[#C29FFF]
+                  bg-clip-text
+                  text-transparent
+                  font-semibold
+                "
+              >
+                {ROTATING_WORDS[currentWordIndex]}
+              </span>
+              <span
+                aria-hidden
+                className="
+                  absolute
+                  inset-0
+                  -z-10
+                  blur-md
+                  opacity-50
+                  bg-gradient-to-r
+                  from-[#F25AA2]
+                  via-[#FF7EB3]
+                  to-[#C29FFF]
+                "
+              />
+            </span>
           </p>
 
           {/* Chat Preview */}
