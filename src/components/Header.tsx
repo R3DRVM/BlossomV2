@@ -5,7 +5,7 @@ export default function Header() {
   const { venue, setVenue } = useBlossomContext();
 
   return (
-    <header className="bg-white/95 backdrop-blur-sm border-b border-blossom-outline/60 h-14 flex items-center sticky top-0 z-20">
+    <header className="bg-white/95 backdrop-blur-sm border-b border-blossom-outline/60 h-10 flex items-center sticky top-0 z-20">
       <div className="px-6 w-full flex items-center justify-between">
         <div className="flex items-center gap-2">
           <BlossomLogo size={24} className="drop-shadow-sm" />

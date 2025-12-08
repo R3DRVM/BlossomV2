@@ -36,11 +36,9 @@ export default function ContextualPanel({ selectedStrategyId, onQuickAction, onI
 
   // Determine which state we're in
   const hasAnyPositions = activePerps.length > 0 || activeEvents.length > 0 || activeDefi.length > 0 || proposedDefi.length > 0;
-  const hasMultipleTypes = (activePerps.length > 0 ? 1 : 0) + (activeEvents.length > 0 ? 1 : 0) + (activeDefi.length > 0 || proposedDefi.length > 0 ? 1 : 0) > 1;
   
-  // Show tabs if we have multiple types OR if we want to show empty states for other types
-  // For now, only show tabs when multiple types exist (as per original STATE 4 requirement)
-  const shouldShowTabs = hasMultipleTypes;
+  // Always show tabs when there are any positions (allows switching between types even if only one exists)
+  const shouldShowTabs = hasAnyPositions;
 
   // Get perp position for Perps tab
   const getPerpPosition = () => {
@@ -100,21 +98,57 @@ export default function ContextualPanel({ selectedStrategyId, onQuickAction, onI
   const defiPosition = getDefiPosition();
   const eventPosition = getEventPosition();
 
-  // STATE 1: No positions
+  // STATE 1: No positions - show empty state with tabs
   if (!hasAnyPositions) {
     return (
-      <div className="w-full lg:w-80 xl:w-96 flex-shrink-0 bg-white/70 backdrop-blur-md border-l border-blossom-outline/60 p-6 overflow-y-auto">
-        <EmptyStateCard onQuickAction={onQuickAction} />
+      <div className="w-full overflow-hidden flex flex-col">
+        {/* Tabs - always show even when empty */}
+        <div className="flex border-b border-slate-100 bg-white/90 flex-shrink-0">
+          <button
+            onClick={() => setActiveTab('perps')}
+            className={`flex-1 px-4 py-3 text-xs font-medium transition-colors ${
+              activeTab === 'perps'
+                ? 'text-blossom-pink border-b-2 border-blossom-pink bg-blossom-pinkSoft/20'
+                : 'text-blossom-slate hover:text-blossom-ink hover:bg-blossom-pinkSoft/10'
+            }`}
+          >
+            Perps
+          </button>
+          <button
+            onClick={() => setActiveTab('defi')}
+            className={`flex-1 px-4 py-3 text-xs font-medium transition-colors ${
+              activeTab === 'defi'
+                ? 'text-blossom-pink border-b-2 border-blossom-pink bg-blossom-pinkSoft/20'
+                : 'text-blossom-slate hover:text-blossom-ink hover:bg-blossom-pinkSoft/10'
+            }`}
+          >
+            DeFi
+          </button>
+          <button
+            onClick={() => setActiveTab('events')}
+            className={`flex-1 px-4 py-3 text-xs font-medium transition-colors ${
+              activeTab === 'events'
+                ? 'text-blossom-pink border-b-2 border-blossom-pink bg-blossom-pinkSoft/20'
+                : 'text-blossom-slate hover:text-blossom-ink hover:bg-blossom-pinkSoft/10'
+            }`}
+          >
+            Events
+          </button>
+        </div>
+        {/* Empty state content */}
+        <div className="flex-1 overflow-y-auto p-6">
+          <EmptyStateCard onQuickAction={onQuickAction} />
+        </div>
       </div>
     );
   }
 
-  // STATE 4: Multiple position types - show tabs
+  // STATE 4: Has positions - show tabs
   if (shouldShowTabs) {
     return (
-      <div className="w-full lg:w-80 xl:w-96 flex-shrink-0 bg-white/70 backdrop-blur-md border-l border-blossom-outline/60 overflow-hidden flex flex-col">
+      <div className="w-full overflow-hidden flex flex-col">
         {/* Tabs */}
-        <div className="flex border-b border-blossom-outline/60 bg-white/90">
+        <div className="flex border-b border-slate-100 bg-white/90">
           <button
             onClick={() => setActiveTab('perps')}
             className={`flex-1 px-4 py-3 text-xs font-medium transition-colors ${
@@ -213,7 +247,7 @@ export default function ContextualPanel({ selectedStrategyId, onQuickAction, onI
 
   // STATE 2 or 3: Single position type
   return (
-    <div className="w-full lg:w-80 xl:w-96 flex-shrink-0 bg-white/70 backdrop-blur-md border-l border-blossom-outline/60 p-6 overflow-y-auto">
+    <div className="w-full p-6">
       {currentPosition?.type === 'perp' && currentPosition.strategy && (
         <PositionSummaryCard strategy={currentPosition.strategy} />
       )}

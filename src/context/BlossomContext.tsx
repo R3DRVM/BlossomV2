@@ -96,6 +96,7 @@ interface BlossomContextType {
   autoCloseProfitableStrategies: () => number;
   closeEventStrategy: (id: string) => void;
   updateEventStake: (id: string, updates: Partial<Strategy>) => void;
+  updateStrategy: (id: string, updates: Partial<Strategy>) => void;
   venue: Venue;
   setVenue: (v: Venue) => void;
   defiPositions: DefiPosition[];
@@ -104,6 +105,7 @@ interface BlossomContextType {
   confirmDefiPlan: (id: string) => void;
   updateDeFiPlanDeposit: (id: string, newDepositUsd: number) => void;
   updateFromBackendPortfolio: (portfolio: any) => void; // For agent mode
+  getBaseAsset: (market: string) => string;
 }
 
 const BlossomContext = createContext<BlossomContextType | undefined>(undefined);
@@ -449,6 +451,20 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
     }
   }, [recomputeAccountFromStrategies]);
 
+  const updateStrategy = useCallback((id: string, updates: Partial<Strategy>) => {
+    setStrategies(prev => prev.map(s => {
+      if (s.id === id) {
+        return { ...s, ...updates };
+      }
+      return s;
+    }));
+    
+    // Recompute account if risk or size changed
+    if (updates.riskPercent !== undefined || updates.notionalUsd !== undefined) {
+      recomputeAccountFromStrategies();
+    }
+  }, [recomputeAccountFromStrategies]);
+
   const closeEventStrategy = useCallback((id: string) => {
     setStrategies(prev => {
       const strategy = prev.find(s => s.id === id);
@@ -723,6 +739,7 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
     autoCloseProfitableStrategies,
     closeEventStrategy,
     updateEventStake,
+    updateStrategy,
         venue,
         setVenue,
         defiPositions,
@@ -731,6 +748,7 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
         confirmDefiPlan,
         updateDeFiPlanDeposit,
         updateFromBackendPortfolio,
+        getBaseAsset,
       }}
     >
       {children}

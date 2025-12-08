@@ -5,6 +5,7 @@ import { parseUserMessage, generateBlossomResponse, ParsedStrategy } from '../li
 import { useBlossomContext, ActiveTab } from '../context/BlossomContext';
 import { USE_AGENT_BACKEND } from '../lib/config';
 import { callBlossomChat } from '../lib/blossomApi';
+import QuickStartPanel from './QuickStartPanel';
 
 export interface Message {
   id: string;
@@ -28,6 +29,12 @@ const SUGGESTIONS = [
   'Hedge my SOL spot with perps at 2% risk.',
 ];
 
+// Legacy conveyor belt quick prompts (kept for potential re-enablement)
+// Set showLegacyQuickActions = true to restore the old conveyor belt UI
+// @ts-ignore - intentionally unused, kept for potential re-enablement
+const showLegacyQuickActions = false;
+
+// @ts-ignore - intentionally unused, kept for potential re-enablement
 const QUICK_PROMPTS_PERPS = [
   'Long ETH with 3% risk and manage liquidation for me',
   'Park half my idle USDC into the safest yield on Kamino',
@@ -35,6 +42,7 @@ const QUICK_PROMPTS_PERPS = [
   'Hedge my SOL spot with perps',
 ];
 
+// @ts-ignore - intentionally unused, kept for potential re-enablement
 const QUICK_PROMPTS_EVENTS = [
   'What are the top 5 prediction markets on Kalshi right now?',
   'What are the top 5 trending prediction markets on Polymarket?',
@@ -42,7 +50,7 @@ const QUICK_PROMPTS_EVENTS = [
 ];
 
 export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: ChatProps) {
-  const { addDraftStrategy, setOnboarding, activeTab, venue, account, createDefiPlanFromCommand, updateFromBackendPortfolio, strategies, updateEventStake } = useBlossomContext();
+  const { addDraftStrategy, setOnboarding, activeTab, venue, account, createDefiPlanFromCommand, updateFromBackendPortfolio, strategies, updateEventStake, getBaseAsset } = useBlossomContext();
   const [messages, setMessages] = useState<Message[]>([
     {
       id: '0',
@@ -58,6 +66,7 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [placeholderIndex, setPlaceholderIndex] = useState(0);
+  const [showQuickStart, setShowQuickStart] = useState(true);
   const strategyRefsMap = useRef<Map<string, HTMLDivElement>>(new Map());
   const lastActiveTabRef = useRef<ActiveTab | null>(null);
   
@@ -396,6 +405,84 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
           };
           setMessages(prev => [...prev, blossomResponse]);
           setIsTyping(false);
+        } else if (parsed.intent === 'hedge' && parsed.strategy) {
+          // Handle hedging: calculate net exposure and create opposite side
+          const baseAsset = getBaseAsset(parsed.strategy.market);
+          
+          // Calculate net exposure for this asset
+          const executedPerps = strategies.filter(s => 
+            s.instrumentType === 'perp' && 
+            (s.status === 'executed' || s.status === 'executing') && 
+            !s.isClosed &&
+            getBaseAsset(s.market) === baseAsset
+          );
+          
+          let netLongExposure = 0;
+          let netShortExposure = 0;
+          
+          executedPerps.forEach(s => {
+            const notional = s.notionalUsd || (account.accountValue * s.riskPercent / 100);
+            if (s.side === 'Long') {
+              netLongExposure += notional;
+            } else {
+              netShortExposure += notional;
+            }
+          });
+          
+          const netExposure = netLongExposure - netShortExposure;
+          
+          // Determine hedge side: if net long, hedge with short; if net short, hedge with long
+          let hedgeSide: 'Long' | 'Short' = 'Short';
+          if (netExposure < 0) {
+            // Net short, so hedge with long
+            hedgeSide = 'Long';
+          } else if (netExposure === 0) {
+            // Already flat, don't create a hedge
+            const blossomResponse: Message = {
+              id: `hedge-${Date.now()}`,
+              text: `You're already flat on ${baseAsset}. No hedge needed.`,
+              isUser: false,
+              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+            };
+            setMessages(prev => [...prev, blossomResponse]);
+            setIsTyping(false);
+            return;
+          }
+          
+          // Size the hedge to offset 50% of net exposure (partial hedge)
+          // Or use the requested risk percent if specified
+          const hedgeRiskPercent = parsed.strategy.riskPercent;
+          
+          // Adjust TP/SL for the hedge side
+          const basePrice = parsed.strategy.entryPrice;
+          const hedgeTakeProfit = hedgeSide === 'Long' 
+            ? basePrice * 1.04  // 4% up for long hedge
+            : basePrice * 0.96; // 4% down for short hedge
+          const hedgeStopLoss = hedgeSide === 'Long'
+            ? basePrice * 0.97  // 3% down for long hedge
+            : basePrice * 1.03; // 3% up for short hedge
+          
+          // Create hedge strategy with opposite side
+          const hedgeStrategy = {
+            ...parsed.strategy,
+            side: hedgeSide,
+            takeProfit: Math.round(hedgeTakeProfit),
+            stopLoss: Math.round(hedgeStopLoss),
+          };
+          
+          const newStrategy = addDraftStrategy({
+            side: hedgeSide,
+            market: parsed.strategy.market,
+            riskPercent: hedgeRiskPercent,
+            entry: parsed.strategy.entryPrice,
+            takeProfit: hedgeStrategy.takeProfit,
+            stopLoss: hedgeStrategy.stopLoss,
+            sourceText: userText,
+            instrumentType: 'perp',
+          });
+          strategyId = newStrategy.id;
+          strategy = hedgeStrategy;
+          setOnboarding(prev => ({ ...prev, openedTrade: true }));
         } else if (parsed.intent === 'trade' && parsed.strategy) {
           // Create perp strategy (existing behavior)
           const newStrategy = addDraftStrategy({
@@ -433,8 +520,14 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
   };
 
   const handleQuickPrompt = (prompt: string) => {
+    // Hide QuickStart panel
+    setShowQuickStart(false);
+    // Set the prompt in input and send
     setInputValue(prompt);
-    textareaRef.current?.focus();
+    // Use setTimeout to ensure state is updated before calling handleSend
+    setTimeout(() => {
+      handleSend();
+    }, 0);
   };
 
   // Expose insertPrompt handler to parent
@@ -459,11 +552,11 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
   }, [inputValue]);
 
   return (
-    <div className="flex flex-col h-full min-h-0">
+    <div className="flex flex-col h-full min-h-0 overflow-hidden">
       <div 
         ref={messagesContainerRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto min-h-0 px-6 py-8 min-h-[400px]"
+        className="flex-1 overflow-y-auto min-h-0 px-6 py-3 min-h-[400px]"
       >
         <div className="max-w-3xl mx-auto min-h-[300px]">
           {messages.map(msg => (
@@ -493,62 +586,77 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
           <div ref={messagesEndRef} />
         </div>
       </div>
-      <div className="flex-shrink-0 border-t border-blossom-outline/50 bg-white/90 backdrop-blur-sm p-4 shadow-[0_-4px_20px_rgba(15,23,42,0.08)]">
+      <div className="flex-shrink-0 border-t border-slate-100 bg-white/90 backdrop-blur-sm shadow-[0_-4px_20px_rgba(15,23,42,0.08)]">
         <div className="max-w-3xl mx-auto">
-          <div className="flex gap-2 mb-3 overflow-x-auto pb-2">
-            {(venue === 'hyperliquid' ? QUICK_PROMPTS_PERPS : QUICK_PROMPTS_EVENTS).map((prompt, idx) => (
-              <button
-                key={idx}
-                onClick={() => handleQuickPrompt(prompt)}
-                className="flex-shrink-0 rounded-full border border-blossom-outline/60 bg-white/70 text-xs text-blossom-slate px-3 py-1.5 hover:bg-blossom-pinkSoft/40 hover:text-blossom-ink transition-all whitespace-nowrap"
-              >
-                {prompt}
-              </button>
-            ))}
+          {/* Toggle strip above QuickStart */}
+          <div className="px-4 pt-1 pb-1 flex items-center">
+            <button
+              type="button"
+              onClick={() => setShowQuickStart(v => !v)}
+              className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-medium text-slate-500 hover:bg-pink-50 transition-colors"
+            >
+              <span>Quick actions</span>
+              {showQuickStart ? (
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                </svg>
+              ) : (
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              )}
+            </button>
           </div>
-          <div className="flex items-center gap-3">
-            <textarea
-              ref={textareaRef}
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={inputValue.trim().length > 0 ? '' : SUGGESTIONS[placeholderIndex]}
-              className="flex-1 resize-none border border-blossom-outline/60 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blossom-pink/30 focus:border-blossom-pink bg-white/90 text-sm"
-              rows={1}
-              style={{ minHeight: '48px', maxHeight: '120px' }}
-            />
-            {(() => {
-              const canSend = inputValue.trim().length > 0 && !isTyping;
-              const sendLabel = isTyping ? 'Sending...' : 'Send';
-              return (
-                <button
-                  type="button"
-                  onClick={handleSend}
-                  disabled={!canSend}
-                  className={`ml-3 flex items-center justify-center rounded-full px-6 h-11 text-sm font-medium tracking-wide bg-[#FF5AA3] text-white transition-colors transition-shadow duration-150 ${
-                    canSend
-                      ? 'shadow-[0_10px_25px_rgba(255,107,160,0.35)] hover:bg-[#FF4B9A] hover:shadow-md cursor-pointer'
-                      : 'opacity-60 shadow-sm cursor-not-allowed'
-                  }`}
-                >
-                  <span>{sendLabel}</span>
-                  <svg
-                    className="ml-2 h-4 w-4"
-                    viewBox="0 0 20 20"
-                    fill="none"
-                    xmlns="http://www.w3.org/2000/svg"
+          {/* Quick Start Panel */}
+          {showQuickStart && (
+            <QuickStartPanel onSelectPrompt={handleQuickPrompt} />
+          )}
+          {/* Message Input */}
+          <div className="p-4">
+            <div className="flex items-center gap-3">
+              <textarea
+                ref={textareaRef}
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder={inputValue.trim().length > 0 ? '' : SUGGESTIONS[placeholderIndex]}
+                className="flex-1 resize-none border border-blossom-outline/60 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blossom-pink/30 focus:border-blossom-pink bg-white/90 text-sm"
+                rows={1}
+                style={{ minHeight: '48px', maxHeight: '120px' }}
+              />
+              {(() => {
+                const canSend = inputValue.trim().length > 0 && !isTyping;
+                const sendLabel = isTyping ? 'Sending...' : 'Send';
+                return (
+                  <button
+                    type="button"
+                    onClick={handleSend}
+                    disabled={!canSend}
+                    className={`ml-3 flex items-center justify-center rounded-full px-6 h-11 text-sm font-medium tracking-wide bg-[#FF5AA3] text-white transition-colors transition-shadow duration-150 ${
+                      canSend
+                        ? 'shadow-[0_10px_25px_rgba(255,107,160,0.35)] hover:bg-[#FF4B9A] hover:shadow-md cursor-pointer'
+                        : 'opacity-60 shadow-sm cursor-not-allowed'
+                    }`}
                   >
-                    <path
-                      d="M4 10h9.5M11 6l3.5 4L11 14"
-                      stroke="currentColor"
-                      strokeWidth="1.6"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                </button>
-              );
-            })()}
+                    <span>{sendLabel}</span>
+                    <svg
+                      className="ml-2 h-4 w-4"
+                      viewBox="0 0 20 20"
+                      fill="none"
+                      xmlns="http://www.w3.org/2000/svg"
+                    >
+                      <path
+                        d="M4 10h9.5M11 6l3.5 4L11 14"
+                        stroke="currentColor"
+                        strokeWidth="1.6"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  </button>
+                );
+              })()}
+            </div>
           </div>
         </div>
       </div>

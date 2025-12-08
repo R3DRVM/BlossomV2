@@ -63,6 +63,7 @@ function getPortfolioBiasWarning(strategies: any[], newStrategy: ParsedStrategy)
 export default function MessageBubble({ text, isUser, timestamp, strategy, strategyId, selectedStrategyId, defiProposalId, onInsertPrompt, onRegisterStrategyRef }: MessageBubbleProps) {
   const { updateStrategyStatus, recomputeAccountFromStrategies, strategies, setActiveTab, setSelectedStrategyId, setOnboarding, closeStrategy, closeEventStrategy, defiPositions, latestDefiProposal, confirmDefiPlan, updateFromBackendPortfolio } = useBlossomContext();
   const [isClosing, setIsClosing] = useState(false);
+  const [showReasoning, setShowReasoning] = useState(false);
   
   // Find the DeFi proposal for this message
   const defiProposal = defiProposalId 
@@ -118,7 +119,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
     }
   };
   return (
-    <div className={`flex gap-3 mb-4 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
+    <div className={`flex gap-2 mb-1.5 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
       <div className="flex-shrink-0">
         {isUser ? (
           <div className="w-8 h-8 rounded-full flex items-center justify-center text-lg bg-blossom-pink">
@@ -131,10 +132,10 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
         )}
       </div>
       <div className={`flex flex-col ${isUser ? 'items-end' : 'items-start'} max-w-[70%]`}>
-        <div className="text-sm font-medium text-gray-600 mb-1">
+        <div className="text-[11px] font-medium text-gray-600 mb-0.5">
           {isUser ? 'You' : 'Blossom'}
         </div>
-        <div className={`rounded-3xl px-4 py-3 ${
+        <div className={`rounded-3xl px-2.5 py-1.5 leading-relaxed ${
           isUser 
             ? 'bg-gradient-to-br from-blossom-pink to-[#FF5A96] shadow-sm' 
             : 'card-glass'
@@ -149,7 +150,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
         {!isUser && strategy && (
           <div 
             ref={strategyPreviewRef}
-            className={`mt-3 w-full max-w-md strategy-card card-glass p-5 transition-all duration-300 ${
+            className={`mt-1.5 w-full max-w-md strategy-card card-glass transition-all duration-300 ${
               currentStatus === 'draft' || currentStatus === 'queued'
                 ? ''
                 : currentStatus === 'executing'
@@ -157,10 +158,11 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                 : currentStatus === 'executed' && !isClosed
                 ? ''
                 : ''
-            } ${isSelected ? 'ring-2 ring-blossom-pink/30' : ''}`}
+            }             ${isSelected ? 'ring-2 ring-blossom-pink/30' : ''}`}
           >
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-base font-semibold text-blossom-ink">
+            {/* Header - always visible */}
+            <div className="flex items-center justify-between p-3 pb-1.5 border-b border-blossom-outline/20">
+              <h3 className="text-xs font-semibold text-blossom-ink">
                 {currentStrategy?.eventLabel || currentStrategy?.eventKey || strategy.market}
               </h3>
               <span className={`px-2.5 py-1 text-xs font-medium rounded-full ${
@@ -187,7 +189,9 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                  isClosed ? 'Closed' : 'Active'}
               </span>
             </div>
-            <div className="grid grid-cols-2 gap-3 text-sm mb-4">
+            {/* Scrollable content */}
+            <div className="max-h-[60vh] overflow-y-auto p-3 pt-1.5">
+              <div className="grid grid-cols-2 gap-1.5 text-xs mb-2">
               {currentStrategy?.instrumentType === 'event' ? (
                 <>
                   <div>
@@ -247,19 +251,19 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
             
             {/* Risk Guardrails */}
             {!isHighRisk && (
-              <div className="mt-3 text-xs text-gray-600">
+              <div className="mt-1.5 text-[11px] text-gray-500">
                 This keeps your per-strategy risk at or below 3% of account.
               </div>
             )}
             {isHighRisk && (
-              <div className="mt-3 rounded-md bg-yellow-50 px-3 py-2 text-xs text-yellow-800 border border-yellow-200">
+              <div className="mt-1.5 rounded-md bg-yellow-50 px-2.5 py-1.5 text-[11px] text-yellow-800 border border-yellow-200">
                 This strategy uses {strategy.riskPercent}% of your account, above your typical 3% risk per trade.
                 Make sure you're comfortable with a larger drawdown.
               </div>
             )}
             
             {isDraft && (
-              <div className="pt-3 border-t border-blossom-outline/50">
+              <div className="pt-1.5 border-t border-blossom-outline/50">
                 <button 
                   onClick={(e) => {
                     e.preventDefault();
@@ -368,26 +372,44 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
               </div>
             )}
             {(currentStatus === 'queued' || currentStatus === 'executing') && (
-              <div className="mt-4 px-4 py-2 text-sm font-medium rounded-lg bg-gray-100 text-gray-700 text-center">
+              <div className="mt-1.5 px-2.5 py-1 text-[11px] font-medium rounded-lg bg-gray-100 text-gray-700 text-center">
                 {currentStatus === 'queued' ? 'Queued...' : 'Executing...'}
               </div>
             )}
+            </div>
           </div>
         )}
         
-        {/* Reasoning Block */}
+        {/* Reasoning Block - Collapsible */}
         {!isUser && strategy && (
-          <div className="mt-3 rounded-lg border border-gray-100 bg-gray-50 px-4 py-3 text-sm text-gray-700">
-            <div className="font-medium mb-1">Why this setup?</div>
-            <ul className="list-disc pl-5 space-y-1">
-              {getStrategyReasoning(strategy, currentStrategy?.instrumentType).map((line, idx) => (
-                <li key={idx}>{line}</li>
-              ))}
-            </ul>
-            
-            {biasWarning && (
-              <div className="mt-2 rounded-md bg-blossom-pinkSoft px-3 py-2 text-xs text-blossom-ink border border-blossom-pink/40">
-                {biasWarning}
+          <div className="mt-1.5 rounded-lg border border-gray-100/80 bg-gray-50/60 px-2.5 py-1.5">
+            <button
+              onClick={() => setShowReasoning(!showReasoning)}
+              className="w-full flex items-center justify-between text-left"
+            >
+              <span className="text-[11px] font-medium text-gray-600">Why this setup?</span>
+              <svg
+                className={`w-3 h-3 text-gray-500 transition-transform ${showReasoning ? 'rotate-180' : ''}`}
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+            {showReasoning && (
+              <div className="mt-1.5 pt-1.5 border-t border-gray-200/60">
+                <ul className="list-disc pl-4 space-y-0.5 text-[11px] text-gray-600">
+                  {getStrategyReasoning(strategy, currentStrategy?.instrumentType).map((line, idx) => (
+                    <li key={idx}>{line}</li>
+                  ))}
+                </ul>
+                
+                {biasWarning && (
+                  <div className="mt-1.5 rounded-md bg-blossom-pinkSoft/60 px-2 py-1 text-[10px] text-blossom-ink border border-blossom-pink/30">
+                    {biasWarning}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -395,22 +417,22 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
         
         {/* Follow-up Suggestions */}
         {!isUser && strategy && (
-          <div className="mt-3 flex flex-wrap gap-2">
+          <div className="mt-1.5 flex flex-wrap gap-1">
             <button
               onClick={() => handleSuggestionClick(`Simulate PnL for this strategy if ${strategy.market.replace('-PERP', '')} moves ±10%`)}
-              className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-full transition-colors"
+              className="px-2.5 py-1 text-[11px] font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-full transition-colors"
             >
               Simulate PnL if price moves ±10%
             </button>
             <button
               onClick={() => handleSuggestionClick('Show liquidation risk for this strategy')}
-              className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-full transition-colors"
+              className="px-2.5 py-1 text-[11px] font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-full transition-colors"
             >
               Show liquidation risk
             </button>
             <button
               onClick={() => handleSuggestionClick(`Hedge this ${strategy.market} ${strategy.side.toLowerCase()} exposure`)}
-              className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-full transition-colors"
+              className="px-2.5 py-1 text-[11px] font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-full transition-colors"
             >
               Hedge this exposure
             </button>
@@ -419,7 +441,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                 setSelectedStrategyId(strategyId || null);
                 setActiveTab('portfolio');
               }}
-              className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-full transition-colors"
+              className="px-2.5 py-1 text-[11px] font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-full transition-colors"
             >
               Show portfolio impact
             </button>
@@ -428,9 +450,10 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
         
         {/* DeFi Plan Card */}
         {!isUser && defiProposal && (
-          <div className="mt-3 w-full max-w-md bg-white rounded-2xl p-5 shadow-sm border border-blossom-outline strategy-card">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-base font-semibold text-blossom-ink">DeFi Plan (Sim)</h3>
+          <div className="mt-2 w-full max-w-md bg-white rounded-2xl shadow-sm border border-blossom-outline strategy-card">
+            {/* Header - always visible */}
+            <div className="flex items-center justify-between p-4 pb-2 border-b border-blossom-outline/20">
+              <h3 className="text-sm font-semibold text-blossom-ink">DeFi Plan (Sim)</h3>
               <span className={`px-2.5 py-1 text-xs font-medium rounded-full ${
                 defiProposal.status === 'proposed'
                   ? 'bg-gray-100 text-gray-600'
@@ -439,7 +462,9 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                 {defiProposal.status === 'proposed' ? 'Proposed' : 'Active'}
               </span>
             </div>
-            <div className="grid grid-cols-2 gap-3 text-sm mb-4">
+            {/* Scrollable content */}
+            <div className="max-h-[60vh] overflow-y-auto p-3 pt-1.5">
+              <div className="grid grid-cols-2 gap-1.5 text-xs mb-2">
               <div>
                 <div className="text-xs text-blossom-slate mb-0.5">Protocol</div>
                 <div className="text-sm font-medium text-blossom-ink">{defiProposal.protocol}</div>
@@ -457,11 +482,11 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                 <div className="text-sm font-medium text-blossom-success">{defiProposal.apyPct}%</div>
               </div>
             </div>
-            <div className="text-xs text-blossom-slate mb-4 pt-3 border-t border-blossom-outline/50">
+            <div className="text-[11px] text-blossom-slate mb-2 pt-1.5 border-t border-blossom-outline/50">
               Choosing the highest APY within your risk band using idle USDC.
             </div>
             {defiProposal.status === 'proposed' ? (
-              <div className="pt-3 border-t border-blossom-outline/50">
+              <div className="pt-1.5 border-t border-blossom-outline/50">
                 <button
                   onClick={(e) => {
                     e.preventDefault();
@@ -478,8 +503,9 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                 Active
               </div>
             )}
-            <div className="mt-4 pt-3 border-t border-blossom-outline/50 text-xs text-blossom-slate">
+            <div className="mt-2 pt-1.5 border-t border-blossom-outline/50 text-[11px] text-blossom-slate">
               Instrument: DeFi yield (Sim – no real deposits)
+            </div>
             </div>
           </div>
         )}
@@ -509,7 +535,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
             </button>
           </div>
         )}
-        <div className="text-xs text-gray-400 mt-1">
+        <div className="text-[11px] text-slate-400 mt-1">
           {timestamp}
         </div>
       </div>

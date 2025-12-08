@@ -2,7 +2,7 @@
 // See src/lib/blossomApi.ts for the integration layer
 // When ready, update Chat.tsx to use callBlossomChat() instead of parseUserMessage()
 
-export type ParsedIntent = 'trade' | 'risk_question' | 'general' | 'defi' | 'event' | 'update_event_stake';
+export type ParsedIntent = 'trade' | 'risk_question' | 'general' | 'defi' | 'event' | 'update_event_stake' | 'hedge';
 
 export interface ParsedStrategy {
   market: string;
@@ -198,6 +198,9 @@ export function parseUserMessage(
     };
   }
   
+  // Check for hedge keywords FIRST (before trade keywords)
+  const hasHedgeKeywords = lowerText.includes('hedge') || lowerText.includes('hedging');
+  
   // Check for DeFi keywords
   const hasDefiKeywords = DEFI_KEYWORDS.some(keyword => lowerText.includes(keyword));
   // Check for trade keywords
@@ -206,10 +209,57 @@ export function parseUserMessage(
   
   if (hasDefiKeywords) {
     intent = 'defi';
+  } else if (hasHedgeKeywords) {
+    intent = 'hedge';
   } else if (hasTradeKeywords) {
     intent = 'trade';
   } else if (hasRiskKeywords) {
     intent = 'risk_question';
+  }
+  
+  // If intent is hedge, parse hedging strategy
+  if (intent === 'hedge') {
+    // Detect market to hedge (from context or message)
+    let market = 'ETH';
+    for (const m of MARKETS) {
+      if (upperText.includes(m)) {
+        market = m;
+        break;
+      }
+    }
+    
+    // For hedging, we need to calculate net exposure and create opposite side
+    // This will be handled in Chat.tsx with access to strategies state
+    // For now, return a hedge intent with market info
+    const basePrice = DEFAULT_PRICES[market] || 3500;
+    
+    // Extract risk percentage (default 3% for hedge)
+    const riskMatch = text.match(/(\d+(?:\.\d+)?)\s*%/);
+    const riskPercent = riskMatch ? parseFloat(riskMatch[1]) : 3;
+    
+    // Calculate entry, TP, SL for SHORT (opposite of long)
+    const entryPrice = basePrice;
+    const takeProfit = entryPrice * 0.96; // 4% down for short (hedge)
+    const stopLoss = entryPrice * 1.03; // 3% up for short
+    
+    const liqBuffer = 15 + Math.random() * 5;
+    const fundingRand = Math.random();
+    const fundingImpact: 'Low' | 'Medium' | 'High' = 
+      fundingRand < 0.5 ? 'Low' : fundingRand < 0.8 ? 'Medium' : 'High';
+    
+    return {
+      intent: 'hedge',
+      strategy: {
+        market: `${market}-PERP`,
+        side: 'Short', // Hedging always creates opposite side
+        riskPercent,
+        entryPrice: Math.round(entryPrice),
+        takeProfit: Math.round(takeProfit),
+        stopLoss: Math.round(stopLoss),
+        liqBuffer: Math.round(liqBuffer * 10) / 10,
+        fundingImpact,
+      },
+    };
   }
   
   // If intent is trade, parse strategy
@@ -271,6 +321,17 @@ export function parseUserMessage(
 export function generateBlossomResponse(parsed: ParsedMessage, originalText?: string): string {
   // Store original text for prediction market detection
   (parsed as any).originalText = originalText;
+  if (parsed.intent === 'hedge' && parsed.strategy) {
+    const { market, side, riskPercent, entryPrice, takeProfit, stopLoss, liqBuffer, fundingImpact } = parsed.strategy;
+    const baseAsset = market.replace('-PERP', '');
+    
+    return `I'll create a ${side.toUpperCase()} hedge on ${market} with ${riskPercent}% account risk to offset your existing ${baseAsset} long exposure.
+
+This hedge will enter near $${entryPrice.toLocaleString()}, with a take-profit at $${takeProfit.toLocaleString()} and a stop-loss at $${stopLoss.toLocaleString()}.
+
+This reduces your net ${baseAsset} exposure and maintains a liquidation buffer of ~${liqBuffer}% with ${fundingImpact.toLowerCase()} funding impact.`;
+  }
+  
   if (parsed.intent === 'trade' && parsed.strategy) {
     const { market, side, riskPercent, entryPrice, takeProfit, stopLoss, liqBuffer, fundingImpact } = parsed.strategy;
     

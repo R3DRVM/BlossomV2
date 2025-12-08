@@ -162,11 +162,15 @@ body {
 .chat-message-text-user {
   color: #FFFFFF !important;
   opacity: 1 !important;
+  font-size: 0.75rem !important; /* text-xs - slightly smaller */
+  line-height: 1.5rem !important;
 }
 
 .chat-message-text-assistant {
   color: #1E293B !important;
   opacity: 1 !important;
+  font-size: 0.75rem !important; /* text-xs - slightly smaller */
+  line-height: 1.5rem !important;
 }
 
 .chat-button-text-enabled {
