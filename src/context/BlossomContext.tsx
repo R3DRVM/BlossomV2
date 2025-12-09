@@ -97,6 +97,12 @@ interface BlossomContextType {
   closeEventStrategy: (id: string) => void;
   updateEventStake: (id: string, updates: Partial<Strategy>) => void;
   updateStrategy: (id: string, updates: Partial<Strategy>) => void;
+  executeDraftStrategy: (id: string) => void;
+  discardDraftStrategy: (id: string) => void;
+  getLatestDraftForSymbol: (symbol: string) => Strategy | null;
+  getLatestDraft: () => Strategy | null;
+  getLatestExecutedPerpForSymbol: (symbol: string) => Strategy | null;
+  getLatestExecutedEventForKey: (eventKey: string) => Strategy | null;
   venue: Venue;
   setVenue: (v: Venue) => void;
   defiPositions: DefiPosition[];
@@ -353,18 +359,24 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
   }, [account]);
 
   const recomputeAccountFromStrategies = useCallback(() => {
-    // Account is now updated directly in updateStrategyStatus when status becomes "executed"
-    // This function can be used for other recomputations if needed
+    // Only count executed strategies (not drafts) for risk/exposure calculations
     const activeStrategies = strategies.filter(s => 
-      (s.status === 'executed' || s.status === 'executing') && !s.isClosed
+      s.status === 'executed' && !s.isClosed
     );
-    const totalRisk = activeStrategies.reduce((sum, s) => sum + s.riskPercent, 0);
     
-    setAccount(prev => {
-      const newExposure = Math.min(prev.accountValue * (totalRisk / 100), prev.accountValue * 0.5);
+    const newExposure = activeStrategies
+      .filter(s => s.instrumentType === 'perp' && s.notionalUsd)
+      .reduce((sum, s) => sum + (s.notionalUsd || 0), 0);
+    
+    const newEventExposure = activeStrategies
+      .filter(s => s.instrumentType === 'event' && s.stakeUsd)
+      .reduce((sum, s) => sum + (s.stakeUsd || 0), 0);
+    
+    setAccount(current => {
       return {
-        ...prev,
+        ...current,
         openPerpExposure: newExposure,
+        eventExposureUsd: newEventExposure,
       };
     });
   }, [strategies]);
@@ -459,11 +471,57 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
       return s;
     }));
     
-    // Recompute account if risk or size changed
-    if (updates.riskPercent !== undefined || updates.notionalUsd !== undefined) {
+    // Recompute account if risk or size changed (only for executed strategies)
+    const strategy = strategies.find(s => s.id === id);
+    if (strategy && strategy.status === 'executed' && (updates.riskPercent !== undefined || updates.notionalUsd !== undefined || updates.stakeUsd !== undefined)) {
       recomputeAccountFromStrategies();
     }
-  }, [recomputeAccountFromStrategies]);
+  }, [strategies, recomputeAccountFromStrategies]);
+
+  const executeDraftStrategy = useCallback((id: string) => {
+    updateStrategyStatus(id, 'executed');
+  }, [updateStrategyStatus]);
+
+  const discardDraftStrategy = useCallback((id: string) => {
+    setStrategies(prev => prev.filter(s => s.id !== id));
+    if (selectedStrategyId === id) {
+      setSelectedStrategyId(null);
+    }
+  }, [selectedStrategyId]);
+
+  const getLatestDraftForSymbol = useCallback((symbol: string): Strategy | null => {
+    const drafts = strategies.filter(s => 
+      s.status === 'draft' && 
+      getBaseAsset(s.market) === symbol &&
+      s.instrumentType === 'perp'
+    );
+    return drafts.length > 0 ? drafts[0] : null; // Most recent is first in array
+  }, [strategies]);
+
+  const getLatestDraft = useCallback((): Strategy | null => {
+    const drafts = strategies.filter(s => s.status === 'draft');
+    return drafts.length > 0 ? drafts[0] : null; // Most recent is first in array
+  }, [strategies]);
+
+  const getLatestExecutedPerpForSymbol = useCallback((symbol: string): Strategy | null => {
+    const executed = strategies.filter(s => 
+      s.status === 'executed' && 
+      !s.isClosed &&
+      getBaseAsset(s.market) === symbol &&
+      s.instrumentType === 'perp'
+    );
+    return executed.length > 0 ? executed[0] : null; // Most recent is first in array
+  }, [strategies]);
+
+  const getLatestExecutedEventForKey = useCallback((eventKey: string): Strategy | null => {
+    const executed = strategies.filter(s => 
+      s.status === 'executed' && 
+      !s.isClosed &&
+      s.eventKey === eventKey &&
+      s.instrumentType === 'event'
+    );
+    return executed.length > 0 ? executed[0] : null; // Most recent is first in array
+  }, [strategies]);
 
   const closeEventStrategy = useCallback((id: string) => {
     setStrategies(prev => {
@@ -735,11 +793,17 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
         setOnboarding,
         lastRiskSnapshot,
         setLastRiskSnapshot,
-    closeStrategy,
+        closeStrategy,
     autoCloseProfitableStrategies,
     closeEventStrategy,
     updateEventStake,
     updateStrategy,
+    executeDraftStrategy,
+    discardDraftStrategy,
+    getLatestDraftForSymbol,
+    getLatestDraft,
+    getLatestExecutedPerpForSymbol,
+    getLatestExecutedEventForKey,
         venue,
         setVenue,
         defiPositions,

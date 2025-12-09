@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import MessageBubble from './MessageBubble';
 import TypingIndicator from './TypingIndicator';
 import { parseUserMessage, generateBlossomResponse, ParsedStrategy } from '../lib/mockParser';
-import { useBlossomContext, ActiveTab } from '../context/BlossomContext';
+import { useBlossomContext, ActiveTab, Strategy } from '../context/BlossomContext';
 import { USE_AGENT_BACKEND } from '../lib/config';
 import { callBlossomChat } from '../lib/blossomApi';
 import QuickStartPanel from './QuickStartPanel';
@@ -50,7 +50,7 @@ const QUICK_PROMPTS_EVENTS = [
 ];
 
 export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: ChatProps) {
-  const { addDraftStrategy, setOnboarding, activeTab, venue, account, createDefiPlanFromCommand, updateFromBackendPortfolio, strategies, updateEventStake, getBaseAsset, updateStrategy, closeStrategy, closeEventStrategy } = useBlossomContext();
+  const { addDraftStrategy, setOnboarding, activeTab, venue, account, createDefiPlanFromCommand, updateFromBackendPortfolio, strategies, updateEventStake, getBaseAsset, updateStrategy, closeStrategy, closeEventStrategy, executeDraftStrategy, discardDraftStrategy, getLatestDraftForSymbol, getLatestDraft, getLatestExecutedPerpForSymbol, getLatestExecutedEventForKey } = useBlossomContext();
   const [messages, setMessages] = useState<Message[]>([
     {
       id: '0',
@@ -407,35 +407,42 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
           setIsTyping(false);
         } else if (parsed.intent === 'modifyPerpPosition' && parsed.positionModification) {
           // Handle perp position modifications
+          // Prefer drafts over executed positions for modifications
           const mod = parsed.positionModification;
           
-          // Find matching perp position
+          // Find matching perp position - check drafts first
           let targetStrategy = null;
           if (mod.symbol) {
-            const matchingPerps = strategies.filter(s => 
-              s.instrumentType === 'perp' && 
-              (s.status === 'executed' || s.status === 'executing') && 
-              !s.isClosed &&
-              getBaseAsset(s.market) === mod.symbol
-            );
-            // Use most recent if multiple matches
-            targetStrategy = matchingPerps.length > 0 ? matchingPerps[matchingPerps.length - 1] : null;
+            // First check for a draft
+            const draft = getLatestDraftForSymbol(mod.symbol);
+            if (draft) {
+              targetStrategy = draft;
+            } else {
+              // Fall back to executed positions
+              targetStrategy = getLatestExecutedPerpForSymbol(mod.symbol);
+            }
           } else {
-            // No symbol specified, use most recent perp
-            const allPerps = strategies.filter(s => 
-              s.instrumentType === 'perp' && 
-              (s.status === 'executed' || s.status === 'executing') && 
-              !s.isClosed
-            );
-            targetStrategy = allPerps.length > 0 ? allPerps[allPerps.length - 1] : null;
+            // No symbol specified, check for latest draft first
+            const latestDraft = getLatestDraft();
+            if (latestDraft && latestDraft.instrumentType === 'perp') {
+              targetStrategy = latestDraft;
+            } else {
+              // Fall back to most recent executed perp
+              const allPerps = strategies.filter(s => 
+                s.instrumentType === 'perp' && 
+                s.status === 'executed' && 
+                !s.isClosed
+              );
+              targetStrategy = allPerps.length > 0 ? allPerps[allPerps.length - 1] : null;
+            }
           }
           
           if (!targetStrategy) {
             const errorMessage: Message = {
               id: `error-${Date.now()}`,
               text: mod.symbol 
-                ? `I couldn't find an open ${mod.symbol} perp position. Try specifying the asset (e.g. 'my ETH long').`
-                : "I couldn't find an open perp position that matches that description. Try specifying the asset (e.g. 'my ETH long').",
+                ? `I couldn't find a draft or open ${mod.symbol} perp position. Try specifying the asset (e.g. 'my ETH long').`
+                : "I couldn't find a draft or open perp position that matches that description. Try specifying the asset (e.g. 'my ETH long').",
               isUser: false,
               timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
             };
@@ -448,8 +455,10 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
           const updates: any = {};
           if (mod.riskPercent !== undefined) {
             updates.riskPercent = mod.riskPercent;
-            // Recalculate notional based on new risk
-            updates.notionalUsd = account.accountValue * mod.riskPercent / 100;
+            // Recalculate notional based on new risk (only for executed, drafts don't affect account yet)
+            if (targetStrategy.status === 'executed') {
+              updates.notionalUsd = account.accountValue * mod.riskPercent / 100;
+            }
           }
           if (mod.leverage !== undefined) {
             updates.leverage = mod.leverage;
@@ -479,9 +488,10 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
             confirmParts.push(`stop loss to $${mod.stopLoss.toLocaleString()}`);
           }
           
+          const isDraft = targetStrategy.status === 'draft';
           const confirmText = confirmParts.length > 0
-            ? `Got it. I've updated your ${targetStrategy.market} ${targetStrategy.side.toLowerCase()} position: ${confirmParts.join(', ')}.`
-            : `Got it. I've updated your ${targetStrategy.market} position.`;
+            ? `Got it. I've updated the ${isDraft ? 'draft' : ''} ${targetStrategy.market} ${targetStrategy.side.toLowerCase()} ${isDraft ? 'trade' : 'position'}: ${confirmParts.join(', ')}.${isDraft ? ' Say "execute" when you\'re ready.' : ''}`
+            : `Got it. I've updated the ${isDraft ? 'draft' : ''} ${targetStrategy.market} ${isDraft ? 'trade' : 'position'}.${isDraft ? ' Say "execute" when you\'re ready.' : ''}`;
           
           const blossomResponse: Message = {
             id: `modify-${Date.now()}`,
@@ -493,29 +503,37 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
           setIsTyping(false);
           return;
         } else if (parsed.intent === 'closePerpPosition' && parsed.positionModification) {
-          // Handle perp position close
+          // Handle perp position close - only close executed positions, not drafts
           const mod = parsed.positionModification;
           
-          // Find matching perp position
+          // Find matching executed perp position (not drafts)
           let targetStrategy = null;
           if (mod.symbol) {
-            const matchingPerps = strategies.filter(s => 
-              s.instrumentType === 'perp' && 
-              (s.status === 'executed' || s.status === 'executing') && 
-              !s.isClosed &&
-              getBaseAsset(s.market) === mod.symbol
-            );
-            targetStrategy = matchingPerps.length > 0 ? matchingPerps[matchingPerps.length - 1] : null;
+            targetStrategy = getLatestExecutedPerpForSymbol(mod.symbol);
           } else {
             const allPerps = strategies.filter(s => 
               s.instrumentType === 'perp' && 
-              (s.status === 'executed' || s.status === 'executing') && 
+              s.status === 'executed' && 
               !s.isClosed
             );
             targetStrategy = allPerps.length > 0 ? allPerps[allPerps.length - 1] : null;
           }
           
           if (!targetStrategy) {
+            // Check if there's a draft instead
+            const draft = mod.symbol ? getLatestDraftForSymbol(mod.symbol) : getLatestDraft();
+            if (draft && draft.instrumentType === 'perp') {
+              const errorMessage: Message = {
+                id: `error-${Date.now()}`,
+                text: `That's still a draft ${draft.market} trade. You can cancel or confirm it instead.`,
+                isUser: false,
+                timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+              };
+              setMessages(prev => [...prev, errorMessage]);
+              setIsTyping(false);
+              return;
+            }
+            
             const errorMessage: Message = {
               id: `error-${Date.now()}`,
               text: mod.symbol 
@@ -541,27 +559,126 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
           setMessages(prev => [...prev, blossomResponse]);
           setIsTyping(false);
           return;
+        } else if (parsed.intent === 'confirmDraft') {
+          // Handle draft confirmation/execution
+          // Try to find a draft matching symbol/event if mentioned, otherwise use latest
+          const lowerText = userText.toLowerCase();
+          let targetDraft: Strategy | null = null;
+          
+          // Check for symbol mention
+          for (const m of ['ETH', 'BTC', 'SOL', 'BNB', 'AVAX']) {
+            if (lowerText.includes(m.toLowerCase())) {
+              const draft = getLatestDraftForSymbol(m);
+              if (draft) {
+                targetDraft = draft;
+                break;
+              }
+            }
+          }
+          
+          // Check for event mention
+          if (!targetDraft) {
+            if (lowerText.includes('fed') || lowerText.includes('rate cut')) {
+              const drafts = strategies.filter(s => s.status === 'draft' && s.eventKey === 'FED_CUTS_MAR_2025' && s.instrumentType === 'event');
+              if (drafts.length > 0) targetDraft = drafts[0];
+            } else if (lowerText.includes('etf')) {
+              const drafts = strategies.filter(s => s.status === 'draft' && s.eventKey === 'BTC_ETF_APPROVAL_2025' && s.instrumentType === 'event');
+              if (drafts.length > 0) targetDraft = drafts[0];
+            }
+          }
+          
+          // Fall back to latest draft
+          if (!targetDraft) {
+            targetDraft = getLatestDraft();
+          }
+          
+          if (!targetDraft) {
+            const errorMessage: Message = {
+              id: `error-${Date.now()}`,
+              text: "I couldn't find a draft to execute. Create a trade first.",
+              isUser: false,
+              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+            };
+            setMessages(prev => [...prev, errorMessage]);
+            setIsTyping(false);
+            return;
+          }
+          
+          executeDraftStrategy(targetDraft.id);
+          
+          const marketLabel = targetDraft.instrumentType === 'event' 
+            ? (targetDraft.eventLabel || targetDraft.eventKey)
+            : `${targetDraft.market} ${targetDraft.side.toLowerCase()}`;
+          
+          const blossomResponse: Message = {
+            id: `confirm-${Date.now()}`,
+            text: `Got it. I've executed your ${marketLabel} trade. It's now active and affecting your risk metrics.`,
+            isUser: false,
+            timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+          };
+          setMessages(prev => [...prev, blossomResponse]);
+          setIsTyping(false);
+          return;
+        } else if (parsed.intent === 'cancelDraft') {
+          // Handle draft cancellation
+          const latestDraft = getLatestDraft();
+          if (!latestDraft) {
+            const errorMessage: Message = {
+              id: `error-${Date.now()}`,
+              text: "I couldn't find a draft to cancel.",
+              isUser: false,
+              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+            };
+            setMessages(prev => [...prev, errorMessage]);
+            setIsTyping(false);
+            return;
+          }
+          
+          discardDraftStrategy(latestDraft.id);
+          
+          const blossomResponse: Message = {
+            id: `cancel-${Date.now()}`,
+            text: `Done. I've discarded the draft ${latestDraft.market} trade.`,
+            isUser: false,
+            timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+          };
+          setMessages(prev => [...prev, blossomResponse]);
+          setIsTyping(false);
+          return;
         } else if (parsed.intent === 'modifyEventPosition' && parsed.positionModification) {
           // Handle event position modifications
+          // Prefer drafts over executed positions for modifications
           const mod = parsed.positionModification;
           
-          // Find matching event position
+          // Find matching event position - check drafts first
           let targetStrategy = null;
           if (mod.eventKey) {
-            const matchingEvents = strategies.filter(s => 
-              s.instrumentType === 'event' && 
-              (s.status === 'executed' || s.status === 'executing') && 
-              !s.isClosed &&
-              s.eventKey === mod.eventKey
+            // First check for a draft
+            const drafts = strategies.filter(s => 
+              s.status === 'draft' && 
+              s.eventKey === mod.eventKey &&
+              s.instrumentType === 'event'
             );
-            targetStrategy = matchingEvents.length > 0 ? matchingEvents[matchingEvents.length - 1] : null;
+            if (drafts.length > 0) {
+              targetStrategy = drafts[0];
+            } else {
+              // Fall back to executed positions
+              targetStrategy = getLatestExecutedEventForKey(mod.eventKey);
+            }
           } else {
-            const allEvents = strategies.filter(s => 
-              s.instrumentType === 'event' && 
-              (s.status === 'executed' || s.status === 'executing') && 
-              !s.isClosed
-            );
-            targetStrategy = allEvents.length > 0 ? allEvents[allEvents.length - 1] : null;
+            // No event key specified, check for latest draft first
+            const latestDraft = getLatestDraft();
+            if (latestDraft && latestDraft.instrumentType === 'event') {
+              targetStrategy = latestDraft;
+            } else {
+              // Fall back to most recent executed event
+              const allEvents = strategies.filter(s => 
+                s.instrumentType === 'event' && 
+                s.status === 'executed' && 
+                !s.isClosed
+              );
+              targetStrategy = allEvents.length > 0 ? allEvents[allEvents.length - 1] : null;
+            }
           }
           
           if (!targetStrategy) {
@@ -604,29 +721,40 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
             return;
           }
         } else if (parsed.intent === 'closeEventPosition' && parsed.positionModification) {
-          // Handle event position close
+          // Handle event position close - only close executed positions, not drafts
           const mod = parsed.positionModification;
           
-          // Find matching event position
+          // Find matching executed event position (not drafts)
           let targetStrategy = null;
           if (mod.eventKey) {
-            const matchingEvents = strategies.filter(s => 
-              s.instrumentType === 'event' && 
-              (s.status === 'executed' || s.status === 'executing') && 
-              !s.isClosed &&
-              s.eventKey === mod.eventKey
-            );
-            targetStrategy = matchingEvents.length > 0 ? matchingEvents[matchingEvents.length - 1] : null;
+            targetStrategy = getLatestExecutedEventForKey(mod.eventKey);
           } else {
             const allEvents = strategies.filter(s => 
               s.instrumentType === 'event' && 
-              (s.status === 'executed' || s.status === 'executing') && 
+              s.status === 'executed' && 
               !s.isClosed
             );
             targetStrategy = allEvents.length > 0 ? allEvents[allEvents.length - 1] : null;
           }
           
           if (!targetStrategy) {
+            // Check if there's a draft instead
+            const drafts = mod.eventKey 
+              ? strategies.filter(s => s.status === 'draft' && s.eventKey === mod.eventKey && s.instrumentType === 'event')
+              : strategies.filter(s => s.status === 'draft' && s.instrumentType === 'event');
+            if (drafts.length > 0) {
+              const draft = drafts[0];
+              const errorMessage: Message = {
+                id: `error-${Date.now()}`,
+                text: `That's still a draft ${draft.eventLabel || draft.eventKey} trade. You can cancel or confirm it instead.`,
+                isUser: false,
+                timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+              };
+              setMessages(prev => [...prev, errorMessage]);
+              setIsTyping(false);
+              return;
+            }
+            
             const errorMessage: Message = {
               id: `error-${Date.now()}`,
               text: "I couldn't find an open event position to close. Try specifying the event name (e.g. 'close my Fed cuts event').",
@@ -803,7 +931,7 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
         onScroll={handleScroll}
         className="flex-1 overflow-y-auto min-h-0 px-6 py-3"
       >
-        <div className="max-w-3xl mx-auto min-h-[300px]">
+        <div className="max-w-3xl mx-auto">
           {messages.map(msg => (
             <MessageBubble
               key={msg.id}

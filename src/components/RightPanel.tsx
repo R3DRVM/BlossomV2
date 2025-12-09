@@ -29,9 +29,9 @@ export default function RightPanel(_props: RightPanelProps) {
   const perpPnlSign = account.totalPnlPct >= 0 ? '+' : '';
 
   return (
-    <div className="h-full flex flex-col min-h-0 overflow-hidden bg-slate-50">
+    <div className="flex flex-col min-h-0 bg-slate-50">
       {/* Wallet Snapshot - Sticky at top */}
-      <div className="flex-shrink-0 sticky top-0 z-10 pt-4 pb-3">
+      <div className="flex-shrink-0 pt-4 pb-3">
         {/* Wallet Card */}
         <div className="rounded-2xl border border-slate-100 bg-white shadow-sm px-4 py-4 space-y-3 w-full">
           {/* Title */}

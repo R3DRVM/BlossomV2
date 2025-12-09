@@ -33,12 +33,12 @@ export default function RiskCenter() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   
-  // Compute correlation based on strategies (exclude closed)
+  // Compute correlation based on strategies (only executed, exclude drafts and closed)
   const executedStrategies = strategies.filter(s => 
-    (s.status === 'executed' || s.status === 'executing') && !s.isClosed
+    s.status === 'executed' && !s.isClosed
   );
   
-  // Compute event market metrics (only open events)
+  // Compute event market metrics (only executed open events, not drafts)
   const openEventStrategies = strategies.filter(s => 
     s.instrumentType === 'event' && s.status === 'executed' && !s.isClosed
   );
@@ -268,6 +268,28 @@ export default function RiskCenter() {
                   <div className="flex justify-between">
                     <span className="text-gray-600">Largest single event:</span>
                     <span className="font-medium text-gray-900">{eventConcentrationPct.toFixed(1)}% of account</span>
+                  </div>
+                )}
+                {openEventStrategies.length > 0 && (
+                  <div className="mt-3 pt-3 border-t border-gray-100">
+                    <div className="text-xs font-medium text-gray-700 mb-2">Per-Event Breakdown:</div>
+                    <div className="space-y-2">
+                      {openEventStrategies.map((s) => {
+                        const maxPayout = s.maxPayoutUsd || (s.stakeUsd || 0) * 1.7;
+                        const maxLoss = s.stakeUsd || 0;
+                        const riskPct = account.accountValue > 0 ? (maxLoss / account.accountValue) * 100 : 0;
+                        return (
+                          <div key={s.id} className="text-xs bg-gray-50 rounded p-2">
+                            <div className="font-medium text-gray-900">{s.eventLabel || s.eventKey}</div>
+                            <div className="mt-1 space-y-0.5 text-gray-600">
+                              <div>Stake: ${maxLoss.toLocaleString()} ({riskPct.toFixed(1)}% risk)</div>
+                              <div>Max payout: ${maxPayout.toLocaleString()}</div>
+                              <div>Max loss: ${maxLoss.toLocaleString()}</div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 )}
               </div>

@@ -18,16 +18,16 @@ export default function PositionsTray({ defaultOpen = false }: PositionsTrayProp
   const [editingMode, setEditingMode] = useState<{ id: string; mode: 'tpSl' | 'leverage' | 'size' | 'eventStake' | 'defiDeposit' } | null>(null);
   const [editValues, setEditValues] = useState<{ takeProfit?: number; stopLoss?: number; leverage?: number; size?: number; stake?: number }>({});
 
-  // Get active positions (same logic as ContextualPanel)
+  // Get active positions (only executed, not drafts)
   const activePerps = strategies.filter(s => 
     s.instrumentType === 'perp' && 
-    (s.status === 'executed' || s.status === 'executing') && 
+    s.status === 'executed' && 
     !s.isClosed
   );
   
   const activeEvents = strategies.filter(s => 
     s.instrumentType === 'event' && 
-    (s.status === 'executed' || s.status === 'executing') && 
+    s.status === 'executed' && 
     !s.isClosed
   );
   
@@ -73,7 +73,7 @@ export default function PositionsTray({ defaultOpen = false }: PositionsTrayProp
   // Collapsed pill
   if (!isOpen) {
     return (
-      <div className="hidden lg:block absolute bottom-4 left-1/2 -translate-x-1/2 z-40 w-[calc(100%-1rem)]">
+      <div className="hidden lg:block w-full">
         <button
           onClick={() => setIsOpen(true)}
           className="w-full flex items-center justify-between gap-2 rounded-full bg-white/90 backdrop-blur-sm border border-slate-200 shadow-sm px-3 py-1.5 text-[11px] text-slate-700 hover:bg-pink-50/80 hover:border-pink-200 transition-all"
@@ -560,8 +560,8 @@ export default function PositionsTray({ defaultOpen = false }: PositionsTrayProp
   const currentPositions = getCurrentPositions();
 
   return (
-    <div className="hidden lg:block absolute bottom-4 left-1/2 -translate-x-1/2 z-40 w-[calc(100%-1rem)]">
-      <div className="w-full max-h-[55vh] rounded-2xl border border-slate-100 bg-white shadow-lg flex flex-col overflow-y-auto transition-all duration-200">
+    <div className="hidden lg:block w-full h-full flex flex-col min-h-0">
+      <div className="w-full h-full rounded-2xl border border-slate-100 bg-white shadow-lg flex flex-col overflow-y-auto transition-all duration-200">
         {/* Header */}
         <div className="flex items-center justify-between px-3 py-2 border-b border-slate-100 bg-white/95 backdrop-blur-sm flex-shrink-0">
           <div className="flex flex-col">
