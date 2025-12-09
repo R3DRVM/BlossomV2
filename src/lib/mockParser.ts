@@ -2,7 +2,7 @@
 // See src/lib/blossomApi.ts for the integration layer
 // When ready, update Chat.tsx to use callBlossomChat() instead of parseUserMessage()
 
-export type ParsedIntent = 'trade' | 'risk_question' | 'general' | 'defi' | 'event' | 'update_event_stake' | 'hedge' | 'modifyPerpPosition' | 'closePerpPosition' | 'modifyEventPosition' | 'closeEventPosition';
+export type ParsedIntent = 'trade' | 'risk_question' | 'general' | 'defi' | 'event' | 'update_event_stake' | 'hedge' | 'modifyPerpPosition' | 'closePerpPosition' | 'modifyEventPosition' | 'closeEventPosition' | 'confirmDraft' | 'cancelDraft';
 
 export interface ParsedStrategy {
   market: string;
@@ -241,6 +241,9 @@ export function parseUserMessage(
       mod.eventKey = 'US_ELECTION_2024';
     }
     
+    // For modifications, prefer targeting drafts if they exist
+    // This will be handled in Chat.tsx by checking for drafts first
+    
     // Extract risk percentage
     const riskMatch = text.match(/(\d+(?:\.\d+)?)\s*%/);
     if (riskMatch) {
@@ -294,6 +297,21 @@ export function parseUserMessage(
         return { intent: 'modifyPerpPosition', positionModification: mod };
       }
     }
+  }
+  
+  // Check for draft confirm/cancel keywords (before other intents)
+  const confirmKeywords = ['confirm', 'execute', 'go ahead', 'that looks good', 'proceed', 'do it', 'yes', 'approve'];
+  const cancelKeywords = ['cancel', 'discard', 'never mind', 'forget it', 'delete', 'remove'];
+  const hasConfirmKeywords = confirmKeywords.some(kw => lowerText.includes(kw));
+  const hasCancelKeywords = cancelKeywords.some(kw => lowerText.includes(kw));
+  const hasDraftRef = lowerText.includes('draft') || lowerText.includes('that trade') || lowerText.includes('this trade') || lowerText.includes('this position') || lowerText.includes('that position');
+  
+  if (hasConfirmKeywords && hasDraftRef) {
+    return { intent: 'confirmDraft' };
+  }
+  
+  if (hasCancelKeywords && hasDraftRef) {
+    return { intent: 'cancelDraft' };
   }
   
   // Check for hedge keywords FIRST (before trade keywords)

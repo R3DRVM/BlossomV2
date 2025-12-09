@@ -515,11 +515,13 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
           <div className="mt-2 flex flex-wrap gap-3 text-xs">
             <button
               type="button"
-              className="text-blossom-pink hover:underline hover:text-blossom-pink/80"
               onClick={() => {
-                setSelectedStrategyId(strategyId);
+                if (strategyId) {
+                  setSelectedStrategyId(strategyId);
+                }
                 setActiveTab('risk');
               }}
+              className="text-blossom-pink hover:text-blossom-pink/80 underline transition-colors"
             >
               View this strategy's impact in Risk Center →
             </button>
