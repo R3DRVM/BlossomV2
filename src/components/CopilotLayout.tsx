@@ -62,14 +62,14 @@ export default function CopilotLayout() {
   }, [totalPositions]);
 
   return (
-    <div className="flex h-full w-full bg-slate-50 overflow-hidden">
+    <div className="flex min-h-screen w-full bg-slate-50">
       {/* Left Sidebar - hidden below lg */}
       <div className="hidden lg:flex w-64 flex-shrink-0 min-h-0 overflow-hidden">
         <LeftSidebar />
       </div>
 
       {/* Center Panel - Main Chat - always visible, flex-1 */}
-      <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+      <div className="flex-1 flex flex-col min-h-0">
         {/* Center Header - Compact */}
         <div className="flex-shrink-0 bg-white border-b border-slate-100 px-4 py-2">
           <div className="flex items-center justify-between">
@@ -153,7 +153,7 @@ export default function CopilotLayout() {
             )}
 
         {/* Content Area - Scrollable */}
-        <div className="flex-1 flex flex-col min-h-0 overflow-hidden bg-white">
+        <div className="flex-1 flex flex-col min-h-0 bg-white">
           {centerView === 'copilot' && (
             <>
               {!onboarding.dismissed && !allDone && (
