@@ -560,8 +560,8 @@ export default function PositionsTray({ defaultOpen = false }: PositionsTrayProp
   const currentPositions = getCurrentPositions();
 
   return (
-    <div className="hidden lg:block w-full h-full flex flex-col min-h-0">
-      <div className="w-full h-full rounded-2xl border border-slate-100 bg-white shadow-lg flex flex-col overflow-y-auto transition-all duration-200">
+    <div className="hidden lg:block w-full flex flex-col min-h-0">
+      <div className="w-full flex-1 rounded-2xl border border-slate-100 bg-white shadow-lg flex flex-col overflow-y-auto transition-all duration-200 min-h-0">
         {/* Header */}
         <div className="flex items-center justify-between px-3 py-2 border-b border-slate-100 bg-white/95 backdrop-blur-sm flex-shrink-0">
           <div className="flex flex-col">

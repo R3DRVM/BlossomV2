@@ -925,7 +925,7 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
   }, [inputValue]);
 
   return (
-    <div className="flex flex-col h-full min-h-0">
+    <div className="flex-1 flex flex-col min-h-0">
       <div 
         ref={messagesContainerRef}
         onScroll={handleScroll}
