@@ -50,7 +50,7 @@ const QUICK_PROMPTS_EVENTS = [
 ];
 
 export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: ChatProps) {
-  const { addDraftStrategy, setOnboarding, activeTab, venue, account, createDefiPlanFromCommand, updateFromBackendPortfolio, strategies, updateEventStake, getBaseAsset } = useBlossomContext();
+  const { addDraftStrategy, setOnboarding, activeTab, venue, account, createDefiPlanFromCommand, updateFromBackendPortfolio, strategies, updateEventStake, getBaseAsset, updateStrategy, closeStrategy, closeEventStrategy } = useBlossomContext();
   const [messages, setMessages] = useState<Message[]>([
     {
       id: '0',
@@ -405,6 +405,251 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
           };
           setMessages(prev => [...prev, blossomResponse]);
           setIsTyping(false);
+        } else if (parsed.intent === 'modifyPerpPosition' && parsed.positionModification) {
+          // Handle perp position modifications
+          const mod = parsed.positionModification;
+          
+          // Find matching perp position
+          let targetStrategy = null;
+          if (mod.symbol) {
+            const matchingPerps = strategies.filter(s => 
+              s.instrumentType === 'perp' && 
+              (s.status === 'executed' || s.status === 'executing') && 
+              !s.isClosed &&
+              getBaseAsset(s.market) === mod.symbol
+            );
+            // Use most recent if multiple matches
+            targetStrategy = matchingPerps.length > 0 ? matchingPerps[matchingPerps.length - 1] : null;
+          } else {
+            // No symbol specified, use most recent perp
+            const allPerps = strategies.filter(s => 
+              s.instrumentType === 'perp' && 
+              (s.status === 'executed' || s.status === 'executing') && 
+              !s.isClosed
+            );
+            targetStrategy = allPerps.length > 0 ? allPerps[allPerps.length - 1] : null;
+          }
+          
+          if (!targetStrategy) {
+            const errorMessage: Message = {
+              id: `error-${Date.now()}`,
+              text: mod.symbol 
+                ? `I couldn't find an open ${mod.symbol} perp position. Try specifying the asset (e.g. 'my ETH long').`
+                : "I couldn't find an open perp position that matches that description. Try specifying the asset (e.g. 'my ETH long').",
+              isUser: false,
+              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+            };
+            setMessages(prev => [...prev, errorMessage]);
+            setIsTyping(false);
+            return;
+          }
+          
+          // Build update object
+          const updates: any = {};
+          if (mod.riskPercent !== undefined) {
+            updates.riskPercent = mod.riskPercent;
+            // Recalculate notional based on new risk
+            updates.notionalUsd = account.accountValue * mod.riskPercent / 100;
+          }
+          if (mod.leverage !== undefined) {
+            updates.leverage = mod.leverage;
+          }
+          if (mod.takeProfit !== undefined) {
+            updates.takeProfit = mod.takeProfit;
+          }
+          if (mod.stopLoss !== undefined) {
+            updates.stopLoss = mod.stopLoss;
+          }
+          
+          // Apply updates
+          updateStrategy(targetStrategy.id, updates);
+          
+          // Generate confirmation message
+          const confirmParts: string[] = [];
+          if (mod.riskPercent !== undefined) {
+            confirmParts.push(`risk to ${mod.riskPercent}%`);
+          }
+          if (mod.leverage !== undefined) {
+            confirmParts.push(`leverage to ${mod.leverage}x`);
+          }
+          if (mod.takeProfit !== undefined) {
+            confirmParts.push(`take profit to $${mod.takeProfit.toLocaleString()}`);
+          }
+          if (mod.stopLoss !== undefined) {
+            confirmParts.push(`stop loss to $${mod.stopLoss.toLocaleString()}`);
+          }
+          
+          const confirmText = confirmParts.length > 0
+            ? `Got it. I've updated your ${targetStrategy.market} ${targetStrategy.side.toLowerCase()} position: ${confirmParts.join(', ')}.`
+            : `Got it. I've updated your ${targetStrategy.market} position.`;
+          
+          const blossomResponse: Message = {
+            id: `modify-${Date.now()}`,
+            text: confirmText,
+            isUser: false,
+            timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+          };
+          setMessages(prev => [...prev, blossomResponse]);
+          setIsTyping(false);
+          return;
+        } else if (parsed.intent === 'closePerpPosition' && parsed.positionModification) {
+          // Handle perp position close
+          const mod = parsed.positionModification;
+          
+          // Find matching perp position
+          let targetStrategy = null;
+          if (mod.symbol) {
+            const matchingPerps = strategies.filter(s => 
+              s.instrumentType === 'perp' && 
+              (s.status === 'executed' || s.status === 'executing') && 
+              !s.isClosed &&
+              getBaseAsset(s.market) === mod.symbol
+            );
+            targetStrategy = matchingPerps.length > 0 ? matchingPerps[matchingPerps.length - 1] : null;
+          } else {
+            const allPerps = strategies.filter(s => 
+              s.instrumentType === 'perp' && 
+              (s.status === 'executed' || s.status === 'executing') && 
+              !s.isClosed
+            );
+            targetStrategy = allPerps.length > 0 ? allPerps[allPerps.length - 1] : null;
+          }
+          
+          if (!targetStrategy) {
+            const errorMessage: Message = {
+              id: `error-${Date.now()}`,
+              text: mod.symbol 
+                ? `I couldn't find an open ${mod.symbol} perp position to close.`
+                : "I couldn't find an open perp position to close. Try specifying the asset (e.g. 'close my ETH long').",
+              isUser: false,
+              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+            };
+            setMessages(prev => [...prev, errorMessage]);
+            setIsTyping(false);
+            return;
+          }
+          
+          // Close the position
+          closeStrategy(targetStrategy.id);
+          
+          const blossomResponse: Message = {
+            id: `close-${Date.now()}`,
+            text: `Done. I've closed your ${targetStrategy.market} ${targetStrategy.side.toLowerCase()} position and realized PnL in the sim wallet.`,
+            isUser: false,
+            timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+          };
+          setMessages(prev => [...prev, blossomResponse]);
+          setIsTyping(false);
+          return;
+        } else if (parsed.intent === 'modifyEventPosition' && parsed.positionModification) {
+          // Handle event position modifications
+          const mod = parsed.positionModification;
+          
+          // Find matching event position
+          let targetStrategy = null;
+          if (mod.eventKey) {
+            const matchingEvents = strategies.filter(s => 
+              s.instrumentType === 'event' && 
+              (s.status === 'executed' || s.status === 'executing') && 
+              !s.isClosed &&
+              s.eventKey === mod.eventKey
+            );
+            targetStrategy = matchingEvents.length > 0 ? matchingEvents[matchingEvents.length - 1] : null;
+          } else {
+            const allEvents = strategies.filter(s => 
+              s.instrumentType === 'event' && 
+              (s.status === 'executed' || s.status === 'executing') && 
+              !s.isClosed
+            );
+            targetStrategy = allEvents.length > 0 ? allEvents[allEvents.length - 1] : null;
+          }
+          
+          if (!targetStrategy) {
+            const errorMessage: Message = {
+              id: `error-${Date.now()}`,
+              text: "I couldn't find an open event position that matches that description. Try specifying the event name.",
+              isUser: false,
+              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+            };
+            setMessages(prev => [...prev, errorMessage]);
+            setIsTyping(false);
+            return;
+          }
+          
+          // Update stake if provided
+          if (mod.stake !== undefined) {
+            const accountValue = account.accountValue;
+            const maxAllowedUsd = accountValue;
+            const newStakeUsd = Math.min(mod.stake, maxAllowedUsd);
+            const maxPayoutUsd = newStakeUsd * (targetStrategy.maxPayoutUsd || 0) / (targetStrategy.stakeUsd || 1);
+            const riskPct = (newStakeUsd / accountValue) * 100;
+            
+            updateEventStake(targetStrategy.id, {
+              stakeUsd: newStakeUsd,
+              maxPayoutUsd,
+              maxLossUsd: newStakeUsd,
+              riskPercent: riskPct,
+              overrideRiskCap: newStakeUsd > (accountValue * 0.03),
+              requestedStakeUsd: mod.stake,
+            });
+            
+            const blossomResponse: Message = {
+              id: `modify-event-${Date.now()}`,
+              text: `Got it. I've updated the stake on your ${targetStrategy.eventLabel || 'event'} position to $${newStakeUsd.toLocaleString()}.`,
+              isUser: false,
+              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+            };
+            setMessages(prev => [...prev, blossomResponse]);
+            setIsTyping(false);
+            return;
+          }
+        } else if (parsed.intent === 'closeEventPosition' && parsed.positionModification) {
+          // Handle event position close
+          const mod = parsed.positionModification;
+          
+          // Find matching event position
+          let targetStrategy = null;
+          if (mod.eventKey) {
+            const matchingEvents = strategies.filter(s => 
+              s.instrumentType === 'event' && 
+              (s.status === 'executed' || s.status === 'executing') && 
+              !s.isClosed &&
+              s.eventKey === mod.eventKey
+            );
+            targetStrategy = matchingEvents.length > 0 ? matchingEvents[matchingEvents.length - 1] : null;
+          } else {
+            const allEvents = strategies.filter(s => 
+              s.instrumentType === 'event' && 
+              (s.status === 'executed' || s.status === 'executing') && 
+              !s.isClosed
+            );
+            targetStrategy = allEvents.length > 0 ? allEvents[allEvents.length - 1] : null;
+          }
+          
+          if (!targetStrategy) {
+            const errorMessage: Message = {
+              id: `error-${Date.now()}`,
+              text: "I couldn't find an open event position to close. Try specifying the event name (e.g. 'close my Fed cuts event').",
+              isUser: false,
+              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+            };
+            setMessages(prev => [...prev, errorMessage]);
+            setIsTyping(false);
+            return;
+          }
+          
+          // Close the event position
+          closeEventStrategy(targetStrategy.id);
+          
+          const blossomResponse: Message = {
+            id: `close-event-${Date.now()}`,
+            text: `Done. I've closed your ${targetStrategy.eventLabel || 'event'} position and realized PnL in the sim wallet.`,
+            isUser: false,
+            timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+          };
+          setMessages(prev => [...prev, blossomResponse]);
+          setIsTyping(false);
+          return;
         } else if (parsed.intent === 'hedge' && parsed.strategy) {
           // Handle hedging: calculate net exposure and create opposite side
           const baseAsset = getBaseAsset(parsed.strategy.market);
@@ -552,11 +797,11 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
   }, [inputValue]);
 
   return (
-    <div className="flex flex-col h-full min-h-0 overflow-hidden">
+    <div className="flex flex-col h-full min-h-0">
       <div 
         ref={messagesContainerRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto min-h-0 px-6 py-3 min-h-[400px]"
+        className="flex-1 overflow-y-auto min-h-0 px-6 py-3"
       >
         <div className="max-w-3xl mx-auto min-h-[300px]">
           {messages.map(msg => (
