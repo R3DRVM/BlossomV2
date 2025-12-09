@@ -41,7 +41,7 @@ export default function LeftSidebar() {
   };
 
   return (
-    <div className="w-64 flex-1 bg-slate-50/80 border-r border-slate-100 flex flex-col min-h-0 overflow-hidden">
+    <div className="w-64 h-full bg-slate-50/80 border-r border-slate-100 flex flex-col min-h-0 overflow-hidden">
       {/* User Profile Card */}
       <div className="px-4 pt-4 flex-shrink-0">
         <div className="rounded-2xl border border-slate-100 bg-white shadow-sm p-4 space-y-3">

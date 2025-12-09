@@ -2,7 +2,7 @@
 // See src/lib/blossomApi.ts for the integration layer
 // When ready, update Chat.tsx to use callBlossomChat() instead of parseUserMessage()
 
-export type ParsedIntent = 'trade' | 'risk_question' | 'general' | 'defi' | 'event' | 'update_event_stake' | 'hedge' | 'modifyPerpPosition' | 'closePerpPosition' | 'modifyEventPosition' | 'closeEventPosition' | 'confirmDraft' | 'cancelDraft';
+export type ParsedIntent = 'trade' | 'risk_question' | 'general' | 'defi' | 'event' | 'update_event_stake' | 'hedge';
 
 export interface ParsedStrategy {
   market: string;
@@ -24,17 +24,6 @@ export interface ParsedEventStrategy {
   isPredictionMarketRisk?: boolean; // Flag for "Risk X% on highest-volume prediction market"
 }
 
-export interface ParsedPositionModification {
-  symbol?: string; // e.g. 'ETH', 'BTC'
-  eventKey?: string; // e.g. 'FED_CUTS_MAR_2025'
-  riskPercent?: number;
-  leverage?: number;
-  takeProfit?: number;
-  stopLoss?: number;
-  stake?: number; // For events
-  close?: boolean;
-}
-
 export interface ParsedMessage {
   intent: ParsedIntent;
   strategy?: ParsedStrategy;
@@ -45,7 +34,6 @@ export interface ParsedMessage {
     overrideRiskCap: boolean;
     requestedStakeUsd?: number;
   };
-  positionModification?: ParsedPositionModification;
 }
 
 const MARKETS = ['ETH', 'BTC', 'SOL', 'BNB', 'AVAX'];
@@ -208,110 +196,6 @@ export function parseUserMessage(
         overrideRiskCap: true,
       },
     };
-  }
-  
-  // Check for position modification/close keywords (before hedge/trade)
-  const modifyKeywords = ['increase', 'decrease', 'raise', 'lower', 'move', 'tighten', 'widen', 'change', 'update', 'adjust', 'modify', 'set'];
-  const closeKeywords = ['close', 'exit', 'settle', 'cancel'];
-  const hasModifyKeywords = modifyKeywords.some(kw => lowerText.includes(kw));
-  const hasCloseKeywords = closeKeywords.some(kw => lowerText.includes(kw));
-  const hasPositionRef = lowerText.includes('my ') || lowerText.includes('this ') || lowerText.includes('that ') || lowerText.includes('position') || lowerText.includes('trade');
-  
-  // Detect perp position modifications
-  const hasPerpRef = lowerText.includes('perp') || lowerText.includes('perpetual') || lowerText.match(/\b(eth|btc|sol|bnb|avax)\s+(long|short)\b/);
-  const hasEventRef = lowerText.includes('fed cuts') || lowerText.includes('event') || lowerText.includes('stake');
-  
-  if (hasModifyKeywords || hasCloseKeywords) {
-    const mod: ParsedPositionModification = {};
-    
-    // Extract symbol (ETH, BTC, SOL, etc.)
-    for (const m of MARKETS) {
-      if (upperText.includes(m)) {
-        mod.symbol = m;
-        break;
-      }
-    }
-    
-    // Extract event key if mentioned
-    if (lowerText.includes('fed') || lowerText.includes('rate cut')) {
-      mod.eventKey = 'FED_CUTS_MAR_2025';
-    } else if (lowerText.includes('etf')) {
-      mod.eventKey = 'BTC_ETF_APPROVAL_2025';
-    } else if (lowerText.includes('election')) {
-      mod.eventKey = 'US_ELECTION_2024';
-    }
-    
-    // For modifications, prefer targeting drafts if they exist
-    // This will be handled in Chat.tsx by checking for drafts first
-    
-    // Extract risk percentage
-    const riskMatch = text.match(/(\d+(?:\.\d+)?)\s*%/);
-    if (riskMatch) {
-      mod.riskPercent = parseFloat(riskMatch[1]);
-    }
-    
-    // Extract leverage (e.g. "3x", "3 x", "leverage 3")
-    const leverageMatch = text.match(/(\d+(?:\.\d+)?)\s*[xX]|leverage\s+(\d+(?:\.\d+)?)/);
-    if (leverageMatch) {
-      mod.leverage = parseFloat(leverageMatch[1] || leverageMatch[2]);
-    }
-    
-    // Extract take profit
-    const tpMatch = text.match(/(?:take\s+profit|tp)\s+(?:to\s+)?\$?(\d+(?:,\d{3})*(?:\.\d+)?)/i);
-    if (tpMatch) {
-      mod.takeProfit = parseFloat(tpMatch[1].replace(/,/g, ''));
-    }
-    
-    // Extract stop loss
-    const slMatch = text.match(/(?:stop\s+loss|sl)\s+(?:to\s+)?\$?(\d+(?:,\d{3})*(?:\.\d+)?)/i);
-    if (slMatch) {
-      mod.stopLoss = parseFloat(slMatch[1].replace(/,/g, ''));
-    }
-    
-    // Extract stake (for events)
-    const stakeMatch = text.match(/\$(\d+(?:,\d{3})*(?:\.\d+)?)|(\d+(?:\.\d+)?)\s*[Kk]\b/);
-    if (stakeMatch) {
-      if (stakeMatch[1]) {
-        mod.stake = parseFloat(stakeMatch[1].replace(/,/g, ''));
-      } else if (stakeMatch[2]) {
-        mod.stake = parseFloat(stakeMatch[2]) * 1000;
-      }
-    }
-    
-    // Determine if it's a close action
-    if (hasCloseKeywords) {
-      mod.close = true;
-    }
-    
-    // Determine intent type
-    if (hasCloseKeywords) {
-      if (hasEventRef || mod.eventKey) {
-        return { intent: 'closeEventPosition', positionModification: mod };
-      } else if (hasPerpRef || mod.symbol) {
-        return { intent: 'closePerpPosition', positionModification: mod };
-      }
-    } else {
-      if (hasEventRef || mod.eventKey) {
-        return { intent: 'modifyEventPosition', positionModification: mod };
-      } else if (hasPerpRef || mod.symbol || hasPositionRef) {
-        return { intent: 'modifyPerpPosition', positionModification: mod };
-      }
-    }
-  }
-  
-  // Check for draft confirm/cancel keywords (before other intents)
-  const confirmKeywords = ['confirm', 'execute', 'go ahead', 'that looks good', 'proceed', 'do it', 'yes', 'approve'];
-  const cancelKeywords = ['cancel', 'discard', 'never mind', 'forget it', 'delete', 'remove'];
-  const hasConfirmKeywords = confirmKeywords.some(kw => lowerText.includes(kw));
-  const hasCancelKeywords = cancelKeywords.some(kw => lowerText.includes(kw));
-  const hasDraftRef = lowerText.includes('draft') || lowerText.includes('that trade') || lowerText.includes('this trade') || lowerText.includes('this position') || lowerText.includes('that position');
-  
-  if (hasConfirmKeywords && hasDraftRef) {
-    return { intent: 'confirmDraft' };
-  }
-  
-  if (hasCancelKeywords && hasDraftRef) {
-    return { intent: 'cancelDraft' };
   }
   
   // Check for hedge keywords FIRST (before trade keywords)
