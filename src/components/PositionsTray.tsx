@@ -18,16 +18,16 @@ export default function PositionsTray({ defaultOpen = false }: PositionsTrayProp
   const [editingMode, setEditingMode] = useState<{ id: string; mode: 'tpSl' | 'leverage' | 'size' | 'eventStake' | 'defiDeposit' } | null>(null);
   const [editValues, setEditValues] = useState<{ takeProfit?: number; stopLoss?: number; leverage?: number; size?: number; stake?: number }>({});
 
-  // Get active positions (only executed, not drafts)
+  // Get active positions (same logic as ContextualPanel)
   const activePerps = strategies.filter(s => 
     s.instrumentType === 'perp' && 
-    s.status === 'executed' && 
+    (s.status === 'executed' || s.status === 'executing') && 
     !s.isClosed
   );
   
   const activeEvents = strategies.filter(s => 
     s.instrumentType === 'event' && 
-    s.status === 'executed' && 
+    (s.status === 'executed' || s.status === 'executing') && 
     !s.isClosed
   );
   
@@ -73,7 +73,7 @@ export default function PositionsTray({ defaultOpen = false }: PositionsTrayProp
   // Collapsed pill
   if (!isOpen) {
     return (
-      <div className="hidden lg:block w-full">
+      <div className="hidden lg:block absolute bottom-4 left-1/2 -translate-x-1/2 z-40 w-[calc(100%-1rem)]">
         <button
           onClick={() => setIsOpen(true)}
           className="w-full flex items-center justify-between gap-2 rounded-full bg-white/90 backdrop-blur-sm border border-slate-200 shadow-sm px-3 py-1.5 text-[11px] text-slate-700 hover:bg-pink-50/80 hover:border-pink-200 transition-all"
@@ -202,7 +202,7 @@ export default function PositionsTray({ defaultOpen = false }: PositionsTrayProp
         // Error is logged to console, user can see it in dev tools
       }
     } else {
-      // Use closeEventStrategy (same as main card) to properly handle event settlement
+      // Use closeEventStrategy for proper event settlement (handles PnL, wallet updates, etc.)
       closeEventStrategy(strategy.id);
     }
   };
@@ -560,8 +560,8 @@ export default function PositionsTray({ defaultOpen = false }: PositionsTrayProp
   const currentPositions = getCurrentPositions();
 
   return (
-    <div className="hidden lg:block w-full flex flex-col min-h-0">
-      <div className="w-full flex-1 rounded-2xl border border-slate-100 bg-white shadow-lg flex flex-col overflow-y-auto transition-all duration-200 min-h-0">
+    <div className="hidden lg:block absolute bottom-4 left-1/2 -translate-x-1/2 z-40 w-[calc(100%-1rem)]">
+      <div className="w-full max-h-[55vh] rounded-2xl border border-slate-100 bg-white shadow-lg flex flex-col overflow-y-auto transition-all duration-200">
         {/* Header */}
         <div className="flex items-center justify-between px-3 py-2 border-b border-slate-100 bg-white/95 backdrop-blur-sm flex-shrink-0">
           <div className="flex flex-col">
