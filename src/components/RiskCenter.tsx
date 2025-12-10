@@ -1,11 +1,395 @@
 import { useEffect, useState } from 'react';
+import { ChevronDown, Pencil, Trash2 } from 'lucide-react';
 import { useBlossomContext } from '../context/BlossomContext';
-import { mockRiskMetrics, mockPositions, mockAlerts, mockRiskRules } from '../lib/mockData';
+import { mockRiskMetrics, mockAlerts } from '../lib/mockData';
+
+interface CollapsibleSectionProps {
+  title: string;
+  subtitle?: string;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+  className?: string;
+}
+
+function CollapsibleSection({ title, subtitle, defaultOpen = true, children, className = '' }: CollapsibleSectionProps) {
+  const [isOpen, setIsOpen] = useState(defaultOpen);
+  
+  return (
+    <div className={`bg-white rounded-lg border border-gray-200 shadow-sm ${className}`}>
+      <button
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        className="w-full flex items-center justify-between p-4 text-left hover:bg-slate-50/50 transition-colors"
+      >
+        <div className="flex flex-col items-start">
+          <h2 className="text-sm font-semibold text-gray-900">{title}</h2>
+          {subtitle && (
+            <span className="text-xs text-gray-500 mt-0.5">{subtitle}</span>
+          )}
+        </div>
+        <ChevronDown 
+          className={`h-4 w-4 text-gray-400 transition-transform flex-shrink-0 ${isOpen ? '' : '-rotate-90'}`}
+        />
+      </button>
+      {isOpen && (
+        <div className="px-4 pb-4">
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface EditableRiskRulesSectionProps {
+  riskProfile: import('../context/BlossomContext').RiskProfile;
+  updateRiskProfile: (patch: Partial<import('../context/BlossomContext').RiskProfile>) => void;
+  resetRiskProfileToDefault: () => void;
+}
+
+function EditableRiskRulesSection({ riskProfile, updateRiskProfile, resetRiskProfileToDefault }: EditableRiskRulesSectionProps) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editValues, setEditValues] = useState(riskProfile || {
+    maxPerTradeRiskPct: 3,
+    minLiqBufferPct: 15,
+    fundingAlertThresholdPctPer8h: 0.15,
+    correlationHedgeThreshold: 0.75,
+  });
+
+  useEffect(() => {
+    if (riskProfile) {
+      setEditValues(riskProfile);
+    }
+  }, [riskProfile]);
+
+  const handleSave = () => {
+    updateRiskProfile(editValues);
+    setIsEditing(false);
+  };
+
+  const handleCancel = () => {
+    setEditValues(riskProfile);
+    setIsEditing(false);
+  };
+
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 shadow-sm">
+      <div className="w-full flex items-center justify-between p-4">
+        <button
+          type="button"
+          onClick={() => setIsOpen(!isOpen)}
+          className="flex-1 flex items-center justify-between text-left hover:bg-slate-50/50 transition-colors -ml-4 -mr-4 px-4 py-2 rounded"
+        >
+          <h2 className="text-sm font-semibold text-gray-900">Risk Rules</h2>
+          <ChevronDown 
+            className={`h-4 w-4 text-gray-400 transition-transform flex-shrink-0 ${isOpen ? '' : '-rotate-90'}`}
+          />
+        </button>
+        {isOpen && !isEditing && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsEditing(true);
+            }}
+            className="ml-2 p-1.5 rounded-full text-gray-400 hover:text-gray-600 hover:bg-slate-100 transition-colors"
+            aria-label="Edit risk rules"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
+      {isOpen && (
+        <div className="px-4 pb-4">
+          {isEditing ? (
+            <div className="space-y-3">
+              <div className="space-y-2">
+                <label className="text-xs text-gray-600">Max account risk per strategy (%)</label>
+                <input
+                  type="number"
+                  value={editValues.maxPerTradeRiskPct}
+                  onChange={(e) => setEditValues({ ...editValues, maxPerTradeRiskPct: parseFloat(e.target.value) || 0 })}
+                  className="w-full rounded-md border border-gray-200 bg-white px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300"
+                  min="0"
+                  max="100"
+                  step="0.1"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs text-gray-600">Min liquidation buffer (%)</label>
+                <input
+                  type="number"
+                  value={editValues.minLiqBufferPct}
+                  onChange={(e) => setEditValues({ ...editValues, minLiqBufferPct: parseFloat(e.target.value) || 0 })}
+                  className="w-full rounded-md border border-gray-200 bg-white px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300"
+                  min="0"
+                  max="100"
+                  step="0.1"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs text-gray-600">Funding alert threshold (% per 8h)</label>
+                <input
+                  type="number"
+                  value={editValues.fundingAlertThresholdPctPer8h}
+                  onChange={(e) => setEditValues({ ...editValues, fundingAlertThresholdPctPer8h: parseFloat(e.target.value) || 0 })}
+                  className="w-full rounded-md border border-gray-200 bg-white px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300"
+                  min="0"
+                  step="0.01"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs text-gray-600">Correlation hedge threshold</label>
+                <input
+                  type="number"
+                  value={editValues.correlationHedgeThreshold}
+                  onChange={(e) => setEditValues({ ...editValues, correlationHedgeThreshold: parseFloat(e.target.value) || 0 })}
+                  className="w-full rounded-md border border-gray-200 bg-white px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                />
+              </div>
+              <div className="flex items-center justify-between gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={resetRiskProfileToDefault}
+                  className="text-xs text-gray-500 hover:text-gray-700 underline"
+                >
+                  Reset to defaults
+                </button>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={handleCancel}
+                    className="rounded-full px-3 py-1.5 text-xs text-gray-600 hover:bg-slate-100 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSave}
+                    className="rounded-full bg-pink-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-pink-600 transition-colors"
+                  >
+                    Save
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <ul className="space-y-2 text-sm text-gray-700">
+              <li className="flex items-start">
+                <span className="mr-2 mt-0.5">✓</span>
+                <span>Max account risk per strategy: {riskProfile?.maxPerTradeRiskPct ?? 3}%</span>
+              </li>
+              <li className="flex items-start">
+                <span className="mr-2 mt-0.5">✓</span>
+                <span>Min liquidation buffer: {riskProfile?.minLiqBufferPct ?? 15}%</span>
+              </li>
+              <li className="flex items-start">
+                <span className="mr-2 mt-0.5">✓</span>
+                <span>Funding alert threshold: {riskProfile?.fundingAlertThresholdPctPer8h ?? 0.15}% per 8h</span>
+              </li>
+              <li className="flex items-start">
+                <span className="mr-2 mt-0.5">✓</span>
+                <span>Correlation hedge threshold: {riskProfile?.correlationHedgeThreshold ?? 0.75}</span>
+              </li>
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface LiquidationWatchlistSectionProps {
+  executedStrategies: import('../context/BlossomContext').Strategy[];
+  manualWatchlist: import('../context/BlossomContext').ManualWatchAsset[];
+  addWatchAsset: (asset: Omit<import('../context/BlossomContext').ManualWatchAsset, 'id'>) => void;
+  removeWatchAsset: (id: string) => void;
+}
+
+function LiquidationWatchlistSection({ executedStrategies, manualWatchlist, addWatchAsset, removeWatchAsset }: LiquidationWatchlistSectionProps) {
+  const [isOpen, setIsOpen] = useState(executedStrategies.length > 0 || manualWatchlist.length > 0);
+  const [isAdding, setIsAdding] = useState(false);
+  const [newAsset, setNewAsset] = useState({ symbol: '', side: 'Long' as 'Long' | 'Short', liqBufferPct: undefined as number | undefined, note: '' });
+
+  const handleAdd = () => {
+    if (!newAsset.symbol.trim()) return;
+    addWatchAsset({
+      symbol: newAsset.symbol.trim(),
+      side: newAsset.side,
+      liqBufferPct: newAsset.liqBufferPct,
+      note: newAsset.note.trim() || undefined,
+    });
+    setNewAsset({ symbol: '', side: 'Long', liqBufferPct: undefined, note: '' });
+    setIsAdding(false);
+  };
+
+  const handleCancel = () => {
+    setNewAsset({ symbol: '', side: 'Long', liqBufferPct: undefined, note: '' });
+    setIsAdding(false);
+  };
+
+  const hasAnyItems = executedStrategies.length > 0 || (manualWatchlist && manualWatchlist.length > 0);
+
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 shadow-sm">
+      <button
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        className="w-full flex items-center justify-between p-4 text-left hover:bg-slate-50/50 transition-colors"
+      >
+        <h2 className="text-sm font-semibold text-gray-900">Liquidation Watchlist</h2>
+        <ChevronDown 
+          className={`h-4 w-4 text-gray-400 transition-transform flex-shrink-0 ${isOpen ? '' : '-rotate-90'}`}
+        />
+      </button>
+      {isOpen && (
+        <div className="px-4 pb-4">
+          <div className="overflow-x-auto">
+            {hasAnyItems ? (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-200">
+                    <th className="text-left py-2 text-gray-600 font-medium">Market</th>
+                    <th className="text-left py-2 text-gray-600 font-medium">Side</th>
+                    <th className="text-left py-2 text-gray-600 font-medium">Liq Buffer</th>
+                    <th className="text-left py-2 text-gray-600 font-medium">Note</th>
+                    <th className="text-left py-2 text-gray-600 font-medium w-8"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {executedStrategies.map((strategy) => {
+                    const liqBuffer = strategy.riskPercent > 3 ? 12 : 15;
+                    const isHealthy = liqBuffer >= 15;
+                    return (
+                      <tr key={strategy.id} className="border-b border-gray-100">
+                        <td className="py-2 text-gray-900">{strategy.market}</td>
+                        <td className={`py-2 font-medium ${
+                          strategy.side === 'Long' ? 'text-green-600' : 'text-red-600'
+                        }`}>
+                          {strategy.side}
+                        </td>
+                        <td className="py-2 text-gray-900">{liqBuffer}%</td>
+                        <td className="py-2">
+                          <span className={`px-2 py-0.5 text-xs rounded-full ${
+                            isHealthy 
+                              ? 'bg-green-100 text-green-700' 
+                              : 'bg-yellow-100 text-yellow-700'
+                          }`}>
+                            {isHealthy ? 'Healthy' : 'Tight buffer'}
+                          </span>
+                        </td>
+                        <td className="py-2"></td>
+                      </tr>
+                    );
+                  })}
+                  {manualWatchlist && manualWatchlist.map((asset) => (
+                    <tr key={asset.id} className="border-b border-gray-100">
+                      <td className="py-2 text-gray-900">{asset.symbol}</td>
+                      <td className={`py-2 font-medium ${
+                        asset.side === 'Long' ? 'text-green-600' : 'text-red-600'
+                      }`}>
+                        {asset.side}
+                      </td>
+                      <td className="py-2 text-gray-900">{asset.liqBufferPct ?? '—'}</td>
+                      <td className="py-2">
+                        <span className="px-2 py-0.5 text-xs rounded-full bg-slate-100 text-slate-700">
+                          {asset.note || 'Manual watch'}
+                        </span>
+                      </td>
+                      <td className="py-2">
+                        <button
+                          type="button"
+                          onClick={() => removeWatchAsset(asset.id)}
+                          className="p-1 rounded-full text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                          aria-label="Remove asset"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <div className="text-sm text-gray-500 py-4 text-center">
+                No active positions to monitor.
+              </div>
+            )}
+          </div>
+          {!isAdding ? (
+            <button
+              type="button"
+              onClick={() => setIsAdding(true)}
+              className="mt-3 text-xs text-blossom-pink hover:text-blossom-pink/80 underline"
+            >
+              + Add asset to watchlist
+            </button>
+          ) : (
+            <div className="mt-3 space-y-2 p-3 rounded-lg border border-gray-200 bg-slate-50/50">
+              <input
+                type="text"
+                placeholder="ETH-PERP"
+                value={newAsset.symbol}
+                onChange={(e) => setNewAsset({ ...newAsset, symbol: e.target.value })}
+                className="w-full rounded-md border border-gray-200 bg-white px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300"
+              />
+              <select
+                value={newAsset.side}
+                onChange={(e) => setNewAsset({ ...newAsset, side: e.target.value as 'Long' | 'Short' })}
+                className="w-full rounded-md border border-gray-200 bg-white px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300"
+              >
+                <option value="Long">Long</option>
+                <option value="Short">Short</option>
+              </select>
+              <input
+                type="number"
+                placeholder="Liq buffer (%)"
+                value={newAsset.liqBufferPct ?? ''}
+                onChange={(e) => setNewAsset({ ...newAsset, liqBufferPct: e.target.value ? parseFloat(e.target.value) : undefined })}
+                className="w-full rounded-md border border-gray-200 bg-white px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300"
+                min="0"
+                max="100"
+                step="0.1"
+              />
+              <input
+                type="text"
+                placeholder="Note (optional)"
+                value={newAsset.note}
+                onChange={(e) => setNewAsset({ ...newAsset, note: e.target.value })}
+                className="w-full rounded-md border border-gray-200 bg-white px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300"
+              />
+              <div className="flex gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={handleCancel}
+                  className="flex-1 rounded-full px-3 py-1.5 text-xs text-gray-600 hover:bg-slate-100 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleAdd}
+                  className="flex-1 rounded-full bg-pink-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-pink-600 transition-colors"
+                >
+                  Add
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function RiskCenter() {
-  const { account, strategies, selectedStrategyId, setSelectedStrategyId, setOnboarding, lastRiskSnapshot, setLastRiskSnapshot, setActiveTab, autoCloseProfitableStrategies, defiPositions } = useBlossomContext();
+  const { account, strategies, setOnboarding, lastRiskSnapshot, setLastRiskSnapshot, setActiveTab, autoCloseProfitableStrategies, defiPositions, riskProfile, updateRiskProfile, resetRiskProfileToDefault, manualWatchlist, addWatchAsset, removeWatchAsset } = useBlossomContext();
   const [delta, setDelta] = useState<{ valueDelta: number; exposureDelta: number; pnlDelta: number } | null>(null);
   const [autoCloseMessage, setAutoCloseMessage] = useState<string | null>(null);
+  const [strategyFilter, setStrategyFilter] = useState<'all' | string>('all');
   
   useEffect(() => {
     setOnboarding(prev => ({ ...prev, openedRiskCenter: true }));
@@ -33,17 +417,25 @@ export default function RiskCenter() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   
-  // Compute correlation based on strategies (exclude closed)
-  const executedStrategies = strategies.filter(s => 
+  // Filter strategies based on strategyFilter
+  const filteredStrategies = strategyFilter === 'all'
+    ? strategies
+    : strategies.filter(s => s.id === strategyFilter);
+  
+  // Compute correlation based on filtered strategies (exclude closed)
+  const executedStrategies = filteredStrategies.filter(s => 
     (s.status === 'executed' || s.status === 'executing') && !s.isClosed
   );
   
-  // Compute event market metrics (only open events)
-  const openEventStrategies = strategies.filter(s => 
+  // Compute event market metrics (only open events from filtered strategies)
+  const openEventStrategies = filteredStrategies.filter(s => 
     s.instrumentType === 'event' && s.status === 'executed' && !s.isClosed
   );
-  // Use account.eventExposureUsd which is maintained by the context
-  const totalEventStake = account.eventExposureUsd;
+  
+  // All event strategies for alerts (not filtered - for card visibility)
+  const eventStrategies = strategies.filter(s => s.instrumentType === 'event');
+  // Compute event metrics from filtered strategies
+  const totalEventStake = openEventStrategies.reduce((sum, s) => sum + (s.stakeUsd || 0), 0);
   const numEventPositions = openEventStrategies.length;
   const largestEventStake = openEventStrategies.length > 0
     ? Math.max(...openEventStrategies.map(s => s.stakeUsd || 0))
@@ -59,11 +451,15 @@ export default function RiskCenter() {
   const maxGroupSize = Math.max(...Object.values(marketGroups), 0);
   const correlation = maxGroupSize > 2 ? 'High' : maxGroupSize > 1 ? 'Medium' : 'Low';
   
-  // Count strategies by status
-  const statusCounts = strategies.reduce((acc, s) => {
-    acc[s.status] = (acc[s.status] || 0) + 1;
-    return acc;
-  }, {} as Record<string, number>);
+  // Count strategies by status (from filtered strategies) - actual counts only
+  const draftCount = filteredStrategies.filter(s => s.status === 'draft').length;
+  const queuedCount = filteredStrategies.filter(s => s.status === 'queued').length;
+  const executingCount = filteredStrategies.filter(s => s.status === 'executing').length;
+  const executedCount = filteredStrategies.filter(s => s.status === 'executed').length;
+  const closedCount = filteredStrategies.filter(s => s.status === 'closed').length;
+  const activeCount = filteredStrategies.filter(
+    s => s.status === 'draft' || s.status === 'queued' || s.status === 'executing'
+  ).length;
   
   // Compute DeFi aggregates
   const activeDefiPositions = defiPositions.filter(p => p.status === 'active');
@@ -71,6 +467,17 @@ export default function RiskCenter() {
   const maxSingleProtocolExposure = activeDefiPositions.length > 0
     ? Math.max(...activeDefiPositions.map(p => p.depositUsd))
     : 0;
+  
+  // Get relevant strategies for dropdown (perps and events, excluding closed)
+  const relevantStrategies = strategies.filter(s => 
+    (s.instrumentType === 'perp' || s.instrumentType === 'event') && 
+    s.status !== 'closed'
+  );
+  
+  // Get selected strategy label for display
+  const selectedStrategyForFilter = strategyFilter !== 'all' 
+    ? strategies.find(s => s.id === strategyFilter)
+    : null;
   
   const handleAutoClose = () => {
     const closedCount = autoCloseProfitableStrategies();
@@ -82,8 +489,6 @@ export default function RiskCenter() {
   
   const marginUsed = Math.round((account.openPerpExposure / account.accountValue) * 100);
   const availableMargin = 100 - marginUsed;
-
-  const selectedStrategy = selectedStrategyId ? strategies.find(s => s.id === selectedStrategyId) : null;
 
   return (
     <div className="h-full overflow-y-auto bg-transparent p-6">
@@ -121,25 +526,31 @@ export default function RiskCenter() {
         <div className="mb-3 flex items-center gap-2 text-sm">
           <span className="text-gray-600">View metrics for:</span>
           <select
-            className="rounded-md border border-gray-200 bg-white px-2 py-1 text-sm"
-            value={selectedStrategyId || 'all'}
+            className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 hover:border-pink-200 focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-colors"
+            value={strategyFilter}
             onChange={(e) => {
-              const val = e.target.value;
-              setSelectedStrategyId(val === 'all' ? null : val);
+              setStrategyFilter(e.target.value);
             }}
           >
             <option value="all">All strategies</option>
-            {strategies.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.market} · {s.side.toUpperCase()} · {s.riskPercent}%
-              </option>
-            ))}
+            {relevantStrategies.map((s) => {
+              const marketSymbol = s.instrumentType === 'event' 
+                ? (s.eventLabel || s.eventKey || s.market)
+                : s.market;
+              return (
+                <option key={s.id} value={s.id}>
+                  {marketSymbol} · {s.side.toUpperCase()} · {s.riskPercent}%
+                </option>
+              );
+            })}
           </select>
         </div>
         
-        {selectedStrategy && (
+        {selectedStrategyForFilter && (
           <div className="mb-3 text-xs text-gray-600">
-            Metrics focused on: {selectedStrategy.market} {selectedStrategy.side.toLowerCase()} @ {selectedStrategy.riskPercent}% risk.
+            Metrics focused on: {selectedStrategyForFilter.instrumentType === 'event' 
+              ? (selectedStrategyForFilter.eventLabel || selectedStrategyForFilter.eventKey || selectedStrategyForFilter.market)
+              : selectedStrategyForFilter.market} {selectedStrategyForFilter.side.toLowerCase()} @ {selectedStrategyForFilter.riskPercent}% risk.
           </div>
         )}
         <div className="lg:grid lg:grid-cols-3 lg:gap-4 space-y-4 lg:space-y-0">
@@ -174,8 +585,7 @@ export default function RiskCenter() {
             </div>
 
             {/* Risk Metrics */}
-            <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
-              <h2 className="text-sm font-semibold text-gray-900 mb-4">Risk Metrics</h2>
+            <CollapsibleSection title="Risk Metrics" defaultOpen={true}>
               <div className="space-y-3 text-sm">
                 <div className="flex justify-between">
                   <span className="text-gray-600">Max Drawdown (30d):</span>
@@ -198,42 +608,48 @@ export default function RiskCenter() {
                   </span>
                 </div>
               </div>
-            </div>
+            </CollapsibleSection>
             
             {/* Strategy Status Summary */}
-            <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
-              <h2 className="text-sm font-semibold text-gray-900 mb-4">Strategy Status</h2>
+            <CollapsibleSection title="Strategy Status" defaultOpen={true}>
               <div className="space-y-3 text-sm">
                 <div className="flex justify-between">
                   <span className="text-gray-600">Active Strategies:</span>
-                  <span className="font-medium text-gray-900">{executedStrategies.length}</span>
+                  <span className="font-medium text-gray-900">{activeCount}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-600">Draft:</span>
-                  <span className="font-medium text-gray-600">{statusCounts.draft || 0}</span>
+                  <span className="font-medium text-gray-600">{draftCount}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-600">Queued:</span>
-                  <span className="font-medium text-yellow-600">{statusCounts.queued || 0}</span>
+                  <span className="font-medium text-yellow-600">{queuedCount}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-600">Executing:</span>
-                  <span className="font-medium text-blue-600">{statusCounts.executing || 0}</span>
+                  <span className="font-medium text-blue-600">{executingCount}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-600">Executed:</span>
-                  <span className="font-medium text-green-600">{statusCounts.executed || 0}</span>
+                  <span className="font-medium text-green-600">{executedCount}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-600">Closed:</span>
-                  <span className="font-medium text-gray-600">{statusCounts.closed || 0}</span>
+                  <span className="font-medium text-gray-600">{closedCount}</span>
                 </div>
+                {activeCount === 0 && draftCount === 0 && executedCount === 0 && closedCount === 0 && (
+                  <p className="mt-2 text-xs text-slate-500">
+                    Run a strategy in the Copilot to see live status here.
+                  </p>
+                )}
               </div>
-            </div>
+            </CollapsibleSection>
 
             {/* DeFi Exposure */}
-            <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
-              <h2 className="text-sm font-semibold text-gray-900 mb-4">DeFi Exposure</h2>
+            <CollapsibleSection 
+              title="DeFi Exposure" 
+              defaultOpen={totalDefiDeposits > 0}
+            >
               <div className="space-y-3 text-sm">
                 <div className="flex justify-between">
                   <span className="text-gray-600">Total DeFi deposits:</span>
@@ -250,11 +666,13 @@ export default function RiskCenter() {
                   </div>
                 )}
               </div>
-            </div>
+            </CollapsibleSection>
 
             {/* Event Markets Exposure */}
-            <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
-              <h2 className="text-sm font-semibold text-gray-900 mb-4">Event Markets Exposure</h2>
+            <CollapsibleSection 
+              title="Event Markets Exposure" 
+              defaultOpen={totalEventStake > 0}
+            >
               <div className="space-y-3 text-sm">
                 <div className="flex justify-between">
                   <span className="text-gray-600">Total event stake:</span>
@@ -271,46 +689,15 @@ export default function RiskCenter() {
                   </div>
                 )}
               </div>
-            </div>
+            </CollapsibleSection>
 
             {/* Liquidation Watchlist */}
-            <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
-              <h2 className="text-sm font-semibold text-gray-900 mb-4">Liquidation Watchlist</h2>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-gray-200">
-                      <th className="text-left py-2 text-gray-600 font-medium">Market</th>
-                      <th className="text-left py-2 text-gray-600 font-medium">Side</th>
-                      <th className="text-left py-2 text-gray-600 font-medium">Liq Buffer</th>
-                      <th className="text-left py-2 text-gray-600 font-medium">Note</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {mockPositions.map((pos, idx) => (
-                      <tr key={idx} className="border-b border-gray-100 last:border-0">
-                        <td className="py-2 text-gray-900">{pos.market}</td>
-                        <td className={`py-2 font-medium ${
-                          pos.side === 'Long' ? 'text-green-600' : 'text-red-600'
-                        }`}>
-                          {pos.side}
-                        </td>
-                        <td className="py-2 text-gray-900">{pos.liqBuffer}%</td>
-                        <td className="py-2">
-                          <span className={`px-2 py-0.5 text-xs rounded-full ${
-                            pos.note === 'Healthy' 
-                              ? 'bg-green-100 text-green-700' 
-                              : 'bg-yellow-100 text-yellow-700'
-                          }`}>
-                            {pos.note}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+            <LiquidationWatchlistSection 
+              executedStrategies={executedStrategies}
+              manualWatchlist={manualWatchlist}
+              addWatchAsset={addWatchAsset}
+              removeWatchAsset={removeWatchAsset}
+            />
           </div>
 
           {/* Right side - 1 column wide */}
@@ -337,22 +724,60 @@ export default function RiskCenter() {
               </div>
             </div>
 
+            {/* Event Alerts (Mock) */}
+            {eventStrategies.length > 0 && (
+              <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
+                <h2 className="text-sm font-semibold text-gray-900 mb-4">Event Alerts (Mock)</h2>
+                <div className="space-y-3">
+                  {openEventStrategies.length > 0 ? (
+                    openEventStrategies.map((event) => {
+                      const stakeUsd = event.stakeUsd || 0;
+                      const riskPct = account.accountValue > 0 ? (stakeUsd / account.accountValue) * 100 : 0;
+                      const isHighRisk = riskPct > 5;
+                      return (
+                        <div key={event.id} className="text-sm">
+                          <div className="flex items-start gap-2">
+                            <span className="text-xs text-gray-500 font-mono">
+                              {new Date(event.createdAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                            </span>
+                            <span className={`px-2 py-0.5 text-xs rounded-full ${
+                              isHighRisk 
+                                ? 'bg-yellow-100 text-yellow-700' 
+                                : 'bg-blue-100 text-blue-700'
+                            }`}>
+                              {isHighRisk ? 'Risk' : 'Info'}
+                            </span>
+                          </div>
+                          <p className="text-gray-700 mt-1 ml-12">
+                            <span className="font-medium">
+                              {event.eventLabel || event.eventKey || event.market} – {event.eventSide} stake
+                            </span>
+                            <br />
+                            <span className="text-xs text-gray-500">
+                              Stake: ${stakeUsd.toLocaleString()} · Max payoff: ${(event.maxPayoutUsd || stakeUsd * 1.7).toLocaleString()} · Outcome: {event.eventSide}
+                            </span>
+                          </p>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="text-sm text-gray-500">
+                      No active event market risks right now.
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Risk Rules */}
-            <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
-              <h2 className="text-sm font-semibold text-gray-900 mb-4">Risk Rules (Example)</h2>
-              <ul className="space-y-2 text-sm text-gray-700">
-                {mockRiskRules.map((rule, idx) => (
-                  <li key={idx} className="flex items-start">
-                    <span className="mr-2 mt-0.5">✓</span>
-                    <span>{rule}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
+            <EditableRiskRulesSection 
+              riskProfile={riskProfile}
+              updateRiskProfile={updateRiskProfile}
+              resetRiskProfileToDefault={resetRiskProfileToDefault}
+            />
 
             {/* Agent Activity */}
-            <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
-              <h2 className="text-sm font-semibold text-gray-900 mb-4">Agent Activity (Mock)</h2>
+            <CollapsibleSection title="Agent Activity (Mock)" defaultOpen={false}>
               <div className="space-y-2 text-sm text-gray-700 mb-4">
                 {autoCloseMessage ? (
                   <div className="rounded-md bg-green-50 px-3 py-2 text-green-800 border border-green-200">
@@ -381,7 +806,7 @@ export default function RiskCenter() {
               >
                 Let Blossom lock in profits
               </button>
-            </div>
+            </CollapsibleSection>
           </div>
         </div>
       </div>

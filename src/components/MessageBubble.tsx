@@ -34,10 +34,13 @@ function getStrategyReasoning(strategy: ParsedStrategy, instrumentType?: 'perp' 
     reasons.push('You\'re hedging by taking a short against spot exposure.');
   }
 
-  if (strategy.riskPercent <= 3) {
-    reasons.push('Risk is capped at or below your typical 3% per-strategy target.');
+  // Note: riskProfile is not available in this helper, so we'll use a default
+  // The actual threshold check happens in the component where riskProfile is available
+  const defaultThreshold = 3;
+  if (strategy.riskPercent <= defaultThreshold) {
+    reasons.push(`Risk is capped at or below your typical ${defaultThreshold}% per-strategy target.`);
   } else {
-    reasons.push('Risk is above the usual 3% per-strategy target, so I\'m keeping a tighter SL.');
+    reasons.push(`Risk is above the usual ${defaultThreshold}% per-strategy target, so I'm keeping a tighter SL.`);
   }
 
   reasons.push('Stop loss and take-profit are set to maintain a comfortable liquidation buffer.');
@@ -61,7 +64,7 @@ function getPortfolioBiasWarning(strategies: any[], newStrategy: ParsedStrategy)
 }
 
 export default function MessageBubble({ text, isUser, timestamp, strategy, strategyId, selectedStrategyId, defiProposalId, onInsertPrompt, onRegisterStrategyRef }: MessageBubbleProps) {
-  const { updateStrategyStatus, recomputeAccountFromStrategies, strategies, setActiveTab, setSelectedStrategyId, setOnboarding, closeStrategy, closeEventStrategy, defiPositions, latestDefiProposal, confirmDefiPlan, updateFromBackendPortfolio } = useBlossomContext();
+  const { updateStrategyStatus, recomputeAccountFromStrategies, strategies, setActiveTab, setSelectedStrategyId, setOnboarding, closeStrategy, closeEventStrategy, defiPositions, latestDefiProposal, confirmDefiPlan, updateFromBackendPortfolio, account, riskProfile } = useBlossomContext();
   const [isClosing, setIsClosing] = useState(false);
   const [showReasoning, setShowReasoning] = useState(false);
   
@@ -79,10 +82,16 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
   const isExecuted = currentStatus === 'executed';
   const isClosed = currentStrategy?.isClosed || false;
   
-  const isHighRisk = strategy ? strategy.riskPercent > 3 : false;
-  const isVeryHighRisk = strategy ? strategy.riskPercent >= 5 : false;
+  const maxPerTrade = riskProfile?.maxPerTradeRiskPct ?? 3;
+  const isHighRisk = strategy ? strategy.riskPercent > maxPerTrade : false;
+  const isVeryHighRisk = strategy ? strategy.riskPercent >= maxPerTrade * 1.5 : false;
   
   const biasWarning = strategy ? getPortfolioBiasWarning(strategies, strategy) : null;
+  
+  // Determine if button should be disabled (only for technical reasons, not risk)
+  const disableReason = !strategyId || !isDraft 
+    ? 'Only draft strategies can be queued' 
+    : undefined;
   
   // Register strategy ref for scroll restoration
   useEffect(() => {
@@ -231,7 +240,17 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                   </div>
                   <div>
                     <div className="text-xs text-blossom-slate mb-0.5">Risk</div>
-                    <div className="font-medium text-blossom-ink">{strategy.riskPercent}%</div>
+                    <div className="font-medium text-blossom-ink">
+                      {strategy.riskPercent}%
+                      {(() => {
+                        const riskUsd = (strategy.riskPercent / 100) * account.accountValue;
+                        return riskUsd > 0 ? (
+                          <span className="text-[11px] text-slate-500 ml-1">
+                            · ${riskUsd.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                          </span>
+                        ) : null;
+                      })()}
+                    </div>
                   </div>
                   <div>
                     <div className="text-xs text-blossom-slate mb-0.5">Entry</div>
@@ -252,12 +271,12 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
             {/* Risk Guardrails */}
             {!isHighRisk && (
               <div className="mt-1.5 text-[11px] text-gray-500">
-                This keeps your per-strategy risk at or below 3% of account.
+                This keeps your per-strategy risk at or below {maxPerTrade}% of account.
               </div>
             )}
             {isHighRisk && (
               <div className="mt-1.5 rounded-md bg-yellow-50 px-2.5 py-1.5 text-[11px] text-yellow-800 border border-yellow-200">
-                This strategy uses {strategy.riskPercent}% of your account, above your typical 3% risk per trade.
+                This strategy uses {strategy.riskPercent}% of your account, above your typical {maxPerTrade}% risk per trade.
                 Make sure you're comfortable with a larger drawdown.
               </div>
             )}
@@ -270,16 +289,16 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                     e.stopPropagation();
                     handleConfirmAndQueue();
                   }}
-                  disabled={isVeryHighRisk}
+                  disabled={!!disableReason}
                 className={`w-full h-10 px-4 text-sm font-medium rounded-xl transition-all ${
-                  !isVeryHighRisk
+                  !disableReason
                     ? 'bg-blossom-pink hover:bg-[#FF5A96] shadow-[0_10px_25px_rgba(255,107,160,0.35)]'
                     : 'bg-blossom-outline/40 cursor-not-allowed'
                 }`}
-                  title={isVeryHighRisk ? 'Risk too high' : undefined}
+                  title={disableReason ?? (isVeryHighRisk ? 'Risk is elevated, proceed with caution' : undefined)}
                 >
                   <span 
-                    className={!isVeryHighRisk ? 'chat-button-text-enabled' : 'chat-button-text-disabled'}
+                    className={!disableReason ? 'chat-button-text-enabled' : 'chat-button-text-disabled'}
                     style={{ display: 'inline-block', width: '100%' }}
                   >
                     Confirm & Queue

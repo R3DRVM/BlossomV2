@@ -2,20 +2,13 @@ import { useState, useRef, useEffect } from 'react';
 import MessageBubble from './MessageBubble';
 import TypingIndicator from './TypingIndicator';
 import { parseUserMessage, generateBlossomResponse, ParsedStrategy } from '../lib/mockParser';
-import { useBlossomContext, ActiveTab } from '../context/BlossomContext';
+import { useBlossomContext, ActiveTab, ChatMessage, Strategy } from '../context/BlossomContext';
 import { USE_AGENT_BACKEND } from '../lib/config';
 import { callBlossomChat } from '../lib/blossomApi';
 import QuickStartPanel from './QuickStartPanel';
 
-export interface Message {
-  id: string;
-  text: string;
-  isUser: boolean;
-  timestamp: string;
-  strategy?: ParsedStrategy | null;
-  strategyId?: string | null;
-  defiProposalId?: string | null;
-}
+// Re-export Message type for backward compatibility
+export type Message = ChatMessage;
 
 interface ChatProps {
   selectedStrategyId: string | null;
@@ -49,16 +42,59 @@ const QUICK_PROMPTS_EVENTS = [
   'Risk 2% of my account on the highest-volume prediction market.',
 ];
 
+// Welcome message constant
+const WELCOME_MESSAGE: ChatMessage = {
+  id: 'welcome-0',
+  text: 'Hi, I\'m your trading copilot. Tell me what you\'d like to trade and how much risk you want to take.\n\nYou can scroll up to review past strategies, and select any strategy from the Execution Queue on the right.',
+  isUser: false,
+  timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+};
+
+// Helper to generate session title from first user message
+function generateSessionTitle(text: string): string {
+  const trimmed = text.trim();
+  const words = trimmed.split(/\s+/);
+  if (words.length <= 8) {
+    return trimmed;
+  }
+  return words.slice(0, 8).join(' ') + '…';
+}
+
 export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: ChatProps) {
-  const { addDraftStrategy, setOnboarding, activeTab, venue, account, createDefiPlanFromCommand, updateFromBackendPortfolio, strategies, updateEventStake, getBaseAsset } = useBlossomContext();
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: '0',
-      text: 'Hi, I\'m your trading copilot. Tell me what you\'d like to trade and how much risk you want to take.\n\nYou can scroll up to review past strategies, and select any strategy from the Execution Queue on the right.',
-      isUser: false,
-      timestamp: '10:22 AM',
-    },
-  ]);
+  const { 
+    addDraftStrategy, 
+    setOnboarding, 
+    activeTab, 
+    venue, 
+    account, 
+    createDefiPlanFromCommand, 
+    updateFromBackendPortfolio, 
+    strategies, 
+    updateEventStake,
+    updateStrategy,
+    getBaseAsset,
+    chatSessions,
+    activeChatId,
+    createNewChatSession,
+    appendMessageToActiveChat,
+    updateChatSessionTitle,
+  } = useBlossomContext();
+  
+  // Derive current session and messages from context
+  const currentSession = chatSessions.find(s => s.id === activeChatId) || null;
+  const messages = currentSession?.messages ?? [];
+  
+  // Track if we've shown welcome message for current session
+  const hasShownWelcomeRef = useRef<Set<string>>(new Set());
+  
+  // Ensure welcome message is shown for new/empty sessions
+  useEffect(() => {
+    if (activeChatId && currentSession && currentSession.messages.length === 0 && !hasShownWelcomeRef.current.has(activeChatId)) {
+      appendMessageToActiveChat(WELCOME_MESSAGE);
+      hasShownWelcomeRef.current.add(activeChatId);
+    }
+  }, [activeChatId, currentSession, appendMessageToActiveChat]);
+  
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -112,7 +148,7 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
     if (isAtBottom && messagesContainerRef.current) {
       messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
     }
-  }, [messages, isTyping, isAtBottom]);
+  }, [messages.length, isTyping, isAtBottom]);
 
   const handleScroll = () => {
     checkIfAtBottom();
@@ -122,31 +158,38 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
     if (!inputValue.trim() || isTyping) return;
 
     const userText = inputValue.trim();
+    
+    // Create session if none exists
+    let currentActiveChatId = activeChatId;
+    if (!currentActiveChatId) {
+      currentActiveChatId = createNewChatSession();
+      // Add welcome message to new session (will be added by useEffect, but ensure it's marked)
+      hasShownWelcomeRef.current.add(currentActiveChatId);
+    }
+    
     // Ensure unique message ID with timestamp + random component
     const userMessageId = `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    const userMessage: Message = {
+    const userMessage: ChatMessage = {
       id: userMessageId,
       text: userText,
       isUser: true,
       timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
     };
 
-    // Always append - never replace
-    setMessages(prev => {
-      // Defensive check: ensure we're not accidentally clearing messages
-      if (prev.length === 0 && userMessage.id !== '0') {
-        return [
-          {
-            id: '0',
-            text: 'Hi, I\'m your trading copilot. Tell me what you\'d like to trade and how much risk you want to take.\n\nYou can scroll up to review past strategies, and select any strategy from the Execution Queue on the right.',
-            isUser: false,
-            timestamp: '10:22 AM',
-          },
-          userMessage,
-        ];
+    // Update session title if this is the first user message
+    // We need to check the session after we get the current one, but before appending
+    // So we check the current session state
+    const session = chatSessions.find(s => s.id === currentActiveChatId);
+    if (session && session.title === 'New chat') {
+      const userMessages = session.messages.filter(m => m.isUser);
+      if (userMessages.length === 0) {
+        const title = generateSessionTitle(userText);
+        updateChatSessionTitle(currentActiveChatId, title);
       }
-      return [...prev, userMessage];
-    });
+    }
+    
+    // Append user message
+    appendMessageToActiveChat(userMessage);
     setInputValue('');
     setIsTyping(true);
     setIsAtBottom(true);
@@ -232,7 +275,7 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
           }
         }
 
-        const blossomResponse: Message = {
+        const blossomResponse: ChatMessage = {
           id: `assistant-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
           text: response.assistantMessage,
           isUser: false,
@@ -242,24 +285,24 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
           defiProposalId: defiProposalId,
         };
         // Always append - never replace
-        setMessages(prev => [...prev, blossomResponse]);
+        appendMessageToActiveChat(blossomResponse);
         setIsTyping(false);
       } catch (error: any) {
         console.error('Agent backend error:', error);
-        const errorMessage: Message = {
+        const errorMessage: ChatMessage = {
           id: `error-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
           text: "I couldn't reach the agent backend, so I didn't execute anything. Please try again.",
           isUser: false,
           timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
         };
         // Always append - never replace
-        setMessages(prev => [...prev, errorMessage]);
+        appendMessageToActiveChat(errorMessage);
         setIsTyping(false);
       }
     } else {
       // Mock mode: existing behavior
       console.log('[Chat] Using MOCK mode - request handled locally, backend not called');
-      const parsed = parseUserMessage(userText, { venue });
+      const parsed = parseUserMessage(userText, { venue, strategies, selectedStrategyId });
 
       // Simulate thinking delay
       setTimeout(() => {
@@ -338,6 +381,98 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
             fundingImpact: 'Low',
           };
           setOnboarding(prev => ({ ...prev, openedTrade: true }));
+        } else if (parsed.intent === 'modify_perp_strategy' && parsed.modifyPerpStrategy) {
+          // Handle perp strategy modification
+          const mod = parsed.modifyPerpStrategy;
+          const targetStrategy = strategies.find(s => s.id === mod.strategyId);
+          
+          if (!targetStrategy || targetStrategy.instrumentType !== 'perp') {
+            const errorMessage: ChatMessage = {
+              id: `error-${Date.now()}`,
+              text: "I don't see an active strategy to update yet — try asking me for a new trade first.",
+              isUser: false,
+              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+            };
+            appendMessageToActiveChat(errorMessage);
+            setIsTyping(false);
+            return;
+          }
+          
+          // Build update object
+          const updates: Partial<Strategy> = {};
+          let newRiskPercent = targetStrategy.riskPercent;
+          let newNotionalUsd = targetStrategy.notionalUsd;
+          
+          // Apply modifications
+          if (mod.modification.sizeUsd) {
+            newNotionalUsd = mod.modification.sizeUsd;
+            // Recalculate risk percent based on new size
+            newRiskPercent = (newNotionalUsd / account.accountValue) * 100;
+            updates.notionalUsd = newNotionalUsd;
+          }
+          
+          if (mod.modification.riskPercent) {
+            newRiskPercent = mod.modification.riskPercent;
+            // Recalculate notional based on new risk percent
+            newNotionalUsd = (account.accountValue * newRiskPercent) / 100;
+            updates.riskPercent = newRiskPercent;
+            updates.notionalUsd = newNotionalUsd;
+          }
+          
+          if (mod.modification.leverage) {
+            // Leverage affects notional for the same risk
+            // For now, we'll just store it as a note or adjust risk accordingly
+            // In a real system, leverage would affect position sizing
+            // For mock mode, we'll treat it as adjusting the effective risk
+            updates.riskPercent = newRiskPercent; // Keep risk the same, leverage is informational
+          }
+          
+          if (mod.modification.side) {
+            updates.side = mod.modification.side;
+            // Recalculate TP/SL for new side
+            const basePrice = targetStrategy.entry || 3500;
+            if (mod.modification.side === 'Long') {
+              updates.takeProfit = Math.round(basePrice * 1.04);
+              updates.stopLoss = Math.round(basePrice * 0.97);
+            } else {
+              updates.takeProfit = Math.round(basePrice * 0.96);
+              updates.stopLoss = Math.round(basePrice * 1.03);
+            }
+          }
+          
+          // Update the strategy
+          if (mod.strategyId) {
+            updateStrategy(mod.strategyId, updates);
+          }
+          
+          // Create updated strategy object for display
+          const updatedStrategy = { ...targetStrategy, ...updates };
+          strategyId = updatedStrategy.id;
+          strategy = {
+            market: updatedStrategy.market,
+            side: updatedStrategy.side,
+            riskPercent: newRiskPercent,
+            entryPrice: updatedStrategy.entry,
+            takeProfit: updatedStrategy.takeProfit,
+            stopLoss: updatedStrategy.stopLoss,
+            liqBuffer: 15,
+            fundingImpact: 'Low' as const,
+          };
+          
+          // Generate response with risk warning
+          (parsed as any).accountValue = account.accountValue;
+          const responseText = generateBlossomResponse(parsed, userText);
+          const blossomResponse: ChatMessage = {
+            id: `modify-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            text: responseText,
+            isUser: false,
+            timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+            strategy: strategy,
+            strategyId: strategyId,
+          };
+          appendMessageToActiveChat(blossomResponse);
+          setIsTyping(false);
+          return;
         } else if (parsed.intent === 'update_event_stake' && parsed.updateEventStake) {
           // Update existing event strategy stake
           const update = parsed.updateEventStake;
@@ -350,13 +485,13 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
           );
           
           if (eventStrategies.length === 0) {
-            const errorMessage: Message = {
+            const errorMessage: ChatMessage = {
               id: `error-${Date.now()}`,
               text: "I couldn't find an active event position to update. Please create an event position first.",
               isUser: false,
               timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
             };
-            setMessages(prev => [...prev, errorMessage]);
+            appendMessageToActiveChat(errorMessage);
             setIsTyping(false);
             return;
           }
@@ -366,13 +501,13 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
             : eventStrategies[0]; // Use most recent if no ID specified
           
           if (!targetStrategy) {
-            const errorMessage: Message = {
+            const errorMessage: ChatMessage = {
               id: `error-${Date.now()}`,
               text: "I couldn't find the event position to update.",
               isUser: false,
               timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
             };
-            setMessages(prev => [...prev, errorMessage]);
+            appendMessageToActiveChat(errorMessage);
             setIsTyping(false);
             return;
           }
@@ -397,13 +532,13 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
             requestedStakeUsd: requestedStake,
           });
           
-          const blossomResponse: Message = {
+          const blossomResponse: ChatMessage = {
             id: `update-${Date.now()}`,
             text: generateBlossomResponse(parsed, userText),
             isUser: false,
             timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
           };
-          setMessages(prev => [...prev, blossomResponse]);
+          appendMessageToActiveChat(blossomResponse);
           setIsTyping(false);
         } else if (parsed.intent === 'hedge' && parsed.strategy) {
           // Handle hedging: calculate net exposure and create opposite side
@@ -438,13 +573,13 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
             hedgeSide = 'Long';
           } else if (netExposure === 0) {
             // Already flat, don't create a hedge
-            const blossomResponse: Message = {
+            const blossomResponse: ChatMessage = {
               id: `hedge-${Date.now()}`,
               text: `You're already flat on ${baseAsset}. No hedge needed.`,
               isUser: false,
               timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
             };
-            setMessages(prev => [...prev, blossomResponse]);
+            appendMessageToActiveChat(blossomResponse);
             setIsTyping(false);
             return;
           }
@@ -503,7 +638,13 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
         // Pass account value to response generator for capping messages
         (parsed as any).accountValue = account.accountValue;
         
-        const blossomResponse: Message = {
+        // For modify_perp_strategy, we already handled the response above
+        if (parsed.intent === 'modify_perp_strategy') {
+          // Response was already sent above, just return
+          return;
+        }
+        
+        const blossomResponse: ChatMessage = {
           id: `mock-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
           text: generateBlossomResponse(parsed, userText),
           isUser: false,
@@ -513,7 +654,7 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
           defiProposalId: defiProposalId,
         };
         // Always append - never replace
-        setMessages(prev => [...prev, blossomResponse]);
+        appendMessageToActiveChat(blossomResponse);
         setIsTyping(false);
       }, 1500);
     }

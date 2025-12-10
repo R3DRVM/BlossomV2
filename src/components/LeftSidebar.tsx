@@ -1,30 +1,31 @@
 import { useState } from 'react';
+import { MoreHorizontal } from 'lucide-react';
 import { useBlossomContext } from '../context/BlossomContext';
 
-interface ChatHistoryItem {
-  id: string;
-  title: string;
-  timestamp: string;
+// Helper to generate relative timestamp
+function getRelativeTimestamp(timestamp: number): string {
+  const now = Date.now();
+  const diff = now - timestamp;
+  const seconds = Math.floor(diff / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+
+  if (seconds < 60) return 'Just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  if (hours < 24) return `${hours}h ago`;
+  if (days < 7) return `${days}d ago`;
+  return new Date(timestamp).toLocaleDateString();
 }
 
 export default function LeftSidebar() {
-  const { resetSim } = useBlossomContext();
+  const { resetSim, chatSessions, activeChatId, createNewChatSession, setActiveChat, deleteChatSession } = useBlossomContext();
   const [isResetting, setIsResetting] = useState(false);
-  
-  // Mock chat history - in a real app, this would come from context/state
-  const [chatHistory] = useState<ChatHistoryItem[]>([
-    { id: '1', title: 'ETH Long Strategy', timestamp: '2h ago' },
-    { id: '2', title: 'DeFi Yield Planning', timestamp: '1d ago' },
-    { id: '3', title: 'Risk Assessment', timestamp: '2d ago' },
-    { id: '4', title: 'Portfolio Review', timestamp: '3d ago' },
-    { id: '5', title: 'BTC Hedging Plan', timestamp: '5d ago' },
-  ]);
-  const [activeChatId] = useState<string>('1'); // Current chat session
+  const [menuOpenForId, setMenuOpenForId] = useState<string | null>(null);
 
   const handleNewChat = () => {
-    // TODO: In a real implementation, this would create a new chat session
-    // and reset the Chat component's message state
-    console.log('New chat clicked - TODO: implement chat reset');
+    const newId = createNewChatSession();
+    setActiveChat(newId);
   };
 
   const handleResetSim = async () => {
@@ -83,23 +84,78 @@ export default function LeftSidebar() {
             CHAT HISTORY
           </div>
           <div className="flex-1 min-h-0 overflow-y-auto space-y-1">
-            {chatHistory.map((chat) => (
-              <button
-                key={chat.id}
-                onClick={() => {
-                  // TODO: In a real implementation, this would load the chat
-                  console.log('Load chat:', chat.id);
-                }}
-                className={`w-full text-left rounded-lg px-3 py-2 text-xs transition-colors ${
-                  activeChatId === chat.id
-                    ? 'bg-pink-50 text-slate-900 font-medium'
-                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
-                }`}
-              >
-                <div className="font-medium text-slate-800 truncate">{chat.title}</div>
-                <div className="text-[11px] text-slate-400 mt-0.5">{chat.timestamp}</div>
-              </button>
-            ))}
+            {chatSessions.length === 0 ? (
+              <div className="text-center py-8 text-xs text-slate-400">
+                No chats yet
+              </div>
+            ) : (
+              chatSessions.map((chat) => (
+                <div
+                  key={chat.id}
+                  className={`relative flex items-center justify-between rounded-lg px-3 py-2 text-xs transition-colors ${
+                    activeChatId === chat.id
+                      ? 'bg-pink-50 text-slate-900 font-medium'
+                      : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                  }`}
+                >
+                  <button
+                    onClick={() => {
+                      setActiveChat(chat.id);
+                      setMenuOpenForId(null);
+                    }}
+                    className="flex-1 flex flex-col items-start text-left min-w-0"
+                  >
+                    <div className="font-medium text-slate-800 truncate w-full">{chat.title || 'New chat'}</div>
+                    <div className="text-[11px] text-slate-400 mt-0.5">{getRelativeTimestamp(chat.createdAt)}</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setMenuOpenForId((prev) => (prev === chat.id ? null : chat.id));
+                    }}
+                    className="ml-2 flex-shrink-0 rounded-full p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+                    aria-label="Chat actions"
+                  >
+                    <MoreHorizontal className="h-4 w-4" />
+                  </button>
+                  
+                  {menuOpenForId === chat.id && (
+                    <div className="absolute right-2 top-1/2 z-20 w-48 -translate-y-1/2 rounded-xl border border-slate-100 bg-white shadow-lg px-3 py-2">
+                      <div className="text-[11px] font-medium text-slate-800">
+                        Delete this chat?
+                      </div>
+                      <div className="mt-1 text-[11px] text-slate-500">
+                        This will remove its messages from the history.
+                      </div>
+                      <div className="mt-2 flex items-center justify-end gap-2">
+                        <button
+                          type="button"
+                          className="rounded-full px-3 py-1 text-[11px] text-slate-600 hover:bg-slate-100 transition-colors"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setMenuOpenForId(null);
+                          }}
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded-full bg-pink-500 px-3 py-1 text-[11px] font-medium text-white hover:bg-pink-600 transition-colors"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            deleteChatSession(chat.id);
+                            setMenuOpenForId(null);
+                          }}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
           </div>
         </div>
       </div>
