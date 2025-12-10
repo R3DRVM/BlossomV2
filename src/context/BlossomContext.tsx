@@ -77,6 +77,40 @@ export interface RiskSnapshot {
   totalPnlPct: number;
 }
 
+export interface RiskProfile {
+  maxPerTradeRiskPct: number;          // e.g. 3
+  minLiqBufferPct: number;             // e.g. 15
+  fundingAlertThresholdPctPer8h: number; // e.g. 0.15
+  correlationHedgeThreshold: number;   // e.g. 0.75
+}
+
+export interface ManualWatchAsset {
+  id: string;
+  symbol: string;      // e.g. "ETH-PERP"
+  side: 'Long' | 'Short';
+  liqBufferPct?: number; // optional, user estimate
+  note?: string;
+}
+
+// Chat message type (reused from Chat.tsx)
+export interface ChatMessage {
+  id: string;
+  text: string;
+  isUser: boolean;
+  timestamp: string;
+  strategy?: any | null; // ParsedStrategy from mockParser
+  strategyId?: string | null;
+  defiProposalId?: string | null;
+}
+
+// Chat session type
+export interface ChatSession {
+  id: string;
+  title: string;
+  createdAt: number; // timestamp
+  messages: ChatMessage[];
+}
+
 interface BlossomContextType {
   strategies: Strategy[];
   addDraftStrategy: (strategyInput: Partial<Strategy> & { sourceText: string }) => Strategy;
@@ -106,6 +140,23 @@ interface BlossomContextType {
   updateDeFiPlanDeposit: (id: string, newDepositUsd: number) => void;
   updateFromBackendPortfolio: (portfolio: any) => void; // For agent mode
   getBaseAsset: (market: string) => string;
+  // Chat sessions
+  chatSessions: ChatSession[];
+  activeChatId: string | null;
+  createNewChatSession: () => string;
+  setActiveChat: (id: string) => void;
+  appendMessageToActiveChat: (message: ChatMessage) => void;
+  updateChatSessionTitle: (id: string, title: string) => void;
+  deleteChatSession: (id: string) => void;
+  // Risk profile
+  riskProfile: RiskProfile;
+  updateRiskProfile: (patch: Partial<RiskProfile>) => void;
+  resetRiskProfileToDefault: () => void;
+  // Manual watchlist
+  manualWatchlist: ManualWatchAsset[];
+  addWatchAsset: (asset: Omit<ManualWatchAsset, 'id'>) => void;
+  removeWatchAsset: (id: string) => void;
+  updateWatchAsset: (id: string, patch: Partial<ManualWatchAsset>) => void;
 }
 
 const BlossomContext = createContext<BlossomContextType | undefined>(undefined);
@@ -170,6 +221,95 @@ export function getBaseAsset(market: string): string {
   return market.replace('-PERP', '').replace('-PERP', '');
 }
 
+// Helper to load chat sessions from localStorage
+function loadChatSessionsFromStorage(): { sessions: ChatSession[]; activeId: string | null } {
+  if (typeof window === 'undefined') {
+    return { sessions: [], activeId: null };
+  }
+  try {
+    const stored = localStorage.getItem('blossom_chat_sessions');
+    const activeId = localStorage.getItem('blossom_active_chat_id');
+    if (stored) {
+      const sessions = JSON.parse(stored) as ChatSession[];
+      return { sessions, activeId };
+    }
+  } catch (error) {
+    console.error('Failed to load chat sessions from localStorage:', error);
+  }
+  return { sessions: [], activeId: null };
+}
+
+// Helper to save chat sessions to localStorage
+function saveChatSessionsToStorage(sessions: ChatSession[], activeId: string | null) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    localStorage.setItem('blossom_chat_sessions', JSON.stringify(sessions));
+    if (activeId) {
+      localStorage.setItem('blossom_active_chat_id', activeId);
+    } else {
+      localStorage.removeItem('blossom_active_chat_id');
+    }
+  } catch (error) {
+    console.error('Failed to save chat sessions to localStorage:', error);
+  }
+}
+
+// Risk Profile helpers
+const DEFAULT_RISK_PROFILE: RiskProfile = {
+  maxPerTradeRiskPct: 3,
+  minLiqBufferPct: 15,
+  fundingAlertThresholdPctPer8h: 0.15,
+  correlationHedgeThreshold: 0.75,
+};
+
+const RISK_PROFILE_KEY = 'blossom_risk_profile';
+
+function loadRiskProfileFromStorage(): RiskProfile {
+  if (typeof window === 'undefined') return DEFAULT_RISK_PROFILE;
+  try {
+    const raw = window.localStorage.getItem(RISK_PROFILE_KEY);
+    if (!raw) return DEFAULT_RISK_PROFILE;
+    const parsed = JSON.parse(raw) as Partial<RiskProfile>;
+    return { ...DEFAULT_RISK_PROFILE, ...parsed };
+  } catch {
+    return DEFAULT_RISK_PROFILE;
+  }
+}
+
+function saveRiskProfileToStorage(profile: RiskProfile) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(RISK_PROFILE_KEY, JSON.stringify(profile));
+  } catch {
+    // swallow
+  }
+}
+
+// Manual Watchlist helpers
+const WATCHLIST_KEY = 'blossom_manual_watchlist';
+
+function loadManualWatchlistFromStorage(): ManualWatchAsset[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(WATCHLIST_KEY);
+    if (!raw) return [];
+    return JSON.parse(raw) as ManualWatchAsset[];
+  } catch {
+    return [];
+  }
+}
+
+function saveManualWatchlistToStorage(watchlist: ManualWatchAsset[]) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(WATCHLIST_KEY, JSON.stringify(watchlist));
+  } catch {
+    // swallow
+  }
+}
+
 // Helper to apply executed strategy to balances
 function applyExecutedStrategyToBalances(
   currentAccount: AccountState,
@@ -223,6 +363,11 @@ function applyExecutedStrategyToBalances(
 }
 
 export function BlossomProvider({ children }: { children: ReactNode }) {
+  // Load chat sessions from localStorage on mount
+  const { sessions: initialSessions, activeId: initialActiveId } = loadChatSessionsFromStorage();
+  const [chatSessions, setChatSessions] = useState<ChatSession[]>(initialSessions);
+  const [activeChatId, setActiveChatId] = useState<string | null>(initialActiveId);
+
   const [strategies, setStrategies] = useState<Strategy[]>(seedStrategies);
   const [selectedStrategyId, setSelectedStrategyId] = useState<string | null>(null);
   const [account, setAccount] = useState<AccountState>(INITIAL_ACCOUNT);
@@ -237,6 +382,8 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
   const [lastRiskSnapshot, setLastRiskSnapshot] = useState<RiskSnapshot | null>(null);
   const [defiPositions, setDefiPositions] = useState<DefiPosition[]>([]);
   const [latestDefiProposal, setLatestDefiProposal] = useState<DefiPosition | null>(null);
+  const [riskProfile, setRiskProfile] = useState<RiskProfile>(loadRiskProfileFromStorage());
+  const [manualWatchlist, setManualWatchlist] = useState<ManualWatchAsset[]>(loadManualWatchlistFromStorage());
 
   const addDraftStrategy = useCallback((strategyInput: Partial<Strategy> & { sourceText: string }): Strategy => {
     const newStrategy: Strategy = {
@@ -464,6 +611,121 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
       recomputeAccountFromStrategies();
     }
   }, [recomputeAccountFromStrategies]);
+
+  // Chat session management
+  const createNewChatSession = useCallback((): string => {
+    const newId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `chat-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const newSession: ChatSession = {
+      id: newId,
+      title: 'New chat',
+      createdAt: Date.now(),
+      messages: [],
+    };
+    setChatSessions(prev => {
+      const updated = [newSession, ...prev];
+      saveChatSessionsToStorage(updated, newId);
+      return updated;
+    });
+    setActiveChatId(newId);
+    return newId;
+  }, []);
+
+  const setActiveChat = useCallback((id: string) => {
+    setActiveChatId(id);
+    saveChatSessionsToStorage(chatSessions, id);
+  }, [chatSessions]);
+
+  const appendMessageToActiveChat = useCallback((message: ChatMessage) => {
+    if (!activeChatId) return;
+    
+    setChatSessions(prev => {
+      const updated = prev.map(session => {
+        if (session.id === activeChatId) {
+          return {
+            ...session,
+            messages: [...session.messages, message],
+          };
+        }
+        return session;
+      });
+      saveChatSessionsToStorage(updated, activeChatId);
+      return updated;
+    });
+  }, [activeChatId]);
+
+  const updateChatSessionTitle = useCallback((id: string, title: string) => {
+    setChatSessions(prev => {
+      const updated = prev.map(session => {
+        if (session.id === id) {
+          return { ...session, title };
+        }
+        return session;
+      });
+      saveChatSessionsToStorage(updated, activeChatId);
+      return updated;
+    });
+  }, [activeChatId]);
+
+  const deleteChatSession = useCallback((id: string) => {
+    setChatSessions(prev => {
+      const next = prev.filter(s => s.id !== id);
+      let nextActive = activeChatId;
+      
+      if (activeChatId === id) {
+        // If deleting the active chat, switch to most recent remaining (first in array since we prepend)
+        nextActive = next.length > 0 ? next[0].id : null;
+        setActiveChatId(nextActive);
+      }
+      
+      saveChatSessionsToStorage(next, nextActive);
+      return next;
+    });
+  }, [activeChatId]);
+
+  const updateRiskProfile = useCallback(
+    (patch: Partial<RiskProfile>) => {
+      setRiskProfile(prev => {
+        const next = { ...prev, ...patch };
+        saveRiskProfileToStorage(next);
+        return next;
+      });
+    },
+    [],
+  );
+
+  const resetRiskProfileToDefault = useCallback(() => {
+    setRiskProfile(DEFAULT_RISK_PROFILE);
+    saveRiskProfileToStorage(DEFAULT_RISK_PROFILE);
+  }, []);
+
+  const addWatchAsset = useCallback((asset: Omit<ManualWatchAsset, 'id'>) => {
+    setManualWatchlist(prev => {
+      const id = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : String(Date.now());
+      const next = [{ ...asset, id }, ...prev];
+      saveManualWatchlistToStorage(next);
+      return next;
+    });
+  }, []);
+
+  const removeWatchAsset = useCallback((id: string) => {
+    setManualWatchlist(prev => {
+      const next = prev.filter(a => a.id !== id);
+      saveManualWatchlistToStorage(next);
+      return next;
+    });
+  }, []);
+
+  const updateWatchAsset = useCallback((id: string, patch: Partial<ManualWatchAsset>) => {
+    setManualWatchlist(prev => {
+      const next = prev.map(a => (a.id === id ? { ...a, ...patch } : a));
+      saveManualWatchlistToStorage(next);
+      return next;
+    });
+  }, []);
 
   const closeEventStrategy = useCallback((id: string) => {
     setStrategies(prev => {
@@ -716,7 +978,21 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
       setAccount(INITIAL_ACCOUNT);
       setSelectedStrategyId(null);
     }
-  }, [updateFromBackendPortfolio]);
+    
+    // Clear chat sessions and localStorage (applies to both mock and agent mode)
+    setChatSessions([]);
+    setActiveChatId(null);
+    
+    if (typeof window !== 'undefined') {
+      try {
+        window.localStorage.removeItem('blossom_chat_sessions');
+        window.localStorage.removeItem('blossom_active_chat_id');
+      } catch (e) {
+        // Ignore storage errors
+        console.error('Failed to clear chat sessions from localStorage:', e);
+      }
+    }
+  }, [updateFromBackendPortfolio, setChatSessions, setActiveChatId]);
 
   return (
     <BlossomContext.Provider
@@ -749,6 +1025,20 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
         updateDeFiPlanDeposit,
         updateFromBackendPortfolio,
         getBaseAsset,
+        chatSessions,
+        activeChatId,
+        createNewChatSession,
+        setActiveChat,
+        appendMessageToActiveChat,
+        updateChatSessionTitle,
+        deleteChatSession,
+        riskProfile,
+        updateRiskProfile,
+        resetRiskProfileToDefault,
+        manualWatchlist,
+        addWatchAsset,
+        removeWatchAsset,
+        updateWatchAsset,
       }}
     >
       {children}

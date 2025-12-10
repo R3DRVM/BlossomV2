@@ -2,7 +2,7 @@
 // See src/lib/blossomApi.ts for the integration layer
 // When ready, update Chat.tsx to use callBlossomChat() instead of parseUserMessage()
 
-export type ParsedIntent = 'trade' | 'risk_question' | 'general' | 'defi' | 'event' | 'update_event_stake' | 'hedge';
+export type ParsedIntent = 'trade' | 'risk_question' | 'general' | 'defi' | 'event' | 'update_event_stake' | 'hedge' | 'modify_perp_strategy';
 
 export interface ParsedStrategy {
   market: string;
@@ -24,6 +24,13 @@ export interface ParsedEventStrategy {
   isPredictionMarketRisk?: boolean; // Flag for "Risk X% on highest-volume prediction market"
 }
 
+export interface StrategyModification {
+  sizeUsd?: number;        // e.g. "2k", "2000", "$1,500"
+  riskPercent?: number;    // e.g. "2% risk", "risk 1.5"
+  leverage?: number;       // e.g. "2x leverage", "make it 3x"
+  side?: 'Long' | 'Short'; // e.g. "flip short", "make it a short", "hedge instead"
+}
+
 export interface ParsedMessage {
   intent: ParsedIntent;
   strategy?: ParsedStrategy;
@@ -34,6 +41,130 @@ export interface ParsedMessage {
     overrideRiskCap: boolean;
     requestedStakeUsd?: number;
   };
+  modifyPerpStrategy?: {
+    strategyId?: string; // ID of strategy to modify (will be resolved if not provided)
+    modification: StrategyModification;
+  };
+}
+
+// Helper to find active perp strategy for editing
+// This should be called from Chat.tsx with access to strategies and selectedStrategyId
+export function findActivePerpStrategyForEdit(
+  strategies: Array<{ id: string; instrumentType?: 'perp' | 'event'; status: string; isClosed?: boolean }>,
+  selectedStrategyId: string | null
+): { id: string } | null {
+  // First, check if selectedStrategyId refers to a perp strategy
+  if (selectedStrategyId) {
+    const selected = strategies.find(s => s.id === selectedStrategyId);
+    if (selected && selected.instrumentType === 'perp' && 
+        (selected.status === 'draft' || selected.status === 'queued' || selected.status === 'executed' || selected.status === 'executing') &&
+        !selected.isClosed) {
+      return { id: selectedStrategyId };
+    }
+  }
+  
+  // Fall back to most recent perp strategy (draft/queued/open)
+  const perpStrategies = strategies
+    .filter(s => s.instrumentType === 'perp' && 
+                 (s.status === 'draft' || s.status === 'queued' || s.status === 'executed' || s.status === 'executing') &&
+                 !s.isClosed)
+    .sort((_a, _b) => {
+      // Sort by creation time (assuming IDs are timestamp-based or we have createdAt)
+      // For now, just return the first one (most recent in array)
+      return 0;
+    });
+  
+  if (perpStrategies.length > 0) {
+    return { id: perpStrategies[0].id };
+  }
+  
+  return null;
+}
+
+// Parse modification intent from user text
+export function parseModificationFromText(text: string): StrategyModification | null {
+  const lowerText = text.toLowerCase();
+  const modification: StrategyModification = {};
+  let hasModification = false;
+  
+  // Parse size/amount (USD)
+  // Patterns: "2k", "2000", "$1,500", "do 2k instead", "let's do 1500"
+  const sizePatterns = [
+    /\$(\d+(?:,\d{3})*(?:\.\d{2})?)/,  // $1,500 or $2000
+    /(\d+(?:\.\d+)?)\s*[Kk]\b/,         // 2k, 1.5k
+    /\b(\d{3,}(?:,\d{3})*)\b/,          // 2000, 1,500 (large numbers)
+  ];
+  
+  // Check if there's a % nearby - if so, it's likely risk%, not size
+  const hasPercentNearby = /\d+\s*%/.test(text);
+  
+  for (const pattern of sizePatterns) {
+    const match = text.match(pattern);
+    if (match && !hasPercentNearby) {
+      let value = parseFloat(match[1].replace(/,/g, ''));
+      if (pattern === sizePatterns[1]) { // K format
+        value = value * 1000;
+      }
+      if (value >= 100) { // Reasonable minimum for size
+        modification.sizeUsd = Math.round(value);
+        hasModification = true;
+        break;
+      }
+    }
+  }
+  
+  // Parse risk percentage
+  // Patterns: "2% risk", "risk 1.5%", "set risk to 2%", "make per-trade risk 1.5%"
+  const riskPatterns = [
+    /(?:risk|per-trade|per strategy|per-strategy)\s*(?:to|at|of)?\s*(\d+(?:\.\d+)?)\s*%/i,
+    /(\d+(?:\.\d+)?)\s*%\s*(?:risk|per-trade|per strategy|per-strategy)/i,
+  ];
+  
+  for (const pattern of riskPatterns) {
+    const match = text.match(pattern);
+    if (match) {
+      const value = parseFloat(match[1]);
+      if (value > 0 && value <= 100) {
+        modification.riskPercent = value;
+        hasModification = true;
+        break;
+      }
+    }
+  }
+  
+  // Parse leverage
+  // Patterns: "2x leverage", "make it 3x", "set lev to 5x", "leverage 2x"
+  const leveragePatterns = [
+    /(\d+(?:\.\d+)?)\s*x\s*(?:leverage|lev)/i,
+    /(?:leverage|lev)\s*(?:to|at|of)?\s*(\d+(?:\.\d+)?)\s*x/i,
+    /make\s+it\s+(\d+(?:\.\d+)?)\s*x/i,
+  ];
+  
+  for (const pattern of leveragePatterns) {
+    const match = text.match(pattern);
+    if (match) {
+      const value = parseFloat(match[1]);
+      if (value >= 1 && value <= 20) { // Reasonable leverage range
+        modification.leverage = value;
+        hasModification = true;
+        break;
+      }
+    }
+  }
+  
+  // Parse side (long/short)
+  // Patterns: "flip short", "go short instead", "make this a short", "hedge this instead"
+  if (lowerText.includes('short') || lowerText.includes('hedge')) {
+    if (lowerText.includes('flip') || lowerText.includes('go') || lowerText.includes('make') || lowerText.includes('instead')) {
+      modification.side = 'Short';
+      hasModification = true;
+    }
+  } else if (lowerText.includes('long') && (lowerText.includes('flip') || lowerText.includes('go') || lowerText.includes('make') || lowerText.includes('instead'))) {
+    modification.side = 'Long';
+    hasModification = true;
+  }
+  
+  return hasModification ? modification : null;
 }
 
 const MARKETS = ['ETH', 'BTC', 'SOL', 'BNB', 'AVAX'];
@@ -69,10 +200,25 @@ const EVENT_KEYWORDS = [
 
 export function parseUserMessage(
   text: string,
-  opts?: { venue?: 'hyperliquid' | 'event_demo' }
+  opts?: { venue?: 'hyperliquid' | 'event_demo'; strategies?: Array<{ id: string; instrumentType?: 'perp' | 'event'; status: string; isClosed?: boolean }>; selectedStrategyId?: string | null }
 ): ParsedMessage {
   const upperText = text.toUpperCase();
   const lowerText = text.toLowerCase();
+  
+  // First, check if this is a modification request for an existing perp strategy
+  const modification = parseModificationFromText(text);
+  if (modification && opts?.strategies && opts?.selectedStrategyId !== undefined) {
+    const activeStrategy = findActivePerpStrategyForEdit(opts.strategies, opts.selectedStrategyId);
+    if (activeStrategy) {
+      return {
+        intent: 'modify_perp_strategy',
+        modifyPerpStrategy: {
+          strategyId: activeStrategy.id,
+          modification,
+        },
+      };
+    }
+  }
   
   // Classify intent
   let intent: ParsedIntent = 'general';
