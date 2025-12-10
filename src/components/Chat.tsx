@@ -6,6 +6,8 @@ import { useBlossomContext, ActiveTab, ChatMessage, Strategy } from '../context/
 import { USE_AGENT_BACKEND } from '../lib/config';
 import { callBlossomChat } from '../lib/blossomApi';
 import QuickStartPanel from './QuickStartPanel';
+import BlossomHelperOverlay from './BlossomHelperOverlay';
+import { HelpCircle } from 'lucide-react';
 
 // Re-export Message type for backward compatibility
 export type Message = ChatMessage;
@@ -60,6 +62,23 @@ function generateSessionTitle(text: string): string {
   return words.slice(0, 8).join(' ') + '…';
 }
 
+// Helper to get venue-aware suggestion chips
+function getSuggestionChipsForVenue(venue: 'hyperliquid' | 'event_demo'): Array<{ label: string; prompt: string }> {
+  if (venue === 'event_demo') {
+    return [
+      { label: 'Take YES on Fed cuts in March with 2% risk', prompt: 'Take YES on Fed cuts in March 2025 with 2% risk' },
+      { label: 'Show me my event market exposure', prompt: 'Show me my event market exposure and max loss' },
+      { label: 'Risk 2% on highest volume market', prompt: 'Risk 2% of my account on the highest-volume prediction market.' },
+    ];
+  }
+  // Default: on-chain (hyperliquid) suggestions
+  return [
+    { label: 'Long ETH with 2% risk', prompt: 'Long ETH with 2% risk' },
+    { label: 'Show me my current exposure', prompt: 'Show me my current exposure' },
+    { label: 'Hedge my BTC with a short', prompt: 'Hedge my BTC with a short' },
+  ];
+}
+
 export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: ChatProps) {
   const { 
     addDraftStrategy, 
@@ -77,6 +96,7 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
     activeChatId,
     createNewChatSession,
     appendMessageToActiveChat,
+    appendMessageToChat,
     updateChatSessionTitle,
   } = useBlossomContext();
   
@@ -94,6 +114,33 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
       hasShownWelcomeRef.current.add(activeChatId);
     }
   }, [activeChatId, currentSession, appendMessageToActiveChat]);
+
+  // Auto-open helper on first load if conditions are met
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    
+    const hasSeenHelper = window.localStorage.getItem('blossom_has_seen_helper_v1') === 'true';
+    if (hasSeenHelper) return;
+
+    const hasNoMessages = messages.length === 0 || (messages.length === 1 && messages[0].id === 'welcome-0');
+    const hasNoStrategies = strategies.length === 0;
+
+    if (hasNoMessages && hasNoStrategies) {
+      setShowHelper(true);
+    }
+  }, [messages.length, strategies.length]);
+
+  // Keyboard shortcut for helper (? key)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === '?' && e.shiftKey) {
+        setShowHelper(prev => !prev);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
   
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
@@ -103,6 +150,7 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [placeholderIndex, setPlaceholderIndex] = useState(0);
   const [showQuickStart, setShowQuickStart] = useState(true);
+  const [showHelper, setShowHelper] = useState(false);
   const strategyRefsMap = useRef<Map<string, HTMLDivElement>>(new Map());
   const lastActiveTabRef = useRef<ActiveTab | null>(null);
   
@@ -155,16 +203,35 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
   };
 
   const handleSend = async () => {
-    if (!inputValue.trim() || isTyping) return;
+    if (!textareaRef.current) return;
 
-    const userText = inputValue.trim();
+    // 1. Read the latest text from the DOM (primary source), falling back to state if needed
+    const rawText = textareaRef.current.value ?? inputValue;
+    const text = rawText.trim();
+
+    // 2. If nothing to send OR we are mid-send, just return.
+    //    IMPORTANT: do NOT clear the input here - this prevents the "text disappears but nothing sends" bug
+    if (!text || isTyping) {
+      return;
+    }
+
+    // 3. From this point on, we've decided to send.
+    //    Set isTyping flag. DO NOT clear the input yet.
+    setIsTyping(true);
+    setIsAtBottom(true);
+
+    const userText = text;
     
-    // Create session if none exists
-    let currentActiveChatId = activeChatId;
-    if (!currentActiveChatId) {
-      currentActiveChatId = createNewChatSession();
+    // Important: capture a stable chat id for this send.
+    // If we relied on appendMessageToActiveChat + activeChatId,
+    // the first message after creating a new session can be lost
+    // because activeChatId updates asynchronously.
+    let targetChatId = activeChatId;
+    if (!targetChatId) {
+      // Ensure a session exists for this send.
+      targetChatId = createNewChatSession();
       // Add welcome message to new session (will be added by useEffect, but ensure it's marked)
-      hasShownWelcomeRef.current.add(currentActiveChatId);
+      hasShownWelcomeRef.current.add(targetChatId);
     }
     
     // Ensure unique message ID with timestamp + random component
@@ -179,20 +246,26 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
     // Update session title if this is the first user message
     // We need to check the session after we get the current one, but before appending
     // So we check the current session state
-    const session = chatSessions.find(s => s.id === currentActiveChatId);
+    const session = chatSessions.find(s => s.id === targetChatId);
     if (session && session.title === 'New chat') {
       const userMessages = session.messages.filter(m => m.isUser);
       if (userMessages.length === 0) {
         const title = generateSessionTitle(userText);
-        updateChatSessionTitle(currentActiveChatId, title);
+        updateChatSessionTitle(targetChatId, title);
       }
     }
     
-    // Append user message
-    appendMessageToActiveChat(userMessage);
-    setInputValue('');
-    setIsTyping(true);
-    setIsAtBottom(true);
+    // Append user message using stable chat id
+    appendMessageToChat(targetChatId, userMessage);
+
+    // Helper function to clear input and stop typing (used in both agent and mock modes)
+    const clearInputAndStopTyping = () => {
+      if (textareaRef.current) {
+        textareaRef.current.value = '';
+      }
+      setInputValue('');
+      setIsTyping(false);
+    };
 
     if (USE_AGENT_BACKEND) {
       // Agent mode: call backend
@@ -284,9 +357,8 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
           strategyId: strategyId,
           defiProposalId: defiProposalId,
         };
-        // Always append - never replace
-        appendMessageToActiveChat(blossomResponse);
-        setIsTyping(false);
+        // Always append - never replace (using stable chat id)
+        appendMessageToChat(targetChatId, blossomResponse);
       } catch (error: any) {
         console.error('Agent backend error:', error);
         const errorMessage: ChatMessage = {
@@ -295,9 +367,12 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
           isUser: false,
           timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
         };
-        // Always append - never replace
-        appendMessageToActiveChat(errorMessage);
-        setIsTyping(false);
+        // Always append - never replace (using stable chat id)
+        appendMessageToChat(targetChatId, errorMessage);
+      } finally {
+        // 5. Only AFTER the send logic has run (success or failure) do we clear the input DOM value AND state.
+        //    This ensures the text doesn't disappear if there's an error or early return.
+        clearInputAndStopTyping();
       }
     } else {
       // Mock mode: existing behavior
@@ -306,6 +381,15 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
 
       // Simulate thinking delay
       setTimeout(() => {
+        // Helper to clear input and stop typing (called at end of all paths)
+        const clearInputAndStopTyping = () => {
+          if (textareaRef.current) {
+            textareaRef.current.value = '';
+          }
+          setInputValue('');
+          setIsTyping(false);
+        };
+
         let strategyId: string | null = null;
         let strategy: ParsedStrategy | null = null;
         let defiProposalId: string | null = null;
@@ -393,8 +477,8 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
               isUser: false,
               timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
             };
-            appendMessageToActiveChat(errorMessage);
-            setIsTyping(false);
+            appendMessageToChat(targetChatId, errorMessage);
+            clearInputAndStopTyping();
             return;
           }
           
@@ -470,8 +554,8 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
             strategy: strategy,
             strategyId: strategyId,
           };
-          appendMessageToActiveChat(blossomResponse);
-          setIsTyping(false);
+          appendMessageToChat(targetChatId, blossomResponse);
+          clearInputAndStopTyping();
           return;
         } else if (parsed.intent === 'update_event_stake' && parsed.updateEventStake) {
           // Update existing event strategy stake
@@ -491,8 +575,8 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
               isUser: false,
               timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
             };
-            appendMessageToActiveChat(errorMessage);
-            setIsTyping(false);
+            appendMessageToChat(targetChatId, errorMessage);
+            clearInputAndStopTyping();
             return;
           }
           
@@ -507,8 +591,8 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
               isUser: false,
               timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
             };
-            appendMessageToActiveChat(errorMessage);
-            setIsTyping(false);
+            appendMessageToChat(targetChatId, errorMessage);
+            clearInputAndStopTyping();
             return;
           }
           
@@ -538,8 +622,8 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
             isUser: false,
             timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
           };
-          appendMessageToActiveChat(blossomResponse);
-          setIsTyping(false);
+          appendMessageToChat(targetChatId, blossomResponse);
+          clearInputAndStopTyping();
         } else if (parsed.intent === 'hedge' && parsed.strategy) {
           // Handle hedging: calculate net exposure and create opposite side
           const baseAsset = getBaseAsset(parsed.strategy.market);
@@ -579,8 +663,8 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
               isUser: false,
               timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
             };
-            appendMessageToActiveChat(blossomResponse);
-            setIsTyping(false);
+            appendMessageToChat(targetChatId, blossomResponse);
+            clearInputAndStopTyping();
             return;
           }
           
@@ -653,9 +737,11 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
           strategyId: strategyId,
           defiProposalId: defiProposalId,
         };
-        // Always append - never replace
-        appendMessageToActiveChat(blossomResponse);
-        setIsTyping(false);
+        // Always append - never replace (using stable chat id)
+        appendMessageToChat(targetChatId, blossomResponse);
+        // 5. Only AFTER the send logic has run do we clear the input DOM value AND state.
+        //    This ensures the text doesn't disappear if there's an error or early return.
+        clearInputAndStopTyping();
       }, 1500);
     }
   };
@@ -693,44 +779,85 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
   }, [inputValue]);
 
   return (
-    <div className="flex flex-col h-full min-h-0 overflow-hidden">
+    <div className="flex flex-col h-full min-h-0 overflow-hidden relative">
       <div 
         ref={messagesContainerRef}
         onScroll={handleScroll}
         className="flex-1 overflow-y-auto min-h-0 px-6 py-3 min-h-[400px]"
       >
+        {/* Helper overlay */}
+        <BlossomHelperOverlay open={showHelper} onClose={() => setShowHelper(false)} />
+        
+        {/* Helper trigger button */}
+        <div className="absolute top-4 right-4 z-40">
+          <button
+            type="button"
+            onClick={() => setShowHelper(true)}
+            className="rounded-full p-2 text-slate-400 hover:text-slate-600 hover:bg-white/80 transition-colors"
+            aria-label="Show help"
+          >
+            <HelpCircle className="w-4 h-4" />
+          </button>
+        </div>
+
         <div className="max-w-3xl mx-auto min-h-[300px]">
-          {messages.map(msg => (
-            <MessageBubble
-              key={msg.id}
-              text={msg.text}
-              isUser={msg.isUser}
-              timestamp={msg.timestamp}
-              strategy={msg.strategy}
-              strategyId={msg.strategyId}
-              selectedStrategyId={selectedStrategyId}
-              defiProposalId={msg.defiProposalId}
-              onInsertPrompt={(text) => {
-                setInputValue(text);
-                textareaRef.current?.focus();
-              }}
-              onRegisterStrategyRef={(id, element) => {
-                if (element) {
-                  strategyRefsMap.current.set(id, element);
-                } else {
-                  strategyRefsMap.current.delete(id);
-                }
-              }}
-            />
-          ))}
-          {isTyping && <TypingIndicator />}
+          {messages.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 px-4">
+              <div className="text-[11px] font-medium text-slate-500 mb-3">Try asking Blossom…</div>
+              <div className="flex flex-wrap gap-2 justify-center">
+                {getSuggestionChipsForVenue(venue).map((chip, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => {
+                      setInputValue(chip.prompt);
+                      if (textareaRef.current) {
+                        textareaRef.current.value = chip.prompt;
+                      }
+                      textareaRef.current?.focus();
+                    }}
+                    className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] text-slate-700 hover:bg-pink-50 hover:border-pink-200 transition-colors"
+                  >
+                    {chip.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <>
+              {messages.map(msg => (
+                <MessageBubble
+                  key={msg.id}
+                  text={msg.text}
+                  isUser={msg.isUser}
+                  timestamp={msg.timestamp}
+                  strategy={msg.strategy}
+                  strategyId={msg.strategyId}
+                  selectedStrategyId={selectedStrategyId}
+                  defiProposalId={msg.defiProposalId}
+                  onInsertPrompt={(text) => {
+                    setInputValue(text);
+                    textareaRef.current?.focus();
+                  }}
+                  onRegisterStrategyRef={(id, element) => {
+                    if (element) {
+                      strategyRefsMap.current.set(id, element);
+                    } else {
+                      strategyRefsMap.current.delete(id);
+                    }
+                  }}
+                />
+              ))}
+              {isTyping && <TypingIndicator />}
+            </>
+          )}
           <div ref={messagesEndRef} />
         </div>
       </div>
       <div className="flex-shrink-0 border-t border-slate-100 bg-white/90 backdrop-blur-sm shadow-[0_-4px_20px_rgba(15,23,42,0.08)]">
         <div className="max-w-3xl mx-auto">
           {/* Toggle strip above QuickStart */}
-          <div className="px-4 pt-1 pb-1 flex items-center">
+          <div className="px-4 pt-1 pb-1 flex items-center justify-between">
             <button
               type="button"
               onClick={() => setShowQuickStart(v => !v)}
@@ -747,6 +874,11 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
                 </svg>
               )}
             </button>
+            {!showQuickStart && messages.length === 0 && (
+              <span className="text-[10px] text-slate-400">
+                Tip: Use the Quick Start panel to generate a strategy instantly.
+              </span>
+            )}
           </div>
           {/* Quick Start Panel */}
           {showQuickStart && (

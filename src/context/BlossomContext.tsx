@@ -146,6 +146,7 @@ interface BlossomContextType {
   createNewChatSession: () => string;
   setActiveChat: (id: string) => void;
   appendMessageToActiveChat: (message: ChatMessage) => void;
+  appendMessageToChat: (chatId: string, message: ChatMessage) => void;
   updateChatSessionTitle: (id: string, title: string) => void;
   deleteChatSession: (id: string) => void;
   // Risk profile
@@ -637,23 +638,31 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
     saveChatSessionsToStorage(chatSessions, id);
   }, [chatSessions]);
 
-  const appendMessageToActiveChat = useCallback((message: ChatMessage) => {
-    if (!activeChatId) return;
-    
-    setChatSessions(prev => {
-      const updated = prev.map(session => {
-        if (session.id === activeChatId) {
-          return {
-            ...session,
-            messages: [...session.messages, message],
-          };
-        }
-        return session;
+  // Helper that appends to a specific chat by ID (doesn't depend on activeChatId for append logic)
+  const appendMessageToChat = useCallback(
+    (chatId: string, message: ChatMessage) => {
+      setChatSessions(prev => {
+        const next = prev.map(session =>
+          session.id === chatId
+            ? { ...session, messages: [...session.messages, message] }
+            : session
+        );
+        // Persist updated sessions + current active id to localStorage
+        saveChatSessionsToStorage(next, activeChatId ?? chatId);
+        return next;
       });
-      saveChatSessionsToStorage(updated, activeChatId);
-      return updated;
-    });
-  }, [activeChatId]);
+    },
+    [activeChatId]
+  );
+
+  // Thin wrapper that uses activeChatId (for backward compatibility)
+  const appendMessageToActiveChat = useCallback(
+    (message: ChatMessage) => {
+      if (!activeChatId) return;
+      appendMessageToChat(activeChatId, message);
+    },
+    [activeChatId, appendMessageToChat]
+  );
 
   const updateChatSessionTitle = useCallback((id: string, title: string) => {
     setChatSessions(prev => {
@@ -1030,6 +1039,7 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
         createNewChatSession,
         setActiveChat,
         appendMessageToActiveChat,
+        appendMessageToChat,
         updateChatSessionTitle,
         deleteChatSession,
         riskProfile,
