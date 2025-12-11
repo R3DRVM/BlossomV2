@@ -149,8 +149,16 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [placeholderIndex, setPlaceholderIndex] = useState(0);
-  const [showQuickStart, setShowQuickStart] = useState(true);
+  // Default QuickStart to closed if no messages yet (to avoid overwhelming user)
+  const [showQuickStart, setShowQuickStart] = useState(() => messages.length > 0);
   const [showHelper, setShowHelper] = useState(false);
+  
+  // Auto-collapse QuickStart when messages are cleared
+  useEffect(() => {
+    if (messages.length === 0) {
+      setShowQuickStart(false);
+    }
+  }, [messages.length]);
   const strategyRefsMap = useRef<Map<string, HTMLDivElement>>(new Map());
   const lastActiveTabRef = useRef<ActiveTab | null>(null);
   
@@ -377,7 +385,7 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
     } else {
       // Mock mode: existing behavior
       console.log('[Chat] Using MOCK mode - request handled locally, backend not called');
-      const parsed = parseUserMessage(userText, { venue, strategies, selectedStrategyId });
+      const parsed = parseUserMessage(userText, { venue, strategies, selectedStrategyId, accountValue: account.accountValue });
 
       // Simulate thinking delay
       setTimeout(() => {
@@ -557,6 +565,90 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
           appendMessageToChat(targetChatId, blossomResponse);
           clearInputAndStopTyping();
           return;
+        } else if (parsed.intent === 'modify_event_strategy' && parsed.modifyEventStrategy) {
+          // Handle event strategy modification (similar to perp modifications)
+          const mod = parsed.modifyEventStrategy;
+          const targetStrategy = strategies.find(s => s.id === mod.strategyId);
+          
+          if (!targetStrategy || targetStrategy.instrumentType !== 'event') {
+            const errorMessage: ChatMessage = {
+              id: `error-${Date.now()}`,
+              text: "I don't see an active event strategy to update yet — try asking me for a new event position first.",
+              isUser: false,
+              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+            };
+            appendMessageToChat(targetChatId, errorMessage);
+            clearInputAndStopTyping();
+            return;
+          }
+          
+          // Determine new stake amount
+          const accountValue = account.accountValue;
+          const requestedStake = mod.newStakeUsd || targetStrategy.stakeUsd || 0;
+          
+          // For modifications, always treat as explicit override - no 3% cap
+          // Only cap at account value / available cash for safety
+          const usdcBalance = account.balances.find(b => b.symbol === 'REDACTED');
+          const availableUsdc = usdcBalance?.balanceUsd || accountValue;
+          const newStakeUsd = Math.min(requestedStake, Math.min(accountValue, availableUsdc));
+          
+          // Calculate new values
+          const maxPayoutUsd = newStakeUsd * (targetStrategy.maxPayoutUsd || 0) / (targetStrategy.stakeUsd || 1);
+          const riskPct = (newStakeUsd / accountValue) * 100;
+          
+          // Update the strategy (preserve market, side, eventKey, eventLabel)
+          // For modifications, always set overrideRiskCap to true since it's an explicit user request
+          updateEventStake(targetStrategy.id, {
+            stakeUsd: newStakeUsd,
+            maxPayoutUsd,
+            maxLossUsd: newStakeUsd,
+            riskPercent: riskPct,
+            overrideRiskCap: true, // Modifications are always explicit overrides
+            requestedStakeUsd: requestedStake,
+          });
+          
+          // Create updated strategy object for display
+          const updatedStrategy = { ...targetStrategy, stakeUsd: newStakeUsd, maxPayoutUsd, maxLossUsd: newStakeUsd, riskPercent: riskPct };
+          strategyId = updatedStrategy.id;
+          strategy = {
+            market: updatedStrategy.eventKey || updatedStrategy.market,
+            side: updatedStrategy.eventSide === 'YES' ? 'Long' : 'Short',
+            riskPercent: riskPct,
+            entryPrice: newStakeUsd,
+            takeProfit: maxPayoutUsd,
+            stopLoss: newStakeUsd,
+            liqBuffer: 0,
+            fundingImpact: 'Low' as const,
+          };
+          
+          // Generate response with appropriate warning if risk exceeds 3%
+          const maxRecommendedStake = accountValue * 0.03; // 3% cap
+          const formatUsd = (amount: number) => `$${amount.toLocaleString()}`;
+          const formatRiskPct = (stake: number, account: number) => {
+            if (!account || account <= 0) return '0.0';
+            return ((stake / account) * 100).toFixed(1);
+          };
+          
+          let responseText = '';
+          if (newStakeUsd > maxRecommendedStake) {
+            // Event modification - stake > 3% of account
+            responseText = `I've updated the stake to ${formatUsd(newStakeUsd)}, which is about ${formatRiskPct(newStakeUsd, accountValue)}% of your ${formatUsd(accountValue)} account.\n\nThis is above your usual 3% per-event risk guideline, so make sure you're comfortable with this level of drawdown — your max loss on this trade is ${formatUsd(newStakeUsd)}.`;
+          } else {
+            // Event modification - stake ≤ 3% of account
+            responseText = `I've updated the stake to ${formatUsd(newStakeUsd)}, which is about ${formatRiskPct(newStakeUsd, accountValue)}% of your ${formatUsd(accountValue)} account. Your max loss on this trade is ${formatUsd(newStakeUsd)}.`;
+          }
+          
+          const blossomResponse: ChatMessage = {
+            id: `modify-event-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            text: responseText,
+            isUser: false,
+            timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+            strategy: strategy,
+            strategyId: strategyId,
+          };
+          appendMessageToChat(targetChatId, blossomResponse);
+          clearInputAndStopTyping();
+          return;
         } else if (parsed.intent === 'update_event_stake' && parsed.updateEventStake) {
           // Update existing event strategy stake
           const update = parsed.updateEventStake;
@@ -722,8 +814,8 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
         // Pass account value to response generator for capping messages
         (parsed as any).accountValue = account.accountValue;
         
-        // For modify_perp_strategy, we already handled the response above
-        if (parsed.intent === 'modify_perp_strategy') {
+        // For modify_perp_strategy and modify_event_strategy, we already handled the response above
+        if (parsed.intent === 'modify_perp_strategy' || parsed.intent === 'modify_event_strategy') {
           // Response was already sent above, just return
           return;
         }
@@ -804,24 +896,27 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
           {messages.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 px-4">
               <div className="text-[11px] font-medium text-slate-500 mb-3">Try asking Blossom…</div>
-              <div className="flex flex-wrap gap-2 justify-center">
-                {getSuggestionChipsForVenue(venue).map((chip, idx) => (
-                  <button
-                    key={idx}
-                    type="button"
-                    onClick={() => {
-                      setInputValue(chip.prompt);
-                      if (textareaRef.current) {
-                        textareaRef.current.value = chip.prompt;
-                      }
-                      textareaRef.current?.focus();
-                    }}
-                    className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] text-slate-700 hover:bg-pink-50 hover:border-pink-200 transition-colors"
-                  >
-                    {chip.label}
-                  </button>
-                ))}
-              </div>
+              {/* Only show suggestion chips when QuickStart is closed (to avoid visual overload) */}
+              {!showQuickStart && (
+                <div className="flex flex-wrap gap-2 justify-center">
+                  {getSuggestionChipsForVenue(venue).map((chip, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => {
+                        setInputValue(chip.prompt);
+                        if (textareaRef.current) {
+                          textareaRef.current.value = chip.prompt;
+                        }
+                        textareaRef.current?.focus();
+                      }}
+                      className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] text-slate-700 hover:bg-pink-50 hover:border-pink-200 transition-colors"
+                    >
+                      {chip.label}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           ) : (
             <>

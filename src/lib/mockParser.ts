@@ -2,7 +2,7 @@
 // See src/lib/blossomApi.ts for the integration layer
 // When ready, update Chat.tsx to use callBlossomChat() instead of parseUserMessage()
 
-export type ParsedIntent = 'trade' | 'risk_question' | 'general' | 'defi' | 'event' | 'update_event_stake' | 'hedge' | 'modify_perp_strategy';
+export type ParsedIntent = 'trade' | 'risk_question' | 'general' | 'defi' | 'event' | 'update_event_stake' | 'hedge' | 'modify_perp_strategy' | 'modify_event_strategy';
 
 export interface ParsedStrategy {
   market: string;
@@ -45,6 +45,11 @@ export interface ParsedMessage {
     strategyId?: string; // ID of strategy to modify (will be resolved if not provided)
     modification: StrategyModification;
   };
+  modifyEventStrategy?: {
+    strategyId?: string; // ID of event strategy to modify (will be resolved if not provided)
+    newStakeUsd?: number;
+    overrideRiskCap: boolean;
+  };
 }
 
 // Helper to find active perp strategy for editing
@@ -76,6 +81,39 @@ export function findActivePerpStrategyForEdit(
   
   if (perpStrategies.length > 0) {
     return { id: perpStrategies[0].id };
+  }
+  
+  return null;
+}
+
+// Helper to find active event strategy for editing (mirrors perp version)
+export function findActiveEventStrategyForEdit(
+  strategies: Array<{ id: string; instrumentType?: 'perp' | 'event'; status: string; isClosed?: boolean }>,
+  selectedStrategyId: string | null
+): { id: string } | null {
+  // First, check if selectedStrategyId refers to an event strategy
+  if (selectedStrategyId) {
+    const selected = strategies.find(s => s.id === selectedStrategyId);
+    if (selected && selected.instrumentType === 'event' && 
+        (selected.status === 'draft' || selected.status === 'queued' || selected.status === 'executed' || selected.status === 'executing') &&
+        !selected.isClosed) {
+      return { id: selectedStrategyId };
+    }
+  }
+  
+  // Fall back to most recent event strategy (draft/queued/open)
+  const eventStrategies = strategies
+    .filter(s => s.instrumentType === 'event' && 
+                 (s.status === 'draft' || s.status === 'queued' || s.status === 'executed' || s.status === 'executing') &&
+                 !s.isClosed)
+    .sort((_a, _b) => {
+      // Sort by creation time (assuming IDs are timestamp-based or we have createdAt)
+      // For now, just return the first one (most recent in array)
+      return 0;
+    });
+  
+  if (eventStrategies.length > 0) {
+    return { id: eventStrategies[0].id };
   }
   
   return null;
@@ -167,6 +205,107 @@ export function parseModificationFromText(text: string): StrategyModification | 
   return hasModification ? modification : null;
 }
 
+// Parse event modification intent from user text (stake amount + override detection)
+export function parseEventModificationFromText(
+  text: string,
+  accountValue: number
+): { newStakeUsd: number; overrideRiskCap: boolean } | null {
+  // Detect modification phrases that indicate user wants to change/resize an existing event
+  const EVENT_MODIFY_RE = /\b(change|make|bump|set|increase|decrease|adjust|update|modify|resize)\b/i;
+  const isModificationPhrase = EVENT_MODIFY_RE.test(text);
+  
+  // Detect "insisting" phrases that indicate user wants to override the cap
+  const overridePhrases = [
+    /\bstick\s+to\b/i,
+    /\bfull\b/i,
+    /\binstead\b/i,
+    /\bi'?m\s+ok\s+taking\s+more\s+risk\b/i,
+    /\boverride\b/i,
+    /\bignore\s+the\s+cap\b/i,
+    /\bno\s+cap\b/i,
+    /\bdo\s+the\s+full\b/i,
+    /\buse\s+the\s+full\b/i,
+  ];
+  const userIsInsisting = overridePhrases.some(phrase => phrase.test(text));
+  
+  // Parse stake amount - similar to perp size parsing
+  let newStakeUsd: number | undefined = undefined;
+  
+  // Try dollar format first: $500, $1,500
+  const dollarMatch = text.match(/\$(\d+(?:,\d{3})*(?:\.\d{2})?)/);
+  if (dollarMatch) {
+    newStakeUsd = parseFloat(dollarMatch[1].replace(/,/g, ''));
+  } else {
+    // Try K/k format: 500k, 1.5k
+    const kMatch = text.match(/(\d+(?:\.\d+)?)\s*[Kk]\b/);
+    if (kMatch) {
+      newStakeUsd = parseFloat(kMatch[1]) * 1000;
+    } else {
+      // Try plain number (if it's a reasonable stake amount, 100-100000)
+      const numberMatch = text.match(/\b(\d{3,5})\b/);
+      if (numberMatch) {
+        const value = parseFloat(numberMatch[1]);
+        if (value >= 100 && value <= 100000) {
+          newStakeUsd = value;
+        }
+      }
+    }
+  }
+  
+  if (!newStakeUsd) {
+    return null;
+  }
+  
+  // For modification phrases (change, make it, bump, etc.), always treat as override
+  // Modifications are explicit user requests to change the stake, so we should respect them
+  const maxRecommendedStake = accountValue * 0.03; // 3% cap
+  const overrideRiskCap = isModificationPhrase || (newStakeUsd > maxRecommendedStake && userIsInsisting);
+  
+  return {
+    newStakeUsd,
+    overrideRiskCap,
+  };
+}
+
+// Helper to check if message introduces a new event topic (vs modifying existing)
+function introducesNewEventTopic(text: string, existingEventKey?: string): boolean {
+  const lowerText = text.toLowerCase();
+  
+  // If no existing event, don't treat as "new topic" - let normal event detection handle it
+  if (!existingEventKey) {
+    return false;
+  }
+  
+  // Check for different event topics
+  const eventTopics: Record<string, string[]> = {
+    'FED_CUTS_MAR_2025': ['fed', 'fomc', 'rate cut', 'march'],
+    'BTC_ETF_APPROVAL_2025': ['etf', 'btc etf', 'approval'],
+    'US_ELECTION_2024': ['election', 'president', 'winner'],
+  };
+  
+  const existingTopics = eventTopics[existingEventKey] || [];
+  
+  // If message mentions event topics that don't match existing event, it's a new event
+  if (lowerText.includes('election') && !existingEventKey.includes('ELECTION')) {
+    return true;
+  }
+  if (lowerText.includes('etf') && !existingEventKey.includes('ETF')) {
+    return true;
+  }
+  if ((lowerText.includes('fed') || lowerText.includes('fomc')) && !existingEventKey.includes('FED')) {
+    return true;
+  }
+  
+  // If message doesn't mention any event topics, assume it's modifying existing (not introducing new)
+  const hasAnyEventTopic = lowerText.includes('fed') || lowerText.includes('election') || lowerText.includes('etf');
+  if (!hasAnyEventTopic) {
+    return false; // No event topic mentioned = modifying existing
+  }
+  
+  // If it mentions event topics but they don't match existing, it's a new event
+  return !existingTopics.some(topic => lowerText.includes(topic));
+}
+
 const MARKETS = ['ETH', 'BTC', 'SOL', 'BNB', 'AVAX'];
 const DEFAULT_PRICES: Record<string, number> = {
   ETH: 3500,
@@ -179,52 +318,139 @@ const DEFAULT_PRICES: Record<string, number> = {
 const RISK_KEYWORDS = ['risk', 'liquidation', 'liq', 'funding', 'margin', 'volatility', 'correlation', 'var', 'drawdown'];
 const TRADE_KEYWORDS = ['long', 'short', 'buy', 'sell', 'trade', 'entry', 'tp', 'sl', 'take profit', 'stop loss'];
 const DEFI_KEYWORDS = ['yield', 'lending', 'save', 'savings', 'deposit', 'kamino', 'jet', 'rootsfi', 'stable', 'stables', 'defi', 'apy', 'apr'];
-const EVENT_KEYWORDS = [
-  'bet',
-  'wager',
-  'yes on',
-  'no on',
-  'etf',
-  'approval',
-  'election',
-  'fed',
-  'rate cut',
-  'rate cuts',
-  'inflation',
-  'cpi',
-  'hack',
-  'exploit',
-  'launch',
-  'ath',
-];
+
+// Helper to detect whether a message is about perps or events based on content
+type StrategyDomain = 'perp' | 'event' | null;
+
+function detectStrategyDomain(
+  text: string,
+  venue?: 'hyperliquid' | 'event_demo'
+): StrategyDomain {
+  // Event intent patterns - comprehensive coverage
+  const EVENT_INTENT_RE = /\b(take\s+(yes|no)|bet\s+\d+|bet\s+(yes|no)|bet\s+\d+\s+on\s+(yes|no)|stake\s+\d+|take\s+\d+\s+on\s+(yes|no)|wager|place\s+a\s+bet)\b/i;
+
+  // Event topic patterns - ensure Fed cuts is caught even when phrased loosely
+  const EVENT_TOPIC_RE = /\b(fed\s+cuts?|fomc|rate\s+cut|election|prediction\s+market|kalshi|polymarket)\b/i;
+
+  const hasEventIntent = EVENT_INTENT_RE.test(text);
+  const hasEventTopic = EVENT_TOPIC_RE.test(text);
+
+  // Strong event classification: both intent and topic present
+  if (hasEventIntent && hasEventTopic) {
+    return 'event';
+  }
+
+  // Handle "take 200 on no for fed cuts" specifically (number before "on yes/no")
+  if (/take\s+\d+.*\bon\s+(yes|no)\b/i.test(text) && hasEventTopic) {
+    return 'event';
+  }
+
+  // Strong perp signals
+  const PERP_SIGNAL_RE = /\b(long|short|perp|leverage|lev|\bliq(buffer)?\b|stop\s+loss|take\s+profit)\b/i;
+  const hasPerpSignals = PERP_SIGNAL_RE.test(text);
+
+  // If we have perp signals but no event topic, it's a perp
+  if (hasPerpSignals && !hasEventTopic) {
+    return 'perp';
+  }
+
+  // Ambiguous cases: use weak tiebreakers
+  // If we have event topic but no clear perp signals, lean event
+  if (!hasEventIntent && !hasPerpSignals && hasEventTopic) {
+    return 'event';
+  }
+  // If we have perp signals but no event topic, lean perp
+  if (!hasEventIntent && !hasEventTopic && hasPerpSignals) {
+    return 'perp';
+  }
+
+  // Final tiebreaker: venue (only when truly ambiguous)
+  if (venue === 'event_demo') {
+    return 'event';
+  }
+  if (venue === 'hyperliquid') {
+    return 'perp';
+  }
+
+  return null;
+}
 
 export function parseUserMessage(
   text: string,
-  opts?: { venue?: 'hyperliquid' | 'event_demo'; strategies?: Array<{ id: string; instrumentType?: 'perp' | 'event'; status: string; isClosed?: boolean }>; selectedStrategyId?: string | null }
+  opts?: { venue?: 'hyperliquid' | 'event_demo'; strategies?: Array<{ id: string; instrumentType?: 'perp' | 'event'; status: string; isClosed?: boolean; eventKey?: string }>; selectedStrategyId?: string | null; accountValue?: number }
 ): ParsedMessage {
   const upperText = text.toUpperCase();
   const lowerText = text.toLowerCase();
   
-  // First, check if this is a modification request for an existing perp strategy
-  const modification = parseModificationFromText(text);
-  if (modification && opts?.strategies && opts?.selectedStrategyId !== undefined) {
-    const activeStrategy = findActivePerpStrategyForEdit(opts.strategies, opts.selectedStrategyId);
-    if (activeStrategy) {
-      return {
-        intent: 'modify_perp_strategy',
-        modifyPerpStrategy: {
-          strategyId: activeStrategy.id,
-          modification,
-        },
-      };
+  // CRITICAL: Detect domain FIRST, before any perp modification checks
+  // This ensures event messages never get misclassified as perp modifications
+  const domain = detectStrategyDomain(text, opts?.venue);
+  
+  // BEFORE domain-specific logic: Check if this is a modification of an existing event strategy
+  // This handles cases like "let's change this to 2k" where there are no event keywords but we have an existing event
+  const accountValue = opts?.accountValue || 10000;
+  const eventModification = parseEventModificationFromText(text, accountValue);
+  
+  // Check if we have existing event strategies
+  const hasExistingEvent = opts?.strategies && opts.strategies.some(s => 
+    s.instrumentType === 'event' && 
+    (s.status === 'draft' || s.status === 'queued' || s.status === 'executed' || s.status === 'executing') &&
+    !s.isClosed
+  );
+  
+  if (eventModification && hasExistingEvent && opts?.strategies && opts?.selectedStrategyId !== undefined) {
+    const activeEventStrategy = findActiveEventStrategyForEdit(opts.strategies, opts.selectedStrategyId);
+    
+    if (activeEventStrategy) {
+      // Get the existing event to check if we're modifying the same event
+      const existingEvent = opts.strategies.find(s => s.id === activeEventStrategy.id);
+      const existingEventKey = existingEvent?.eventKey;
+      
+      // For modification phrases (change, make it, bump, etc.), always treat as modification
+      // even without event keywords. Only skip if clearly introducing a new event topic.
+      const EVENT_MODIFY_RE = /\b(change|make|bump|set|increase|decrease|adjust|update|modify|resize)\b/i;
+      const isModificationPhrase = EVENT_MODIFY_RE.test(text);
+      
+      // Only treat as modification if:
+      // 1. It's a modification phrase (change, make it, etc.), OR
+      // 2. Domain is 'event' (explicit event keywords), OR
+      // 3. Domain is null/ambiguous AND we're not introducing a new event topic
+      const isEventDomain = domain === 'event';
+      const isAmbiguousButNotNewEvent = (domain === null || domain === 'perp') && !introducesNewEventTopic(text, existingEventKey);
+      
+      if (isModificationPhrase || isEventDomain || isAmbiguousButNotNewEvent) {
+        const result = {
+          intent: 'modify_event_strategy' as const,
+          modifyEventStrategy: {
+            strategyId: activeEventStrategy.id,
+            newStakeUsd: eventModification.newStakeUsd,
+            overrideRiskCap: eventModification.overrideRiskCap,
+          },
+        };
+        
+        // Debug logging
+        if (typeof window !== 'undefined' && import.meta.env?.DEV) {
+          console.log('[debug-event-intent]', {
+            raw: text,
+            domain,
+            action: result.intent,
+            eventKey: existingEventKey,
+            stakeUsd: result.modifyEventStrategy.newStakeUsd,
+            overrideRiskCap: result.modifyEventStrategy.overrideRiskCap,
+            isModificationPhrase,
+            isEventDomain,
+            isAmbiguousButNotNewEvent,
+          });
+        }
+        
+        return result;
+      }
     }
   }
   
-  // Classify intent
-  let intent: ParsedIntent = 'general';
-  
-  // If venue is event_demo, prioritize event detection
-  if (opts?.venue === 'event_demo') {
+  // Handle event domain strategies (regardless of venue if event keywords are present)
+  if (domain === 'event') {
+    
     // Check for prediction market risk sizing (e.g. "Risk 2% on highest-volume prediction market")
     const hasRisk = lowerText.includes('risk') && (lowerText.includes('%') || lowerText.match(/\d+%/));
     const hasHighestVolume = lowerText.includes('highest') && (lowerText.includes('volume') || lowerText.includes('vol'));
@@ -251,36 +477,51 @@ export function parseUserMessage(
       };
     }
     
-    const hasEventKeywords = EVENT_KEYWORDS.some(keyword => lowerText.includes(keyword));
-    if (hasEventKeywords) {
-      intent = 'event';
-      
-      // Extract event details
-      let eventKey = 'GENERIC_EVENT_DEMO';
-      let eventLabel = 'Generic Event';
-      
-      if (lowerText.includes('fed') || lowerText.includes('rate cut')) {
-        eventKey = 'FED_CUTS_MAR_2025';
-        eventLabel = 'Fed cuts in March 2025';
-      } else if (lowerText.includes('etf')) {
-        eventKey = 'BTC_ETF_APPROVAL_2025';
-        eventLabel = 'BTC ETF Approval 2025';
-      } else if (lowerText.includes('election')) {
-        eventKey = 'US_ELECTION_2024';
-        eventLabel = 'US Election 2024';
-      }
-      
-      // Extract side
-      const eventSide: 'YES' | 'NO' = (lowerText.includes('yes') || lowerText.includes('long')) ? 'YES' : 'NO';
-      
-      // Extract risk/stake
-      const riskMatch = text.match(/(\d+(?:\.\d+)?)\s*%/);
-      const riskPercent = riskMatch ? parseFloat(riskMatch[1]) : undefined;
-      
-      // Extract stake amount - support multiple formats: $3,000, 3K, 3k, 3 K, 3000, etc.
-      let stakeUsd: number | undefined = undefined;
-      
-      // Try dollar format first: $3,000 or $3000
+    // Extract event details
+    let eventKey = 'GENERIC_EVENT_DEMO';
+    let eventLabel = 'Generic Event';
+    
+    if (lowerText.includes('fed') || lowerText.includes('rate cut')) {
+      eventKey = 'FED_CUTS_MAR_2025';
+      eventLabel = 'Fed cuts in March 2025';
+    } else if (lowerText.includes('etf')) {
+      eventKey = 'BTC_ETF_APPROVAL_2025';
+      eventLabel = 'BTC ETF Approval 2025';
+    } else if (lowerText.includes('election')) {
+      eventKey = 'US_ELECTION_2024';
+      eventLabel = 'US Election 2024';
+    }
+    
+    // Extract side - support "take yes/no", "bet X on yes/no", "bet yes/no" patterns
+    let eventSide: 'YES' | 'NO' = 'YES';
+    if (/take\s+yes\b/i.test(text) || /bet\s+(on\s+)?yes\b/i.test(text)) {
+      eventSide = 'YES';
+    } else if (/take\s+no\b/i.test(text) || /bet\s+(on\s+)?no\b/i.test(text)) {
+      eventSide = 'NO';
+    } else if (lowerText.includes('yes') && !lowerText.includes('long') && !/\bperp/.test(lowerText)) {
+      eventSide = 'YES';
+    } else if (lowerText.includes('no') && !/\bperp/.test(lowerText)) {
+      eventSide = 'NO';
+    }
+    
+    // Extract risk/stake
+    const riskMatch = text.match(/(\d+(?:\.\d+)?)\s*%/);
+    const riskPercent = riskMatch ? parseFloat(riskMatch[1]) : undefined;
+    
+    // Extract stake amount - prioritize "bet X" / "stake X" / "take X ... on" patterns
+    let stakeUsd: number | undefined = undefined;
+    
+    // Helper to parse number-like strings (handles $, commas, etc.)
+    const parseNumberLike = (str: string): number => {
+      return parseFloat(str.replace(/[$,]/g, ''));
+    };
+    
+    // First, try "bet X" / "stake X" / "take X ... on" patterns (most specific for events)
+    const betStakeMatch = /\b(bet|stake|take)\s+(\$?\d+(?:\.\d+)?[\d,]*)/i.exec(text);
+    if (betStakeMatch) {
+      stakeUsd = parseNumberLike(betStakeMatch[2]);
+    } else {
+      // Fallback to dollar format: $3,000 or $3000
       const dollarMatch = text.match(/\$(\d+(?:,\d{3})*(?:\.\d{2})?)/);
       if (dollarMatch) {
         stakeUsd = parseFloat(dollarMatch[1].replace(/,/g, ''));
@@ -290,26 +531,65 @@ export function parseUserMessage(
         if (kMatch) {
           stakeUsd = parseFloat(kMatch[1]) * 1000;
         } else {
-          // Try plain number (if it's a large number, likely a stake amount)
-          const numberMatch = text.match(/\b(\d{3,}(?:,\d{3})*)\b/);
+          // Try plain number (if it's a reasonable stake amount, 100-100000)
+          const numberMatch = text.match(/\b(\d{3,5})\b/);
           if (numberMatch) {
-            stakeUsd = parseFloat(numberMatch[1].replace(/,/g, ''));
+            const value = parseFloat(numberMatch[1]);
+            if (value >= 100 && value <= 100000) {
+              stakeUsd = value;
+            }
           }
         }
       }
-      
+    }
+    
+    const result = {
+      intent: 'event' as const,
+      eventStrategy: {
+        eventKey,
+        eventLabel,
+        eventSide,
+        stakeUsd,
+        riskPercent,
+      },
+    };
+    
+    // Debug logging
+    if (typeof window !== 'undefined' && import.meta.env?.DEV) {
+      console.log('[debug-event-intent]', {
+        raw: text,
+        domain,
+        action: result.intent,
+        eventKey: result.eventStrategy.eventKey,
+        stakeUsd: result.eventStrategy.stakeUsd,
+        overrideRiskCap: false, // New events don't have override yet
+      });
+    }
+    
+    return result;
+  }
+  
+  // From this point on, we are in perp land only (domain === 'perp' or domain === null)
+  // No event strategies should be created past this line
+  
+  // Check if this is a modification request for an existing perp strategy
+  // (We already handled events above, so domain can only be 'perp' or null here)
+  const modification = parseModificationFromText(text);
+  if (modification && opts?.strategies && opts?.selectedStrategyId !== undefined) {
+    const activeStrategy = findActivePerpStrategyForEdit(opts.strategies, opts.selectedStrategyId);
+    if (activeStrategy) {
       return {
-        intent: 'event',
-        eventStrategy: {
-          eventKey,
-          eventLabel,
-          eventSide,
-          stakeUsd,
-          riskPercent,
+        intent: 'modify_perp_strategy',
+        modifyPerpStrategy: {
+          strategyId: activeStrategy.id,
+          modification,
         },
       };
     }
   }
+  
+  // Classify intent (for perp domain only)
+  let intent: ParsedIntent = 'general';
   
   // Check for event stake override (must check before other intents)
   const overrideKeywords = ['override', 'ignore', 'full', 'allocate the full', 'increase', 'raise', 'even if risky'];
@@ -344,6 +624,7 @@ export function parseUserMessage(
     };
   }
   
+  // Only process perp-related intents (domain is 'perp' or null at this point)
   // Check for hedge keywords FIRST (before trade keywords)
   const hasHedgeKeywords = lowerText.includes('hedge') || lowerText.includes('hedging');
   
@@ -464,6 +745,17 @@ export function parseUserMessage(
   return { intent };
 }
 
+// Helper to format USD amounts
+function formatUsd(amount: number): string {
+  return `$${amount.toLocaleString()}`;
+}
+
+// Helper to format risk percentage
+function formatRiskPct(stakeUsd: number, accountValue: number): string {
+  if (!accountValue || accountValue <= 0) return '0.0';
+  return ((stakeUsd / accountValue) * 100).toFixed(1);
+}
+
 export function generateBlossomResponse(parsed: ParsedMessage, originalText?: string): string {
   // Store original text for prediction market detection
   (parsed as any).originalText = originalText;
@@ -492,6 +784,51 @@ This keeps an estimated liquidation buffer of ~${liqBuffer}% with ${fundingImpac
     return `I've analyzed your request and prepared a DeFi yield plan. Review the details below and confirm when ready to deploy.`;
   }
   
+  if (parsed.intent === 'modify_perp_strategy' && parsed.modifyPerpStrategy) {
+    const mod = parsed.modifyPerpStrategy;
+    const changes: string[] = [];
+    
+    // Build change summary from modification object
+    if (mod.modification.sizeUsd !== undefined) {
+      changes.push(`size → $${mod.modification.sizeUsd.toLocaleString()}`);
+    }
+    if (mod.modification.riskPercent !== undefined) {
+      changes.push(`per-trade risk → ${mod.modification.riskPercent}%`);
+    }
+    if (mod.modification.leverage !== undefined) {
+      changes.push(`leverage → ${mod.modification.leverage}x`);
+    }
+    if (mod.modification.side !== undefined) {
+      changes.push(`side → ${mod.modification.side}`);
+    }
+    
+    let responseText = 'Got it — I\'ve updated this strategy.';
+    
+    if (changes.length > 0) {
+      responseText += `\n\nChange summary: ${changes.join('; ')}.`;
+    }
+    
+    responseText += '\n\nHere\'s the updated plan:';
+    
+    return responseText;
+  }
+  
+  if (parsed.intent === 'modify_event_strategy' && parsed.modifyEventStrategy) {
+    // Event modification responses are handled in Chat.tsx with custom messages
+    // This is just a fallback
+    const mod = parsed.modifyEventStrategy;
+    const accountValue = (parsed as any)?.accountValue || 10000;
+    const riskPct = mod.newStakeUsd ? (mod.newStakeUsd / accountValue) * 100 : 0;
+    
+    let responseText = `I've updated the stake to $${mod.newStakeUsd?.toLocaleString() || 'requested'} (${riskPct.toFixed(1)}% of your $${accountValue.toLocaleString()} account).`;
+    
+    if (mod.overrideRiskCap) {
+      responseText += `\n\n⚠️ Note: This exceeds the recommended 3% per-strategy risk cap.`;
+    }
+    
+    return responseText;
+  }
+  
   if (parsed.intent === 'update_event_stake') {
     const update = parsed.updateEventStake;
     if (!update) {
@@ -515,23 +852,26 @@ This keeps an estimated liquidation buffer of ~${liqBuffer}% with ${fundingImpac
     const finalStake = (eventStrat as any)?.finalStakeUsd;
     const isPredictionMarketRisk = eventStrat?.isPredictionMarketRisk;
     const accountValue = (parsed as any)?.accountValue || 10000;
-    const riskPct = eventStrat.riskPercent || (finalStake ? (finalStake / accountValue) * 100 : 2);
+    const cappedStakeUsd = finalStake || eventStrat.stakeUsd || 0;
+    const riskPct = formatRiskPct(cappedStakeUsd, accountValue);
     
     // Special message for prediction market risk sizing
     if (isPredictionMarketRisk) {
-      if (wasCapped && requestedStake && finalStake) {
-        return `I'll stake ${riskPct}% of your account ($${requestedStake.toLocaleString()}) on "${eventStrat.eventLabel}", side ${eventStrat.eventSide}. However, I've capped this at $${finalStake.toLocaleString()} to keep risk at 3% of your $${accountValue.toLocaleString()} account. Your max loss is capped at the amount staked.`;
+      if (wasCapped && requestedStake && finalStake && requestedStake !== finalStake) {
+        return `You asked to stake ${formatUsd(requestedStake)}. To stay within your risk settings, I've capped this at ${formatUsd(cappedStakeUsd)}.\n\nI've set your stake to ${formatUsd(cappedStakeUsd)}, which is about ${riskPct}% of your ${formatUsd(accountValue)} account.\n\nThis follows your usual 3% per-event risk guideline so a single outcome doesn't dominate your portfolio. Your max loss on this trade is ${formatUsd(cappedStakeUsd)}.`;
       } else {
-        return `I'll stake ${riskPct}% of your account ($${finalStake?.toLocaleString() || 'calculated'}) on "${eventStrat.eventLabel}", side ${eventStrat.eventSide}. Your max loss is capped at the amount staked.`;
+        return `I've set your stake to ${formatUsd(cappedStakeUsd)}, which is about ${riskPct}% of your ${formatUsd(accountValue)} account.\n\nThis follows your usual 3% per-event risk guideline so a single outcome doesn't dominate your portfolio. Your max loss on this trade is ${formatUsd(cappedStakeUsd)}.`;
       }
     }
     
-    // Regular event message
-    if (wasCapped && requestedStake && finalStake) {
-      return `You asked to stake $${requestedStake.toLocaleString()}. I've capped this at $${finalStake.toLocaleString()} to keep risk at 3% of your $${accountValue.toLocaleString()} account.\n\nI'll allocate this stake into the event market you specified. Your max loss is capped at the amount staked. You can see the stake and max payout in the strategy card.`;
+    // Regular event message - new event creation (capped at ~3%)
+    if (wasCapped && requestedStake && finalStake && requestedStake !== finalStake) {
+      // User asked for more than 3%, so we capped it - mention what they asked for
+      return `You asked to stake ${formatUsd(requestedStake)}. To stay within your risk settings, I've capped this at ${formatUsd(cappedStakeUsd)}.\n\nI've set your stake to ${formatUsd(cappedStakeUsd)}, which is about ${riskPct}% of your ${formatUsd(accountValue)} account.\n\nThis follows your usual 3% per-event risk guideline so a single outcome doesn't dominate your portfolio. Your max loss on this trade is ${formatUsd(cappedStakeUsd)}.`;
     }
     
-    return `I'll allocate a stake into the event market you specified and cap your loss at the amount staked. You can see the stake and max payout in the strategy card.`;
+    // User didn't ask for a specific amount, or it was already within 3%
+    return `I've set your stake to ${formatUsd(cappedStakeUsd)}, which is about ${riskPct}% of your ${formatUsd(accountValue)} account.\n\nThis follows your usual 3% per-event risk guideline so a single outcome doesn't dominate your portfolio. Your max loss on this trade is ${formatUsd(cappedStakeUsd)}.`;
   }
   
   if (parsed.intent === 'risk_question') {
@@ -568,4 +908,83 @@ Note: This is mock data. Enable backend mode (VITE_USE_AGENT_BACKEND=true) for l
   
   return `I can help with perps trading strategies, risk limits, and portfolio summaries. Try something like "Long ETH with 2% risk and manage liquidation".`;
 }
+
+// Sanity check examples for detectStrategyDomain:
+// detectStrategyDomain("let bet 500 on no for fed cuts in march", 'hyperliquid') === 'event'
+// detectStrategyDomain("let bet 500 on no for fed cuts in march", 'event_demo') === 'event'
+// detectStrategyDomain("long eth perp with 2% risk", 'hyperliquid') === 'perp'
+// detectStrategyDomain("Take YES on Fed cuts in March with 2% risk", 'hyperliquid') === 'event'
+// detectStrategyDomain("Risk 2% on the highest volume event market", 'event_demo') === 'event'
+// detectStrategyDomain("Hedge my BTC with a short perp at 2x leverage", 'hyperliquid') === 'perp'
+
+// TEMP DEBUG – wrap in a function or comment out after fixing
+// Uncomment and check console to verify classification and event modification
+/*
+if (typeof window !== 'undefined' && import.meta.env?.DEV) {
+  const mockEventStrategy = {
+    id: 'event-1',
+    instrumentType: 'event' as const,
+    status: 'draft',
+    isClosed: false,
+    eventKey: 'FED_CUTS_MAR_2025',
+    eventLabel: 'Fed cuts in March 2025',
+    eventSide: 'NO' as const,
+    stakeUsd: 300,
+    riskPercent: 3,
+  };
+  
+  const samples = [
+    {
+      label: '1. New event (capped)',
+      text: 'take 500 on no for fed cuts in march',
+      strategies: [],
+    },
+    {
+      label: '2. Resize same event (should NOT cap; stake = 2000)',
+      text: 'let\'s change this to 2k',
+      strategies: [mockEventStrategy],
+    },
+    {
+      label: '3. Resize same event (make it 2000)',
+      text: 'make it 2000 instead',
+      strategies: [mockEventStrategy],
+    },
+    {
+      label: '4. Resize same event (bump to 1500)',
+      text: 'bump this to 1500',
+      strategies: [mockEventStrategy],
+    },
+    {
+      label: '5. New unrelated event',
+      text: 'ok now take 200 on yes for us election winner 2024',
+      strategies: [mockEventStrategy],
+    },
+  ];
+
+  // Run once on module load (dev only)
+  setTimeout(() => {
+    console.log('[event-debug] Starting test sequence...');
+    for (const s of samples) {
+      const parsed = parseUserMessage(s.text, {
+        venue: 'hyperliquid',
+        strategies: s.strategies as any,
+        selectedStrategyId: s.strategies.length > 0 ? s.strategies[0].id : null,
+        accountValue: 10000,
+      });
+      
+      const result = {
+        label: s.label,
+        domain: (parsed as any).domain || 'N/A',
+        action: parsed.intent,
+        eventKey: parsed.eventStrategy?.eventKey || parsed.modifyEventStrategy?.strategyId || 'N/A',
+        stakeUsd: parsed.eventStrategy?.stakeUsd || parsed.modifyEventStrategy?.newStakeUsd || 'N/A',
+        overrideRiskCap: parsed.modifyEventStrategy?.overrideRiskCap || false,
+      };
+      
+      console.log('[event-debug]', result);
+    }
+    console.log('[event-debug] Test sequence complete.');
+  }, 1000);
+}
+*/
 
