@@ -552,8 +552,16 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
           };
           
           // Generate response with risk warning
-          (parsed as any).accountValue = account.accountValue;
-          const responseText = generateBlossomResponse(parsed, userText);
+          const formatUsd = (amount: number) => `$${amount.toLocaleString()}`;
+          const formatRiskPct = (risk: number) => risk.toFixed(1);
+          const riskPct = newRiskPercent;
+          
+          let responseText = `Size updated to ${formatUsd(newNotionalUsd || 0)} notional (~${formatRiskPct(riskPct)}% of your account at risk).\nTP/SL and liquidation buffer are unchanged.`;
+          
+          if (riskPct > 3) {
+            responseText += `\n\n⚠ This is above your usual 3% per-trade risk.`;
+          }
+          
           const blossomResponse: ChatMessage = {
             id: `modify-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
             text: responseText,
@@ -622,7 +630,6 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
           };
           
           // Generate response with appropriate warning if risk exceeds 3%
-          const maxRecommendedStake = accountValue * 0.03; // 3% cap
           const formatUsd = (amount: number) => `$${amount.toLocaleString()}`;
           const formatRiskPct = (stake: number, account: number) => {
             if (!account || account <= 0) return '0.0';
@@ -630,12 +637,13 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
           };
           
           let responseText = '';
-          if (newStakeUsd > maxRecommendedStake) {
+          const riskPctFormatted = formatRiskPct(newStakeUsd, accountValue);
+          if (parseFloat(riskPctFormatted) > 3) {
             // Event modification - stake > 3% of account
-            responseText = `I've updated the stake to ${formatUsd(newStakeUsd)}, which is about ${formatRiskPct(newStakeUsd, accountValue)}% of your ${formatUsd(accountValue)} account.\n\nThis is above your usual 3% per-event risk guideline, so make sure you're comfortable with this level of drawdown — your max loss on this trade is ${formatUsd(newStakeUsd)}.`;
+            responseText = `I've updated your stake to ${formatUsd(newStakeUsd)} (${riskPctFormatted}% of your account).\nYour max loss is ${formatUsd(newStakeUsd)}. ⚠ This is above your usual 3% per-trade risk—make sure you're comfortable with this drawdown.`;
           } else {
             // Event modification - stake ≤ 3% of account
-            responseText = `I've updated the stake to ${formatUsd(newStakeUsd)}, which is about ${formatRiskPct(newStakeUsd, accountValue)}% of your ${formatUsd(accountValue)} account. Your max loss on this trade is ${formatUsd(newStakeUsd)}.`;
+            responseText = `I've updated your stake to ${formatUsd(newStakeUsd)} (${riskPctFormatted}% of your account). Your max loss is ${formatUsd(newStakeUsd)}.`;
           }
           
           const blossomResponse: ChatMessage = {
@@ -820,6 +828,67 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
           return;
         }
         
+        // Handle show_riskiest_positions intent
+        if (parsed.intent === 'show_riskiest_positions') {
+          // Get all active strategies (perps + events)
+          const activePerps = strategies.filter(
+            s => s.instrumentType === 'perp' && (s.status === 'executed' || s.status === 'executing') && !s.isClosed
+          );
+          const activeEvents = strategies.filter(
+            s => s.instrumentType === 'event' && (s.status === 'executed' || s.status === 'executing') && !s.isClosed
+          );
+          
+          // Combine and sort by risk %
+          const allActive = [...activePerps, ...activeEvents].sort((a, b) => b.riskPercent - a.riskPercent);
+          
+          if (allActive.length === 0) {
+            const responseText = "You don't have any open positions right now.";
+            const blossomResponse: ChatMessage = {
+              id: `risk-${Date.now()}`,
+              text: responseText,
+              isUser: false,
+              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+            };
+            appendMessageToChat(targetChatId, blossomResponse);
+            clearInputAndStopTyping();
+            return;
+          }
+          
+          // Find strategies with risk > 5% (or top 3 if all are lower)
+          const highRiskThreshold = 5;
+          const highRiskStrategies = allActive.filter(s => s.riskPercent > highRiskThreshold);
+          const topStrategies = highRiskStrategies.length > 0 ? highRiskStrategies : allActive.slice(0, 3);
+          const topStrategy = topStrategies[0];
+          
+          // Build response message
+          let responseText = `Here are your ${topStrategies.length > 1 ? 'riskiest positions' : 'riskiest position'}:\n\n`;
+          topStrategies.forEach((s, idx) => {
+            const market = s.instrumentType === 'event' ? s.eventLabel || 'Event' : s.market;
+            responseText += `${idx + 1}. ${market} (${s.side || s.eventSide}) - ${s.riskPercent.toFixed(1)}% risk\n`;
+          });
+          
+          if (highRiskStrategies.length > 0) {
+            responseText += `\n⚠️ ${highRiskStrategies.length} position${highRiskStrategies.length > 1 ? 's' : ''} exceed${highRiskStrategies.length > 1 ? '' : 's'} your 5% per-position guideline. Consider reducing size or closing some positions to manage risk.`;
+          } else {
+            responseText += `\nAll positions are within your risk guidelines.`;
+          }
+          
+          const blossomResponse: ChatMessage = {
+            id: `risk-${Date.now()}`,
+            text: responseText,
+            isUser: false,
+            timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+          };
+          appendMessageToChat(targetChatId, blossomResponse);
+          
+          // Trigger drawer open with highlighted strategy (via window event for simplicity)
+          // The RightPanel will listen for this event
+          window.dispatchEvent(new CustomEvent('openStrategyDrawer', { detail: { strategyId: topStrategy.id } }));
+          
+          clearInputAndStopTyping();
+          return;
+        }
+        
         const blossomResponse: ChatMessage = {
           id: `mock-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
           text: generateBlossomResponse(parsed, userText),
@@ -855,6 +924,22 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
       onRegisterInsertPrompt(handleQuickPrompt);
     }
   }, [onRegisterInsertPrompt]);
+
+  // Listen for insertChatPrompt events (from Strategy Drawer empty state)
+  useEffect(() => {
+    const handleInsertPrompt = (event: CustomEvent) => {
+      const prompt = event.detail.prompt;
+      if (prompt) {
+        setInputValue(prompt);
+        textareaRef.current?.focus();
+      }
+    };
+    
+    window.addEventListener('insertChatPrompt', handleInsertPrompt as EventListener);
+    return () => {
+      window.removeEventListener('insertChatPrompt', handleInsertPrompt as EventListener);
+    };
+  }, []);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {

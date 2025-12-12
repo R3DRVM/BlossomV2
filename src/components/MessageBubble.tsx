@@ -4,6 +4,7 @@ import { useBlossomContext, getBaseAsset } from '../context/BlossomContext';
 import { USE_AGENT_BACKEND } from '../lib/config';
 import { closeStrategy as closeStrategyApi } from '../lib/blossomApi';
 import { BlossomLogo } from './BlossomLogo';
+import RiskBadge from './RiskBadge';
 
 interface MessageBubbleProps {
   text: string;
@@ -240,16 +241,19 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                   </div>
                   <div>
                     <div className="text-xs text-blossom-slate mb-0.5">Risk</div>
-                    <div className="font-medium text-blossom-ink">
-                      {strategy.riskPercent}%
-                      {(() => {
-                        const riskUsd = (strategy.riskPercent / 100) * account.accountValue;
-                        return riskUsd > 0 ? (
-                          <span className="text-[11px] text-slate-500 ml-1">
-                            · ${riskUsd.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                          </span>
-                        ) : null;
-                      })()}
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-blossom-ink">
+                        {strategy.riskPercent}%
+                        {(() => {
+                          const riskUsd = (strategy.riskPercent / 100) * account.accountValue;
+                          return riskUsd > 0 ? (
+                            <span className="text-[11px] text-slate-500 ml-1">
+                              · ${riskUsd.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                            </span>
+                          ) : null;
+                        })()}
+                      </span>
+                      <RiskBadge riskPercent={strategy.riskPercent} />
                     </div>
                   </div>
                   <div>
@@ -268,6 +272,33 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
               )}
             </div>
             
+            {/* Explanation microcopy */}
+            {currentStrategy?.instrumentType === 'perp' && (
+              <div className="mt-1.5 px-3 pb-1.5">
+                <p className="text-[11px] text-slate-500">
+                  Blossom interpreted this as: <span className="font-medium text-slate-700">{strategy.side}</span>{' '}
+                  {(() => {
+                    const sizeUsd = currentStrategy.notionalUsd || (strategy.riskPercent / 100) * account.accountValue;
+                    return `$${sizeUsd.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+                  })()} on <span className="font-medium text-slate-700">{strategy.market}</span>{' '}
+                  {(() => {
+                    const leverage = currentStrategy ? Math.round((currentStrategy.takeProfit - currentStrategy.stopLoss) / currentStrategy.entry * 10) : 1;
+                    return `at ${leverage}x`;
+                  })()} using ~<span className="font-medium text-slate-700">{strategy.riskPercent}%</span> of your account.
+                </p>
+              </div>
+            )}
+            {currentStrategy?.instrumentType === 'event' && currentStrategy && (
+              <div className="mt-1.5 px-3 pb-1.5">
+                <p className="text-[11px] text-slate-500">
+                  Blossom interpreted this as: <span className="font-medium text-slate-700">{currentStrategy.eventSide || strategy.side}</span>{' '}
+                  ${(currentStrategy.stakeUsd || strategy.entryPrice || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })} on{' '}
+                  <span className="font-medium text-slate-700">{currentStrategy.eventLabel || currentStrategy.eventKey || strategy.market}</span>{' '}
+                  with max payoff of ${(currentStrategy.maxPayoutUsd || strategy.takeProfit || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })} if your outcome wins.
+                </p>
+              </div>
+            )}
+            
             {/* Risk Guardrails */}
             {!isHighRisk && (
               <div className="mt-1.5 text-[11px] text-gray-500">
@@ -282,7 +313,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
             )}
             
             {isDraft && (
-              <div className="pt-1.5 border-t border-blossom-outline/50">
+              <div className="pt-1.5 border-t border-blossom-outline/50 space-y-2">
                 <button 
                   onClick={(e) => {
                     e.preventDefault();
@@ -304,6 +335,21 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                     Confirm & Queue
                   </span>
                 </button>
+                {strategyId && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setSelectedStrategyId(strategyId);
+                      // Open drawer with highlighted strategy
+                      window.dispatchEvent(new CustomEvent('openStrategyDrawer', { detail: { strategyId } }));
+                    }}
+                    className="w-full text-xs font-medium text-blossom-pink hover:text-blossom-pink/80 hover:underline transition-colors"
+                  >
+                    View in Positions →
+                  </button>
+                )}
               </div>
             )}
             {isExecuted && !isClosed && currentStrategy?.instrumentType === 'event' && (

@@ -3,6 +3,7 @@ import { Strategy } from '../context/BlossomContext';
 import { useBlossomContext } from '../context/BlossomContext';
 import { USE_AGENT_BACKEND } from '../lib/config';
 import { closeStrategy as closeStrategyApi } from '../lib/blossomApi';
+import RiskBadge from './RiskBadge';
 
 interface PositionSummaryCardProps {
   strategy: Strategy;
@@ -72,9 +73,12 @@ export default function PositionSummaryCard({ strategy }: PositionSummaryCardPro
           <span className="text-blossom-slate">Size / Leverage:</span>
           <span className="font-medium text-blossom-ink">{strategy.riskPercent}% / {leverage}x</span>
         </div>
-        <div className="flex justify-between">
+        <div className="flex justify-between items-center">
           <span className="text-blossom-slate">Risk:</span>
-          <span className="font-medium text-blossom-ink">{strategy.riskPercent}%</span>
+          <div className="flex items-center gap-2">
+            <span className="font-medium text-blossom-ink">{strategy.riskPercent}%</span>
+            <RiskBadge riskPercent={strategy.riskPercent} />
+          </div>
         </div>
         <div className="flex justify-between">
           <span className="text-blossom-slate">Take Profit:</span>

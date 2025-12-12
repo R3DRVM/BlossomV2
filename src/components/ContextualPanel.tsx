@@ -5,6 +5,7 @@ import { closeStrategy as closeStrategyApi } from '../lib/blossomApi';
 import EmptyStateCard from './EmptyStateCard';
 import PositionSummaryCard from './PositionSummaryCard';
 import DeFiSummaryCard from './DeFiSummaryCard';
+import RiskBadge from './RiskBadge';
 
 interface ContextualPanelProps {
   selectedStrategyId: string | null;
@@ -186,7 +187,9 @@ export default function ContextualPanel({ selectedStrategyId, onQuickAction, onI
           {activeTab === 'perps' && (
             <>
               {perpPosition ? (
-                <PositionSummaryCard strategy={perpPosition} />
+                <PositionSummaryCard 
+                  strategy={perpPosition} 
+                />
               ) : (
                 <div className="card-glass p-6 text-center">
                   <div className="mb-2">
@@ -205,7 +208,10 @@ export default function ContextualPanel({ selectedStrategyId, onQuickAction, onI
           {activeTab === 'defi' && (
             <>
               {defiPosition ? (
-                <DeFiSummaryCard position={defiPosition} onInsertPrompt={onInsertPrompt} />
+                <DeFiSummaryCard 
+                  position={defiPosition} 
+                  onInsertPrompt={onInsertPrompt}
+                />
               ) : (
                 <div className="card-glass p-6 text-center">
                   <div className="mb-2">
@@ -224,7 +230,9 @@ export default function ContextualPanel({ selectedStrategyId, onQuickAction, onI
           {activeTab === 'events' && (
             <>
               {eventPosition ? (
-                <EventSummaryCard strategy={eventPosition} />
+                <EventSummaryCard 
+                  strategy={eventPosition} 
+                />
               ) : (
                 <div className="card-glass p-6 text-center">
                   <div className="mb-2">
@@ -249,13 +257,20 @@ export default function ContextualPanel({ selectedStrategyId, onQuickAction, onI
   return (
     <div className="w-full p-6">
       {currentPosition?.type === 'perp' && currentPosition.strategy && (
-        <PositionSummaryCard strategy={currentPosition.strategy} />
+        <PositionSummaryCard 
+          strategy={currentPosition.strategy} 
+        />
       )}
       {currentPosition?.type === 'event' && currentPosition.strategy && (
-        <EventSummaryCard strategy={currentPosition.strategy} />
+        <EventSummaryCard 
+          strategy={currentPosition.strategy} 
+        />
       )}
       {currentPosition?.type === 'defi' && currentPosition.position && (
-        <DeFiSummaryCard position={currentPosition.position} onInsertPrompt={onInsertPrompt} />
+        <DeFiSummaryCard 
+          position={currentPosition.position} 
+          onInsertPrompt={onInsertPrompt}
+        />
       )}
     </div>
   );
@@ -324,9 +339,12 @@ function EventSummaryCard({ strategy }: { strategy: any }) {
           <span className="text-blossom-slate">Max Loss:</span>
           <span className="font-medium text-blossom-danger">${(strategy.maxLossUsd || strategy.stopLoss).toLocaleString()}</span>
         </div>
-        <div className="flex justify-between">
+        <div className="flex justify-between items-center">
           <span className="text-blossom-slate">Risk:</span>
-          <span className="font-medium text-blossom-ink">{strategy.riskPercent?.toFixed(1)}%</span>
+          <div className="flex items-center gap-2">
+            <span className="font-medium text-blossom-ink">{strategy.riskPercent?.toFixed(1)}%</span>
+            <RiskBadge riskPercent={strategy.riskPercent} />
+          </div>
         </div>
         {strategy.overrideRiskCap && (
           <div className="pt-2 border-t border-blossom-outline/50">
