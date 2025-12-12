@@ -883,67 +883,6 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
         // Pass account value to response generator for capping messages
         (parsed as any).accountValue = account.accountValue;
         
-        // Handle show_riskiest_positions intent (before modify checks to avoid type narrowing issues)
-        if (parsed.intent === 'show_riskiest_positions') {
-          // Get all active strategies (perps + events)
-          const activePerps = strategies.filter(
-            s => s.instrumentType === 'perp' && (s.status === 'executed' || s.status === 'executing') && !s.isClosed
-          );
-          const activeEvents = strategies.filter(
-            s => s.instrumentType === 'event' && (s.status === 'executed' || s.status === 'executing') && !s.isClosed
-          );
-          
-          // Combine and sort by risk %
-          const allActive = [...activePerps, ...activeEvents].sort((a, b) => b.riskPercent - a.riskPercent);
-          
-          if (allActive.length === 0) {
-            const responseText = "You don't have any open positions right now.";
-            const blossomResponse: ChatMessage = {
-              id: `risk-${Date.now()}`,
-              text: responseText,
-              isUser: false,
-              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
-            };
-            appendMessageToChat(targetChatId, blossomResponse);
-            clearInputAndStopTyping();
-            return;
-          }
-          
-          // Find strategies with risk > 5% (or top 3 if all are lower)
-          const highRiskThreshold = 5;
-          const highRiskStrategies = allActive.filter(s => s.riskPercent > highRiskThreshold);
-          const topStrategies = highRiskStrategies.length > 0 ? highRiskStrategies : allActive.slice(0, 3);
-          const topStrategy = topStrategies[0];
-          
-          // Build response message
-          let responseText = `Here are your ${topStrategies.length > 1 ? 'riskiest positions' : 'riskiest position'}:\n\n`;
-          topStrategies.forEach((s, idx) => {
-            const market = s.instrumentType === 'event' ? s.eventLabel || 'Event' : s.market;
-            responseText += `${idx + 1}. ${market} (${s.side || s.eventSide}) - ${s.riskPercent.toFixed(1)}% risk\n`;
-          });
-          
-          if (highRiskStrategies.length > 0) {
-            responseText += `\n⚠️ ${highRiskStrategies.length} position${highRiskStrategies.length > 1 ? 's' : ''} exceed${highRiskStrategies.length > 1 ? '' : 's'} your 5% per-position guideline. Consider reducing size or closing some positions to manage risk.`;
-          } else {
-            responseText += `\nAll positions are within your risk guidelines.`;
-          }
-          
-          const blossomResponse: ChatMessage = {
-            id: `risk-${Date.now()}`,
-            text: responseText,
-            isUser: false,
-            timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
-          };
-          appendMessageToChat(targetChatId, blossomResponse);
-          
-          // Trigger drawer open with highlighted strategy (via window event for simplicity)
-          // The RightPanel will listen for this event
-          window.dispatchEvent(new CustomEvent('openStrategyDrawer', { detail: { strategyId: topStrategy.id } }));
-          
-          clearInputAndStopTyping();
-          return;
-        }
-        
         const blossomResponse: ChatMessage = {
           id: `mock-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
           text: generateBlossomResponse(parsed, userText),
