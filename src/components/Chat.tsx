@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import MessageBubble from './MessageBubble';
 import TypingIndicator from './TypingIndicator';
-import { parseUserMessage, generateBlossomResponse, ParsedStrategy } from '../lib/mockParser';
+import { parseUserMessage, generateBlossomResponse, ParsedStrategy, ParsedIntent } from '../lib/mockParser';
 import { useBlossomContext, ActiveTab, ChatMessage, Strategy } from '../context/BlossomContext';
 import { USE_AGENT_BACKEND } from '../lib/config';
 import { callBlossomChat } from '../lib/blossomApi';
@@ -403,7 +403,7 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
         let defiProposalId: string | null = null;
 
         // Handle show_riskiest_positions intent first (before type narrowing from other intents)
-        if (parsed.intent === 'show_riskiest_positions') {
+        if (parsed.intent === ('show_riskiest_positions' as ParsedIntent)) {
           // Get all active strategies (perps + events)
           const activePerps = strategies.filter(
             s => s.instrumentType === 'perp' && (s.status === 'executed' || s.status === 'executing') && !s.isClosed
