@@ -1,4 +1,6 @@
-import { useBlossomContext } from '../context/BlossomContext';
+import { useState, useEffect } from 'react';
+import { useBlossomContext, getOpenPositionsCount } from '../context/BlossomContext';
+import StrategyDrawer from './StrategyDrawer';
 
 interface RightPanelProps {
   selectedStrategyId?: string | null;
@@ -7,7 +9,41 @@ interface RightPanelProps {
 }
 
 export default function RightPanel(_props: RightPanelProps) {
-  const { account } = useBlossomContext();
+  const { account, strategies, defiPositions } = useBlossomContext();
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [highlightedStrategyId, setHighlightedStrategyId] = useState<string | null>(null);
+  
+  // Listen for drawer open events from Chat
+  useEffect(() => {
+    const handleOpenDrawer = (event: CustomEvent) => {
+      setHighlightedStrategyId(event.detail.strategyId);
+      setIsDrawerOpen(true);
+    };
+    
+    window.addEventListener('openStrategyDrawer', handleOpenDrawer as EventListener);
+    return () => {
+      window.removeEventListener('openStrategyDrawer', handleOpenDrawer as EventListener);
+    };
+  }, []);
+
+  // Auto-open drawer when first position is created (0 → 1)
+  const openPositionsCount = getOpenPositionsCount(strategies, defiPositions);
+  
+  const [hasHadPositions, setHasHadPositions] = useState(openPositionsCount > 0);
+  const shouldAutoOpen = !hasHadPositions && openPositionsCount > 0;
+  
+  useEffect(() => {
+    if (openPositionsCount > 0) {
+      setHasHadPositions(true);
+    }
+  }, [openPositionsCount]);
+  
+  useEffect(() => {
+    if (shouldAutoOpen) {
+      setIsDrawerOpen(true);
+      setHighlightedStrategyId(null);
+    }
+  }, [shouldAutoOpen]);
 
   const handleFund = () => {
     // TODO: Implement fund functionality
@@ -117,8 +153,33 @@ export default function RightPanel(_props: RightPanelProps) {
               Swap
             </button>
           </div>
+
+          {/* Positions Button */}
+          <div className="pt-3 border-t border-slate-100">
+            <button
+              onClick={() => {
+                setHighlightedStrategyId(null);
+                setIsDrawerOpen(true);
+              }}
+              className="w-full rounded-lg border border-slate-200 bg-white text-xs font-medium text-slate-700 hover:bg-pink-50 hover:border-pink-200 transition py-2.5 flex items-center justify-center gap-2"
+            >
+              <span>Positions</span>
+              {openPositionsCount > 0 && (
+                <span className="px-1.5 py-0.5 bg-pink-100 text-pink-700 rounded text-[10px] font-semibold">
+                  {openPositionsCount}
+                </span>
+              )}
+            </button>
+          </div>
         </div>
       </div>
+
+      {/* Strategy Drawer */}
+      <StrategyDrawer
+        isOpen={isDrawerOpen}
+        onClose={() => setIsDrawerOpen(false)}
+        highlightedStrategyId={highlightedStrategyId}
+      />
     </div>
   );
 }

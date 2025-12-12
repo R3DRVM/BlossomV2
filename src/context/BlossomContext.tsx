@@ -21,6 +21,7 @@ export interface Strategy {
   realizedPnlUsd?: number;
   realizedPnlPct?: number;
   instrumentType?: 'perp' | 'event';
+  leverage?: number; // Perp leverage (1-100x, typically 1-20x in UI)
   eventKey?: string;
   eventLabel?: string;
   stakeUsd?: number;
@@ -131,6 +132,13 @@ interface BlossomContextType {
   closeEventStrategy: (id: string) => void;
   updateEventStake: (id: string, updates: Partial<Strategy>) => void;
   updateStrategy: (id: string, updates: Partial<Strategy>) => void;
+  // Quick update helpers for drawer inline controls
+  updatePerpSizeById: (id: string, newSizeUsd: number) => void;
+  updatePerpTpSlById: (id: string, newTakeProfit: number, newStopLoss: number) => void;
+  updatePerpLeverageById: (id: string, newLeverage: number) => void;
+  updateEventStakeById: (id: string, newStakeUsd: number) => void;
+  updateEventSideById: (id: string, newSide: 'YES' | 'NO') => void;
+  updateDeFiDepositById: (id: string, newDepositUsd: number) => void;
   venue: Venue;
   setVenue: (v: Venue) => void;
   defiPositions: DefiPosition[];
@@ -221,6 +229,44 @@ const INITIAL_ACCOUNT: AccountState = {
 export function getBaseAsset(market: string): string {
   return market.replace('-PERP', '').replace('-PERP', '');
 }
+
+// Helper to check if a perp strategy is open
+export function isOpenPerp(strategy: Strategy): boolean {
+  return (
+    strategy.instrumentType === 'perp' &&
+    (strategy.status === 'executed' || strategy.status === 'executing') &&
+    !strategy.isClosed
+  );
+}
+
+// Helper to check if an event strategy is open
+export function isOpenEvent(strategy: Strategy): boolean {
+  return (
+    strategy.instrumentType === 'event' &&
+    (strategy.status === 'executed' || strategy.status === 'executing') &&
+    !strategy.isClosed
+  );
+}
+
+// Helper to check if a DeFi position is active
+export function isActiveDefi(position: DefiPosition): boolean {
+  return position.status === 'active';
+}
+
+// Helper to get total count of open positions
+export function getOpenPositionsCount(
+  strategies: Strategy[],
+  defiPositions: DefiPosition[]
+): number {
+  const openPerps = strategies.filter(isOpenPerp).length;
+  const openEvents = strategies.filter(isOpenEvent).length;
+  const openDefi = defiPositions.filter(isActiveDefi).length;
+  return openPerps + openEvents + openDefi;
+}
+
+// Example usage:
+// - 1 executed perp, 1 active DeFi, 1 draft event → openPositionsCount = 2
+// - 1 closed perp, 0 others → openPositionsCount = 0
 
 // Helper to load chat sessions from localStorage
 function loadChatSessionsFromStorage(): { sessions: ChatSession[]; activeId: string | null } {
@@ -964,6 +1010,143 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  // Quick update helpers for drawer inline controls
+  // These calculate derived values (risk %, max payout) and call the base update functions
+  const updatePerpSizeById = useCallback((id: string, newSizeUsd: number) => {
+    const strategy = strategies.find(s => s.id === id);
+    if (!strategy || strategy.instrumentType !== 'perp') return;
+    
+    const accountValue = account.accountValue;
+    const newRiskPercent = accountValue > 0 ? (newSizeUsd / accountValue) * 100 : 0;
+    
+    updateStrategy(id, {
+      notionalUsd: newSizeUsd,
+      riskPercent: newRiskPercent,
+    });
+  }, [strategies, account.accountValue, updateStrategy]);
+
+  const updatePerpTpSlById = useCallback((id: string, newTakeProfit: number, newStopLoss: number) => {
+    const strategy = strategies.find(s => s.id === id);
+    if (!strategy || strategy.instrumentType !== 'perp') return;
+    
+    // Validate TP/SL make sense for the side
+    if (strategy.side === 'Long') {
+      // For Long: TP should be > entry, SL should be < entry
+      if (newTakeProfit <= strategy.entry || newStopLoss >= strategy.entry) {
+        console.warn('Invalid TP/SL for Long position');
+        return;
+      }
+    } else {
+      // For Short: TP should be < entry, SL should be > entry
+      if (newTakeProfit >= strategy.entry || newStopLoss <= strategy.entry) {
+        console.warn('Invalid TP/SL for Short position');
+        return;
+      }
+    }
+    
+    // Validate positive values
+    if (newTakeProfit <= 0 || newStopLoss <= 0) {
+      console.warn('TP/SL must be positive');
+      return;
+    }
+    
+    // Recalculate leverage from new TP/SL spread (for display consistency)
+    // This ensures leverage stays in sync when TP/SL are edited directly
+    // Note: The computed leverage may be non-tick (e.g., 7.8x); the drawer slider will snap to the closest tick
+    const spread = Math.abs(newTakeProfit - newStopLoss);
+    const recalculatedLeverage = spread > 0 ? Math.round((spread / strategy.entry) * 10) : (strategy.leverage || 1);
+    const clampedLeverage = Math.min(Math.max(recalculatedLeverage, 1), 20);
+    
+    updateStrategy(id, {
+      takeProfit: newTakeProfit,
+      stopLoss: newStopLoss,
+      leverage: clampedLeverage, // Keep leverage in sync when TP/SL change (drawer will snap to nearest tick)
+    });
+  }, [strategies, updateStrategy]);
+
+  const updatePerpLeverageById = useCallback((id: string, newLeverage: number) => {
+    const strategy = strategies.find(s => s.id === id);
+    if (!strategy || strategy.instrumentType !== 'perp') return;
+    
+    // Clamp leverage to 1-20 for UI consistency (helper accepts up to 100x for flexibility)
+    const clampedLeverage = Math.min(Math.max(newLeverage, 1), 20);
+    
+    // Calculate new TP/SL based on leverage
+    // Leverage formula: (spread / entry) * 10 = leverage
+    // So: spread = (entry * clampedLeverage) / 10
+    const spread = (strategy.entry * clampedLeverage) / 10;
+    
+    let newTakeProfit: number;
+    let newStopLoss: number;
+    
+    if (strategy.side === 'Long') {
+      // For Long: TP above entry, SL below entry
+      newTakeProfit = Math.round(strategy.entry + spread / 2);
+      newStopLoss = Math.round(strategy.entry - spread / 2);
+    } else {
+      // For Short: TP below entry, SL above entry
+      newTakeProfit = Math.round(strategy.entry - spread / 2);
+      newStopLoss = Math.round(strategy.entry + spread / 2);
+    }
+    
+    // Ensure positive values
+    if (newTakeProfit <= 0 || newStopLoss <= 0) {
+      console.warn('Calculated TP/SL would be invalid');
+      return;
+    }
+    
+    // Store leverage as the authoritative value, then update TP/SL
+    updateStrategy(id, {
+      leverage: clampedLeverage,
+      takeProfit: newTakeProfit,
+      stopLoss: newStopLoss,
+    });
+  }, [strategies, updateStrategy]);
+
+  const updateEventStakeById = useCallback((id: string, newStakeUsd: number) => {
+    const strategy = strategies.find(s => s.id === id);
+    if (!strategy || strategy.instrumentType !== 'event') return;
+    
+    const accountValue = account.accountValue;
+    const riskPct = accountValue > 0 ? (newStakeUsd / accountValue) * 100 : 0;
+    
+    // Calculate max payout (preserve the ratio from original stake)
+    const originalStake = strategy.stakeUsd || newStakeUsd;
+    const originalMaxPayout = strategy.maxPayoutUsd || (newStakeUsd * 1.7); // Default 1.7x for demo
+    const maxPayoutUsd = originalStake > 0 
+      ? (newStakeUsd * originalMaxPayout) / originalStake
+      : newStakeUsd * 1.7;
+    
+    updateEventStake(id, {
+      stakeUsd: newStakeUsd,
+      maxPayoutUsd,
+      maxLossUsd: newStakeUsd,
+      riskPercent: riskPct,
+      overrideRiskCap: true, // Modifications are explicit overrides
+    });
+  }, [strategies, account.accountValue, updateEventStake]);
+
+  const updateEventSideById = useCallback((id: string, newSide: 'YES' | 'NO') => {
+    const strategy = strategies.find(s => s.id === id);
+    if (!strategy || strategy.instrumentType !== 'event') return;
+    
+    // Validate newSide
+    if (newSide !== 'YES' && newSide !== 'NO') {
+      console.warn('Event side must be YES or NO');
+      return;
+    }
+    
+    // Update eventSide while keeping stake, eventKey, eventLabel, etc.
+    // Risk % and max payout remain the same (they're based on stake, not side)
+    updateEventStake(id, {
+      eventSide: newSide,
+    });
+  }, [strategies, updateEventStake]);
+
+  const updateDeFiDepositById = useCallback((id: string, newDepositUsd: number) => {
+    updateDeFiPlanDeposit(id, newDepositUsd);
+  }, [updateDeFiPlanDeposit]);
+
   const updateFromBackendPortfolio = useCallback((portfolio: any) => {
     const mapped = mapBackendPortfolioToFrontendState(portfolio);
     setAccount(mapped.account);
@@ -1025,6 +1208,12 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
     closeEventStrategy,
     updateEventStake,
     updateStrategy,
+    updatePerpSizeById,
+    updatePerpTpSlById,
+    updatePerpLeverageById,
+    updateEventStakeById,
+    updateEventSideById,
+    updateDeFiDepositById,
         venue,
         setVenue,
         defiPositions,
