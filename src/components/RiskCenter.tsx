@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react';
-import { ChevronDown, Pencil, Trash2 } from 'lucide-react';
+import { ChevronDown, Pencil, Trash2, AlertTriangle } from 'lucide-react';
 import { useBlossomContext } from '../context/BlossomContext';
 import { mockRiskMetrics, mockAlerts } from '../lib/mockData';
+import { computeDefiAggregates, computeEventAggregates, computeMarginMetrics } from '../lib/portfolioComputed';
+import { computeRiskAlerts, RiskAlert } from '../lib/riskAlerts';
+import CorrelationMatrix from './risk/CorrelationMatrix';
 
 interface CollapsibleSectionProps {
   title: string;
@@ -434,15 +437,10 @@ export default function RiskCenter() {
   
   // All event strategies for alerts (not filtered - for card visibility)
   const eventStrategies = strategies.filter(s => s.instrumentType === 'event');
-  // Compute event metrics from filtered strategies
-  const totalEventStake = openEventStrategies.reduce((sum, s) => sum + (s.stakeUsd || 0), 0);
-  const numEventPositions = openEventStrategies.length;
-  const largestEventStake = openEventStrategies.length > 0
-    ? Math.max(...openEventStrategies.map(s => s.stakeUsd || 0))
-    : 0;
-  const eventConcentrationPct = account.accountValue > 0 && largestEventStake > 0
-    ? (largestEventStake / account.accountValue) * 100
-    : 0;
+  
+  // Compute event metrics using shared helper (using all strategies for accurate aggregates)
+  const eventAggregates = computeEventAggregates(strategies, account);
+  const { totalStake: totalEventStake, positionCount: numEventPositions, concentrationPercent: eventConcentrationPct } = eventAggregates;
   const marketGroups = executedStrategies.reduce((acc, s) => {
     const key = `${s.market}-${s.side}`;
     acc[key] = (acc[key] || 0) + 1;
@@ -461,12 +459,10 @@ export default function RiskCenter() {
     s => s.status === 'draft' || s.status === 'queued' || s.status === 'executing'
   ).length;
   
-  // Compute DeFi aggregates
+  // Compute DeFi aggregates (using shared helper)
+  const defiAggregates = computeDefiAggregates(defiPositions);
+  const { totalDeposits: totalDefiDeposits, maxProtocolExposure: maxSingleProtocolExposure } = defiAggregates;
   const activeDefiPositions = defiPositions.filter(p => p.status === 'active');
-  const totalDefiDeposits = activeDefiPositions.reduce((sum, p) => sum + p.depositUsd, 0);
-  const maxSingleProtocolExposure = activeDefiPositions.length > 0
-    ? Math.max(...activeDefiPositions.map(p => p.depositUsd))
-    : 0;
   
   // Get relevant strategies for dropdown (perps and events, excluding closed)
   const relevantStrategies = strategies.filter(s => 
@@ -487,8 +483,34 @@ export default function RiskCenter() {
     }
   };
   
-  const marginUsed = Math.round((account.openPerpExposure / account.accountValue) * 100);
-  const availableMargin = 100 - marginUsed;
+  // Compute margin metrics using shared helper
+  const { marginUsed, availableMargin } = computeMarginMetrics(account);
+
+  // Compute risk alerts
+  const riskAlerts = computeRiskAlerts(account, strategies, defiPositions);
+
+  const handleAlertAction = (alert: RiskAlert) => {
+    if (alert.actionType === 'focusPosition' && alert.actionPayload.positionId) {
+      setActiveTab('copilot');
+      setTimeout(() => {
+        window.dispatchEvent(
+          new CustomEvent('focusRightPanelPosition', {
+            detail: {
+              positionId: alert.actionPayload.positionId,
+              positionType: strategies.find(s => s.id === alert.actionPayload.positionId)?.instrumentType === 'event' ? 'event' : 'perp',
+            },
+          })
+        );
+      }, 100);
+    } else if (alert.actionType === 'prefillChat' && alert.actionPayload.chatPrompt) {
+      setActiveTab('copilot');
+      window.dispatchEvent(
+        new CustomEvent('insertChatPrompt', {
+          detail: { prompt: alert.actionPayload.chatPrompt },
+        })
+      );
+    }
+  };
 
   return (
     <div className="h-full overflow-y-auto bg-transparent p-6">
@@ -509,6 +531,49 @@ export default function RiskCenter() {
             Ask the Copilot to rebalance →
           </button>
         </p>
+
+        {/* Risk Alerts */}
+        {riskAlerts.length > 0 && (
+          <div className="mb-4 bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <h2 className="text-sm font-semibold text-gray-900">Risk Alerts</h2>
+                <p className="text-xs text-gray-500 mt-0.5">{riskAlerts.length} alert{riskAlerts.length !== 1 ? 's' : ''} requiring attention</p>
+              </div>
+            </div>
+            <div className="space-y-2">
+              {riskAlerts.map((alert) => {
+                const severityColors = {
+                  high: 'bg-rose-50 border-rose-200 text-rose-900',
+                  med: 'bg-amber-50 border-amber-200 text-amber-900',
+                  low: 'bg-blue-50 border-blue-200 text-blue-900',
+                };
+                return (
+                  <div
+                    key={alert.id}
+                    className={`flex items-start gap-3 p-3 rounded-lg border ${severityColors[alert.severity]}`}
+                  >
+                    <AlertTriangle className={`w-4 h-4 flex-shrink-0 mt-0.5 ${
+                      alert.severity === 'high' ? 'text-rose-600' :
+                      alert.severity === 'med' ? 'text-amber-600' :
+                      'text-blue-600'
+                    }`} />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-semibold mb-0.5">{alert.title}</div>
+                      <div className="text-xs opacity-90">{alert.detail}</div>
+                    </div>
+                    <button
+                      onClick={() => handleAlertAction(alert)}
+                      className="px-3 py-1.5 text-xs font-medium bg-white/80 hover:bg-white rounded-lg transition-colors border border-current/20"
+                    >
+                      {alert.actionLabel}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
         
         {/* What changed banner */}
         {delta && (Math.abs(delta.valueDelta) > 1 || Math.abs(delta.pnlDelta) > 0.01 || Math.abs(delta.exposureDelta) > 1) && (
@@ -523,27 +588,34 @@ export default function RiskCenter() {
         )}
         
         {/* Strategy filter */}
-        <div className="mb-3 flex items-center gap-2 text-sm">
-          <span className="text-gray-600">View metrics for:</span>
-          <select
-            className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 hover:border-pink-200 focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-colors"
-            value={strategyFilter}
-            onChange={(e) => {
-              setStrategyFilter(e.target.value);
-            }}
-          >
-            <option value="all">All strategies</option>
-            {relevantStrategies.map((s) => {
-              const marketSymbol = s.instrumentType === 'event' 
-                ? (s.eventLabel || s.eventKey || s.market)
-                : s.market;
-              return (
-                <option key={s.id} value={s.id}>
-                  {marketSymbol} · {s.side.toUpperCase()} · {s.riskPercent}%
-                </option>
-              );
-            })}
-          </select>
+        <div className="mb-3">
+          <div className="flex items-center gap-2 text-sm">
+            <span className="text-gray-600">View metrics for:</span>
+            <select
+              className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 hover:border-pink-200 focus:outline-none focus:ring-2 focus:ring-pink-200 focus:border-pink-300 transition-colors"
+              value={strategyFilter}
+              onChange={(e) => {
+                setStrategyFilter(e.target.value);
+              }}
+            >
+              <option value="all">All strategies</option>
+              {relevantStrategies.map((s) => {
+                const marketSymbol = s.instrumentType === 'event' 
+                  ? (s.eventLabel || s.eventKey || s.market)
+                  : s.market;
+                return (
+                  <option key={s.id} value={s.id}>
+                    {marketSymbol} · {s.side.toUpperCase()} · {s.riskPercent}%
+                  </option>
+                );
+              })}
+            </select>
+          </div>
+          <div className="text-[11px] text-slate-500 mt-1">
+            {strategyFilter === 'all' 
+              ? 'Showing risk across all open strategies.'
+              : 'Metrics below are focused on this strategy only.'}
+          </div>
         </div>
         
         {selectedStrategyForFilter && (
@@ -585,7 +657,11 @@ export default function RiskCenter() {
             </div>
 
             {/* Risk Metrics */}
-            <CollapsibleSection title="Risk Metrics" defaultOpen={true}>
+            <CollapsibleSection 
+              title="Risk Metrics" 
+              subtitle="Account-level risk indicators including drawdown, VaR, and volatility"
+              defaultOpen={true}
+            >
               <div className="space-y-3 text-sm">
                 <div className="flex justify-between">
                   <span className="text-gray-600">Max Drawdown (30d):</span>
@@ -611,7 +687,11 @@ export default function RiskCenter() {
             </CollapsibleSection>
             
             {/* Strategy Status Summary */}
-            <CollapsibleSection title="Strategy Status" defaultOpen={true}>
+            <CollapsibleSection 
+              title="Strategy Status" 
+              subtitle="Track your strategies from draft to execution"
+              defaultOpen={true}
+            >
               <div className="space-y-3 text-sm">
                 <div className="flex justify-between">
                   <span className="text-gray-600">Active Strategies:</span>
@@ -698,6 +778,13 @@ export default function RiskCenter() {
               addWatchAsset={addWatchAsset}
               removeWatchAsset={removeWatchAsset}
             />
+
+            {/* Correlation Matrix */}
+            <CorrelationMatrix
+              account={account}
+              strategies={strategies}
+              defiPositions={defiPositions}
+            />
           </div>
 
           {/* Right side - 1 column wide */}
@@ -727,7 +814,8 @@ export default function RiskCenter() {
             {/* Event Alerts (Mock) */}
             {eventStrategies.length > 0 && (
               <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
-                <h2 className="text-sm font-semibold text-gray-900 mb-4">Event Alerts (Mock)</h2>
+                <h2 className="text-sm font-semibold text-gray-900 mb-1">Event Alerts (Mock)</h2>
+                <p className="text-xs text-gray-500 mb-4">Open event market positions and their risk status</p>
                 <div className="space-y-3">
                   {openEventStrategies.length > 0 ? (
                     openEventStrategies.map((event) => {

@@ -1,5 +1,6 @@
 import { useRef, useState, useEffect } from 'react';
 import { useBlossomContext } from '../context/BlossomContext';
+import { useExecution } from '../context/ExecutionContext';
 import Chat from './Chat';
 import LeftSidebar from './LeftSidebar';
 import RightPanel from './RightPanel';
@@ -8,15 +9,55 @@ import { BlossomLogo } from './BlossomLogo';
 import RiskCenter from './RiskCenter';
 import PortfolioView from './PortfolioView';
 import PositionsTray from './PositionsTray';
+import ExecutionStatusBar from './ExecutionStatusBar';
+import OnboardingCoachmarks from './OnboardingCoachmarks';
 
 type CenterView = 'copilot' | 'risk' | 'portfolio';
+type ExecutionMode = 'auto' | 'confirm' | 'manual';
 
 export default function CopilotLayout() {
   const { selectedStrategyId, onboarding, setOnboarding, strategies, defiPositions, activeTab, setActiveTab, venue, setVenue } = useBlossomContext();
+  const { pendingPlans } = useExecution();
   const insertPromptRef = useRef<((text: string) => void) | null>(null);
+  
+  // Execution Mode state (persisted in localStorage)
+  const [executionMode, setExecutionMode] = useState<ExecutionMode>(() => {
+    const saved = localStorage.getItem('blossom.executionMode');
+    return (saved as ExecutionMode) || 'auto';
+  });
+
+  useEffect(() => {
+    localStorage.setItem('blossom.executionMode', executionMode);
+  }, [executionMode]);
+  
+  // Handle pending confirmations badge click
+  const handlePendingClick = () => {
+    if (pendingPlans.length === 0) return;
+    // Find the most recent pending plan and scroll to it
+    const latestPlan = pendingPlans[pendingPlans.length - 1];
+    const planCard = document.querySelector(`[data-plan-id="${latestPlan.id}"]`);
+    if (planCard) {
+      planCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // Add temporary highlight
+      planCard.classList.add('ring-2', 'ring-pink-400');
+      setTimeout(() => {
+        planCard.classList.remove('ring-2', 'ring-pink-400');
+      }, 1500);
+    }
+  };
   
   // Local center view state - syncs with global activeTab but keeps 3-panel layout
   const [centerView, setCenterView] = useState<CenterView>('copilot');
+  
+  // Onboarding coachmarks
+  const [showOnboarding, setShowOnboarding] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return localStorage.getItem('blossom.onboardingSeen') !== 'true';
+  });
+  
+  const handleOnboardingComplete = () => {
+    setShowOnboarding(false);
+  };
   
   // Sync centerView with global activeTab when it changes
   useEffect(() => {
@@ -31,35 +72,17 @@ export default function CopilotLayout() {
   const hasEvent = strategies.some(s => s.instrumentType === 'event' && s.status !== 'draft');
   const allDone = hasPerp && hasDefi && hasEvent;
   
+  // Auto-dismiss banner when user has created their first strategy
+  const hasAnyStrategy = strategies.length > 0 && strategies.some(s => s.status !== 'draft');
+  const shouldShowBanner = !onboarding.dismissed && !allDone && !hasAnyStrategy;
+  
   const handleCenterViewChange = (view: CenterView) => {
     setCenterView(view);
     setActiveTab(view); // Sync with global state
   };
 
-  // Auto-open tray when positions are created
-  const activePerps = strategies.filter(s => 
-    s.instrumentType === 'perp' && 
-    (s.status === 'executed' || s.status === 'executing') && 
-    !s.isClosed
-  );
-  const activeEvents = strategies.filter(s => 
-    s.instrumentType === 'event' && 
-    (s.status === 'executed' || s.status === 'executing') && 
-    !s.isClosed
-  );
-  const activeDefi = defiPositions.filter(p => p.status === 'active');
-  const proposedDefi = defiPositions.filter(p => p.status === 'proposed');
-  const totalPositions = activePerps.length + activeEvents.length + activeDefi.length + proposedDefi.length;
-  
-  // Determine if we should auto-open (when going from 0 to >0 positions)
-  const [hasHadPositions, setHasHadPositions] = useState(totalPositions > 0);
-  const shouldAutoOpen = !hasHadPositions && totalPositions > 0;
-  
-  useEffect(() => {
-    if (totalPositions > 0) {
-      setHasHadPositions(true);
-    }
-  }, [totalPositions]);
+  // Note: Auto-open behavior for Positions Tray is disabled
+  // Strategy Drawer now handles auto-opening when first position is created (see RightPanel.tsx)
 
   return (
     <div className="flex h-full w-full bg-slate-50 overflow-hidden">
@@ -113,8 +136,45 @@ export default function CopilotLayout() {
               </div>
             </div>
             
-            {/* Right: Venue Toggle */}
+            {/* Right: Execution Mode + Venue Toggle */}
             <div className="flex items-center gap-2">
+              {/* Execution Mode Selector */}
+              <div 
+                className="flex items-center gap-0.5 bg-slate-100 rounded-lg p-0.5"
+                data-coachmark="execution-mode"
+              >
+                {(['auto', 'confirm', 'manual'] as ExecutionMode[]).map((mode) => (
+                  <button
+                    key={mode}
+                    onClick={() => setExecutionMode(mode)}
+                    className={`px-2 py-0.5 text-[10px] font-medium rounded transition-colors ${
+                      executionMode === mode
+                        ? 'bg-white text-slate-900 shadow-sm'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                    title={
+                      mode === 'auto' ? 'Auto-execute plans' :
+                      mode === 'confirm' ? 'Require confirmation before execution' :
+                      'Manual execution only'
+                    }
+                  >
+                    {mode.charAt(0).toUpperCase() + mode.slice(1)}
+                  </button>
+                ))}
+              </div>
+              
+              {/* Pending Confirmations Badge (only in Confirm mode) */}
+              {executionMode === 'confirm' && pendingPlans.length > 0 && (
+                <button
+                  onClick={handlePendingClick}
+                  className="px-2.5 py-1 text-[10px] font-medium rounded-full bg-pink-100 text-pink-700 border border-pink-200 hover:bg-pink-200 transition-colors"
+                  title={`${pendingPlans.length} plan${pendingPlans.length !== 1 ? 's' : ''} pending confirmation`}
+                >
+                  Pending ({pendingPlans.length})
+                </button>
+              )}
+
+              {/* Venue Toggle */}
               <button
                 onClick={() => setVenue('hyperliquid')}
                 className={`px-2.5 py-1 text-[11px] font-medium rounded-full transition-all flex items-center gap-1.5 ${
@@ -156,8 +216,8 @@ export default function CopilotLayout() {
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden bg-white">
           {centerView === 'copilot' && (
             <>
-              {!onboarding.dismissed && !allDone && (
-                <div className="mb-3 card-glass px-4 py-3 text-xs text-blossom-ink mx-6 mt-4">
+              {shouldShowBanner && (
+                <div className="mb-3 card-glass px-4 py-3 text-xs text-blossom-ink mx-6 mt-4 flex-shrink-0">
                   <div className="flex justify-between items-start mb-2">
                     <span className="font-medium text-sm">Getting started with Blossom</span>
                     <button
@@ -185,7 +245,7 @@ export default function CopilotLayout() {
                 </div>
               )}
               {onboarding.dismissed && allDone && (
-                <div className="mb-2 mx-6 mt-4 text-right">
+                <div className="mb-2 mx-6 mt-4 text-right flex-shrink-0">
                   <button
                     type="button"
                     onClick={() => setOnboarding(prev => ({ ...prev, dismissed: false }))}
@@ -195,13 +255,23 @@ export default function CopilotLayout() {
                   </button>
                 </div>
               )}
-              <div className="flex-1 flex flex-col min-h-0 overflow-y-auto">
-                <Chat 
-                  selectedStrategyId={selectedStrategyId}
-                  onRegisterInsertPrompt={(handler) => {
-                    insertPromptRef.current = handler;
-                  }}
+              <div className="flex-1 flex flex-col min-h-0 overflow-hidden relative" style={{ minHeight: 'calc(100vh - 160px)' }}>
+                <div className="flex-1 overflow-y-auto">
+                  <Chat 
+                    selectedStrategyId={selectedStrategyId}
+                    executionMode={executionMode}
+                    onRegisterInsertPrompt={(handler) => {
+                      insertPromptRef.current = handler;
+                    }}
+                  />
+                </div>
+                <ExecutionStatusBar 
+                  executionMode={executionMode}
+                  venue={venue}
                 />
+                {showOnboarding && centerView === 'copilot' && (
+                  <OnboardingCoachmarks onComplete={handleOnboardingComplete} />
+                )}
               </div>
             </>
           )}
@@ -221,8 +291,8 @@ export default function CopilotLayout() {
       </div>
 
           {/* Right Panel - Wallet + Positions - hidden below lg */}
-          <div className="hidden lg:flex flex-shrink-0">
-            <div className="relative w-[320px] xl:w-[340px] pr-4 pl-2 min-h-0 overflow-hidden">
+          <div className="hidden lg:flex flex-shrink-0 h-full">
+            <div className="relative w-[320px] xl:w-[340px] pr-4 pl-2 h-full flex flex-col min-h-0">
               <RightPanel
                 selectedStrategyId={selectedStrategyId}
                 onQuickAction={(action) => {
@@ -241,8 +311,8 @@ export default function CopilotLayout() {
                   }
                 }}
               />
-              {/* Positions Tray - Docked bottom-right inside column */}
-              <PositionsTray defaultOpen={shouldAutoOpen} />
+              {/* Positions Tray - Disabled (hidden behind ENABLE_POSITIONS_TRAY flag) */}
+              <PositionsTray defaultOpen={false} />
             </div>
           </div>
         </div>

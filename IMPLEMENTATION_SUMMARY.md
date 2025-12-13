@@ -132,3 +132,4 @@ VITE_AGENT_API_URL=http://localhost:3001
 4. Add support for Polymarket GraphQL API if needed
 5. Add market detail endpoints for individual market queries
 
+

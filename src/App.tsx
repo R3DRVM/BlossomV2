@@ -1,4 +1,6 @@
+import { useState, useEffect } from 'react';
 import { BlossomProvider, useBlossomContext } from './context/BlossomContext';
+import { ActivityFeedProvider } from './context/ActivityFeedContext';
 import Header from './components/Header';
 import TabNav from './components/TabNav';
 import AccountSummaryStrip from './components/AccountSummaryStrip';
@@ -6,9 +8,34 @@ import { SimBanner } from './components/SimBanner';
 import CopilotLayout from './components/CopilotLayout';
 import RiskCenter from './components/RiskCenter';
 import PortfolioView from './components/PortfolioView';
+import CommandBar from './components/CommandBar';
 
 function AppContent() {
-  const { activeTab } = useBlossomContext();
+  const { activeTab, setActiveTab } = useBlossomContext();
+  const [isCommandBarOpen, setIsCommandBarOpen] = useState(false);
+
+  // Listen for Cmd/Ctrl+K to open command bar
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setIsCommandBarOpen((prev) => !prev);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+
+  const handleInsertChatPrompt = (text: string) => {
+    // Dispatch event that Chat component listens to (matches StrategyDrawer format)
+    window.dispatchEvent(
+      new CustomEvent('insertChatPrompt', {
+        detail: { prompt: text },
+      })
+    );
+  };
 
   return (
     <div className="min-h-screen bg-blossom-surface relative overflow-hidden">
@@ -33,6 +60,14 @@ function AppContent() {
         </div>
       </main>
       </div>
+
+      {/* Command Bar */}
+      <CommandBar
+        isOpen={isCommandBarOpen}
+        onClose={() => setIsCommandBarOpen(false)}
+        onNavigate={(tab) => setActiveTab(tab)}
+        onInsertChatPrompt={handleInsertChatPrompt}
+      />
     </div>
   );
 }
@@ -40,7 +75,9 @@ function AppContent() {
 function App() {
   return (
     <BlossomProvider>
-      <AppContent />
+      <ActivityFeedProvider>
+        <AppContent />
+      </ActivityFeedProvider>
     </BlossomProvider>
   );
 }

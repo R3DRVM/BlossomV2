@@ -1,4 +1,6 @@
 import { BlossomProvider } from '../context/BlossomContext';
+import { ActivityFeedProvider } from '../context/ActivityFeedContext';
+import { ToastProvider } from '../components/toast/ToastProvider';
 import CopilotLayout from '../components/CopilotLayout';
 
 function AppContent() {
@@ -18,7 +20,11 @@ function AppContent() {
 export default function BlossomAppShell() {
   return (
     <BlossomProvider>
-      <AppContent />
+      <ActivityFeedProvider>
+        <ToastProvider>
+          <AppContent />
+        </ToastProvider>
+      </ActivityFeedProvider>
     </BlossomProvider>
   );
 }

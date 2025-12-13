@@ -2,7 +2,7 @@
 // See src/lib/blossomApi.ts for the integration layer
 // When ready, update Chat.tsx to use callBlossomChat() instead of parseUserMessage()
 
-export type ParsedIntent = 'trade' | 'risk_question' | 'general' | 'defi' | 'event' | 'update_event_stake' | 'hedge' | 'modify_perp_strategy' | 'modify_event_strategy';
+export type ParsedIntent = 'trade' | 'risk_question' | 'general' | 'defi' | 'event' | 'update_event_stake' | 'hedge' | 'modify_perp_strategy' | 'modify_event_strategy' | 'show_riskiest_positions';
 
 export interface ParsedStrategy {
   market: string;
@@ -634,12 +634,17 @@ export function parseUserMessage(
   const hasTradeKeywords = TRADE_KEYWORDS.some(keyword => lowerText.includes(keyword));
   const hasRiskKeywords = RISK_KEYWORDS.some(keyword => lowerText.includes(keyword));
   
+  // Check for riskiest positions queries
+  const hasRiskiestKeywords = /\b(riskiest|highest\s+risk|show\s+.*risk|reduce\s+risk|positions?\s+.*risk|more\s+than\s+\d+%|above\s+\d+%)\b/i.test(text);
+  
   if (hasDefiKeywords) {
     intent = 'defi';
   } else if (hasHedgeKeywords) {
     intent = 'hedge';
   } else if (hasTradeKeywords) {
     intent = 'trade';
+  } else if (hasRiskiestKeywords) {
+    intent = 'show_riskiest_positions';
   } else if (hasRiskKeywords) {
     intent = 'risk_question';
   }

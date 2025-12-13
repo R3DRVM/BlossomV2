@@ -5,6 +5,9 @@ import { USE_AGENT_BACKEND } from '../lib/config';
 import { closeStrategy as closeStrategyApi } from '../lib/blossomApi';
 import { BlossomLogo } from './BlossomLogo';
 import RiskBadge from './RiskBadge';
+import ExecutionDetailsDisclosure from './ExecutionDetailsDisclosure';
+import { useExecution } from '../context/ExecutionContext';
+import { useActivityFeed } from '../context/ActivityFeedContext';
 
 interface MessageBubbleProps {
   text: string;
@@ -14,6 +17,7 @@ interface MessageBubbleProps {
   strategyId?: string | null;
   selectedStrategyId?: string | null;
   defiProposalId?: string | null;
+  executionMode?: 'auto' | 'confirm' | 'manual';
   onInsertPrompt?: (text: string) => void;
   onRegisterStrategyRef?: (id: string, element: HTMLDivElement | null) => void;
 }
@@ -64,8 +68,10 @@ function getPortfolioBiasWarning(strategies: any[], newStrategy: ParsedStrategy)
   return null;
 }
 
-export default function MessageBubble({ text, isUser, timestamp, strategy, strategyId, selectedStrategyId, defiProposalId, onInsertPrompt, onRegisterStrategyRef }: MessageBubbleProps) {
-  const { updateStrategyStatus, recomputeAccountFromStrategies, strategies, setActiveTab, setSelectedStrategyId, setOnboarding, closeStrategy, closeEventStrategy, defiPositions, latestDefiProposal, confirmDefiPlan, updateFromBackendPortfolio, account, riskProfile } = useBlossomContext();
+export default function MessageBubble({ text, isUser, timestamp, strategy, strategyId, selectedStrategyId, defiProposalId, executionMode, onInsertPrompt, onRegisterStrategyRef }: MessageBubbleProps) {
+  const { updateStrategyStatus, recomputeAccountFromStrategies, strategies, setActiveTab, setSelectedStrategyId, setOnboarding, closeStrategy, closeEventStrategy, defiPositions, latestDefiProposal, confirmDefiPlan, updateFromBackendPortfolio, account, riskProfile, venue } = useBlossomContext();
+  const { addPendingPlan, removePendingPlan, setLastAction } = useExecution();
+  const { pushEvent } = useActivityFeed();
   const [isClosing, setIsClosing] = useState(false);
   const [showReasoning, setShowReasoning] = useState(false);
   
@@ -94,6 +100,18 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
     ? 'Only draft strategies can be queued' 
     : undefined;
   
+  // Track pending confirmations for Confirm mode
+  useEffect(() => {
+    if (executionMode === 'confirm' && strategyId && isDraft && !isExecuted) {
+      addPendingPlan(strategyId, (currentStrategy?.instrumentType || 'perp') as 'perp' | 'event' | 'defi');
+    }
+    return () => {
+      if (strategyId) {
+        removePendingPlan(strategyId);
+      }
+    };
+  }, [executionMode, strategyId, isDraft, isExecuted, currentStrategy?.instrumentType, addPendingPlan, removePendingPlan]);
+  
   // Register strategy ref for scroll restoration
   useEffect(() => {
     if (strategyId && strategyPreviewRef.current && onRegisterStrategyRef) {
@@ -109,6 +127,23 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
   const handleConfirmAndQueue = () => {
     if (!strategyId || !isDraft) return;
     
+    // Remove from pending if in Confirm mode
+    if (executionMode === 'confirm' && strategyId) {
+      removePendingPlan(strategyId);
+    }
+    
+    // Update last action
+    const actionText = `Confirmed ${currentStrategy?.market || currentStrategy?.eventLabel || 'position'} plan`;
+    setLastAction(actionText);
+    
+    // Emit activity event
+    pushEvent({
+      type: 'alert',
+      positionId: strategyId,
+      positionType: (currentStrategy?.instrumentType || 'perp') as 'perp' | 'event' | 'defi',
+      message: `Confirmed execution plan for ${currentStrategy?.market || currentStrategy?.eventLabel || 'position'}`,
+    });
+    
     setOnboarding(prev => ({ ...prev, queuedStrategy: true }));
     updateStrategyStatus(strategyId, 'queued');
     
@@ -119,6 +154,10 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
       setTimeout(() => {
         updateStrategyStatus(strategyId!, 'executed');
         recomputeAccountFromStrategies();
+        
+        // Update last action on execution
+        const executedActionText = `Executed ${currentStrategy?.market || currentStrategy?.eventLabel || 'position'} plan`;
+        setLastAction(executedActionText);
       }, 2000);
     }, 1500);
   };
@@ -351,6 +390,16 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                   </button>
                 )}
               </div>
+            )}
+            
+            {/* Execution Details Disclosure - shown for draft/queued/executed */}
+            {(isDraft || currentStatus === 'queued' || isExecuted) && (
+              <ExecutionDetailsDisclosure
+                strategy={currentStrategy || undefined}
+                defiPosition={defiProposalId ? (defiPositions.find(p => p.id === defiProposalId) || undefined) : undefined}
+                venue={venue}
+                isExecuted={isExecuted && !isClosed}
+              />
             )}
             {isExecuted && !isClosed && currentStrategy?.instrumentType === 'event' && (
               <button

@@ -3,6 +3,7 @@ import { useBlossomContext } from '../context/BlossomContext';
 import type { Strategy, DefiPosition } from '../context/BlossomContext';
 import { USE_AGENT_BACKEND } from '../lib/config';
 import { closeStrategy as closeStrategyApi } from '../lib/blossomApi';
+import { useToast } from './toast/useToast';
 
 interface PositionsTrayProps {
   defaultOpen?: boolean;
@@ -10,8 +11,16 @@ interface PositionsTrayProps {
 
 type TrayTab = 'perps' | 'defi' | 'events';
 
+// Feature flag: Set to true to enable Positions Tray (currently disabled in favor of Strategy Drawer)
+const ENABLE_POSITIONS_TRAY = false;
+
 export default function PositionsTray({ defaultOpen = false }: PositionsTrayProps) {
+  // If disabled, don't render anything
+  if (!ENABLE_POSITIONS_TRAY) {
+    return null;
+  }
   const { strategies, defiPositions, closeStrategy, closeEventStrategy, updateFromBackendPortfolio, updateDeFiPlanDeposit, updateEventStake, updateStrategy, account } = useBlossomContext();
+  const { showToast } = useToast();
   const [isOpen, setIsOpen] = useState(defaultOpen);
   const [activeTab, setActiveTab] = useState<TrayTab>('perps');
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -197,6 +206,11 @@ export default function PositionsTray({ defaultOpen = false }: PositionsTrayProp
           type: 'event',
         });
         updateFromBackendPortfolio(response.portfolio);
+        showToast({
+          title: 'Event settled',
+          description: 'Your event position has been closed and balances updated.',
+          variant: 'success',
+        });
       } catch (error: any) {
         console.error('Failed to close position:', error);
         // Error is logged to console, user can see it in dev tools
@@ -204,6 +218,11 @@ export default function PositionsTray({ defaultOpen = false }: PositionsTrayProp
     } else {
       // Use closeEventStrategy for proper event settlement (handles PnL, wallet updates, etc.)
       closeEventStrategy(strategy.id);
+      showToast({
+        title: 'Event settled',
+        description: 'Your event position has been closed and balances updated.',
+        variant: 'success',
+      });
     }
   };
 
@@ -600,22 +619,19 @@ export default function PositionsTray({ defaultOpen = false }: PositionsTrayProp
         {/* Positions List */}
         <div className="flex-1 overflow-y-auto min-h-0 bg-slate-50/50">
           {currentPositions.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-6 text-center px-3">
+            <div className="flex flex-col items-center justify-center py-8 text-center px-4">
               {activeTab === 'perps' ? (
-                <>
-                  <span className="text-[11px] text-slate-400">No perp notifications yet.</span>
-                  <span className="text-[11px] text-slate-400 mt-1">Run a strategy to see your perp positions here.</span>
-                </>
+                <div className="text-[11px] text-slate-500 leading-relaxed">
+                  No open perp positions yet. Ask Blossom to open a trade to see it here.
+                </div>
               ) : activeTab === 'defi' ? (
-                <>
-                  <span className="text-[11px] text-slate-400">No DeFi notifications yet.</span>
-                  <span className="text-[11px] text-slate-400 mt-1">Deposit into DeFi to see it here.</span>
-                </>
+                <div className="text-[11px] text-slate-500 leading-relaxed">
+                  No active DeFi plans yet. Ask Blossom to build a yield plan.
+                </div>
               ) : (
-                <>
-                  <span className="text-[11px] text-slate-400">No event notifications yet.</span>
-                  <span className="text-[11px] text-slate-400 mt-1">Trade an event market to see it here.</span>
-                </>
+                <div className="text-[11px] text-slate-500 leading-relaxed">
+                  No event market stakes yet. Ask Blossom to place a view on an event.
+                </div>
               )}
             </div>
           ) : (

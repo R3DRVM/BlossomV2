@@ -8,12 +8,14 @@ import { callBlossomChat } from '../lib/blossomApi';
 import QuickStartPanel from './QuickStartPanel';
 import BlossomHelperOverlay from './BlossomHelperOverlay';
 import { HelpCircle } from 'lucide-react';
+// ExecutionPlanCard removed - execution details now live inside chat plan card
 
 // Re-export Message type for backward compatibility
 export type Message = ChatMessage;
 
 interface ChatProps {
   selectedStrategyId: string | null;
+  executionMode?: 'auto' | 'confirm' | 'manual';
   onRegisterInsertPrompt?: (handler: (text: string) => void) => void;
 }
 
@@ -79,7 +81,7 @@ function getSuggestionChipsForVenue(venue: 'hyperliquid' | 'event_demo'): Array<
   ];
 }
 
-export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: ChatProps) {
+export default function Chat({ selectedStrategyId, executionMode = 'auto', onRegisterInsertPrompt }: ChatProps) {
   const { 
     addDraftStrategy, 
     setOnboarding, 
@@ -106,6 +108,9 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
   
   // Track if we've shown welcome message for current session
   const hasShownWelcomeRef = useRef<Set<string>>(new Set());
+  
+  // Plan draft bridge removed - execution details now live inside chat plan card
+  // No need for separate ExecutionPlanCard component
   
   // Ensure welcome message is shown for new/empty sessions
   useEffect(() => {
@@ -468,6 +473,13 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
           const defiProposal = createDefiPlanFromCommand(userText);
           defiProposalId = defiProposal.id;
           setOnboarding(prev => ({ ...prev, queuedStrategy: true }));
+          
+          // Dispatch planDrafted event
+          window.dispatchEvent(
+            new CustomEvent('planDrafted', {
+              detail: { type: 'defi', id: defiProposal.id },
+            })
+          );
         } else if (parsed.intent === 'event' && parsed.eventStrategy) {
           // Create event strategy
           const eventStrat = parsed.eventStrategy;
@@ -534,6 +546,13 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
             fundingImpact: 'Low',
           };
           setOnboarding(prev => ({ ...prev, openedTrade: true }));
+          
+          // Dispatch planDrafted event
+          window.dispatchEvent(
+            new CustomEvent('planDrafted', {
+              detail: { type: 'event', id: newStrategy.id },
+            })
+          );
         } else if (parsed.intent === 'modify_perp_strategy' && parsed.modifyPerpStrategy) {
           // Handle perp strategy modification
           const mod = parsed.modifyPerpStrategy;
@@ -863,6 +882,13 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
           strategyId = newStrategy.id;
           strategy = hedgeStrategy;
           setOnboarding(prev => ({ ...prev, openedTrade: true }));
+          
+          // Dispatch planDrafted event
+          window.dispatchEvent(
+            new CustomEvent('planDrafted', {
+              detail: { type: 'perp', id: newStrategy.id },
+            })
+          );
         } else if (parsed.intent === 'trade' && parsed.strategy) {
           // Create perp strategy (existing behavior)
           const newStrategy = addDraftStrategy({
@@ -878,6 +904,13 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
           strategyId = newStrategy.id;
           strategy = parsed.strategy;
           setOnboarding(prev => ({ ...prev, openedTrade: true }));
+          
+          // Dispatch planDrafted event
+          window.dispatchEvent(
+            new CustomEvent('planDrafted', {
+              detail: { type: 'perp', id: newStrategy.id },
+            })
+          );
         }
 
         // Pass account value to response generator for capping messages
@@ -999,29 +1032,37 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
             </div>
           ) : (
             <>
-              {messages.map(msg => (
-                <MessageBubble
-                  key={msg.id}
-                  text={msg.text}
-                  isUser={msg.isUser}
-                  timestamp={msg.timestamp}
-                  strategy={msg.strategy}
-                  strategyId={msg.strategyId}
-                  selectedStrategyId={selectedStrategyId}
-                  defiProposalId={msg.defiProposalId}
-                  onInsertPrompt={(text) => {
-                    setInputValue(text);
-                    textareaRef.current?.focus();
-                  }}
-                  onRegisterStrategyRef={(id, element) => {
-                    if (element) {
-                      strategyRefsMap.current.set(id, element);
-                    } else {
-                      strategyRefsMap.current.delete(id);
-                    }
-                  }}
-                />
-              ))}
+              {messages.map((msg) => {
+                // Execution details now live inside chat plan card (MessageBubble)
+                // No separate ExecutionPlanCard needed
+                
+                return (
+                  <div key={msg.id}>
+                    <MessageBubble
+                      text={msg.text}
+                      isUser={msg.isUser}
+                      timestamp={msg.timestamp}
+                      strategy={msg.strategy}
+                      strategyId={msg.strategyId}
+                      selectedStrategyId={selectedStrategyId}
+                      defiProposalId={msg.defiProposalId}
+                      executionMode={executionMode}
+                      onInsertPrompt={(text) => {
+                        setInputValue(text);
+                        textareaRef.current?.focus();
+                      }}
+                      onRegisterStrategyRef={(id, element) => {
+                        if (element) {
+                          strategyRefsMap.current.set(id, element);
+                        } else {
+                          strategyRefsMap.current.delete(id);
+                        }
+                      }}
+                    />
+                    {/* Execution Plan Card removed - execution details now live inside chat plan card */}
+                  </div>
+                );
+              })}
               {isTyping && <TypingIndicator />}
             </>
           )}
@@ -1030,6 +1071,8 @@ export default function Chat({ selectedStrategyId, onRegisterInsertPrompt }: Cha
       </div>
       <div className="flex-shrink-0 border-t border-slate-100 bg-white/90 backdrop-blur-sm shadow-[0_-4px_20px_rgba(15,23,42,0.08)]">
         <div className="max-w-3xl mx-auto">
+          {/* Latest Execution Plan Fallback - pinned above input */}
+          {/* Latest Execution Plan Fallback removed - execution details now live inside chat plan card */}
           {/* Toggle strip above QuickStart */}
           <div className="px-4 pt-1 pb-1 flex items-center justify-between">
             <button

@@ -1,37 +1,180 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { Star, X } from 'lucide-react';
 import { QUICK_START_CATEGORIES, QuickStartCategoryId } from '../config/quickStartConfig';
+import { useBlossomContext, Venue } from '../context/BlossomContext';
+import { getSavedPrompts, savePrompt, deletePrompt, isPromptSaved, SavedPrompt } from '../lib/savedPrompts';
 
 interface QuickStartPanelProps {
   onSelectPrompt: (prompt: string) => void;
 }
 
-export default function QuickStartPanel({ onSelectPrompt }: QuickStartPanelProps) {
-  const [selectedCategoryId, setSelectedCategoryId] = useState<QuickStartCategoryId | null>(null);
+// Helper to get venue-specific quick actions
+function getQuickActionsForVenue(venue: Venue): Array<{ title: string; description: string; prompt: string }> {
+  if (venue === 'event_demo') {
+    return [
+      {
+        title: 'Bet on macro events',
+        description: 'Take a YES/NO view on a key macro outcome.',
+        prompt: 'Take YES on Fed cuts in March with 2% risk',
+      },
+      {
+        title: 'Scan my event exposure',
+        description: 'See how much of my account is tied to event markets.',
+        prompt: 'Show me my event market exposure and the riskiest positions',
+      },
+      {
+        title: 'Risk-adjusted event sizing',
+        description: 'Use a conservative stake based on my risk rules.',
+        prompt: 'Risk 2% on the highest volume event market',
+      },
+    ];
+  }
 
-  // Root view: show category grid
+  // Default: on-chain / hyperliquid
+  return [
+    {
+      title: 'Start with ETH',
+      description: 'Open a small trend-following long on ETH.',
+      prompt: 'Long ETH perps with 2% of my account and a 3x leverage',
+    },
+    {
+      title: 'Check my exposure',
+      description: 'See where my risk is concentrated right now.',
+      prompt: 'Show me my current perp exposure and largest risk buckets',
+    },
+    {
+      title: 'Add a BTC hedge',
+      description: 'Set up a hedge against my existing BTC/ETH exposure.',
+      prompt: 'Hedge my BTC and ETH exposure with a short BTC perp position',
+    },
+  ];
+}
+
+export default function QuickStartPanel({ onSelectPrompt }: QuickStartPanelProps) {
+  const { venue } = useBlossomContext();
+  const [selectedCategoryId, setSelectedCategoryId] = useState<QuickStartCategoryId | null>(null);
+  const [savedPrompts, setSavedPrompts] = useState<SavedPrompt[]>([]);
+  const [showSaved, setShowSaved] = useState(false);
+
+  // Load saved prompts
+  useEffect(() => {
+    setSavedPrompts(getSavedPrompts());
+  }, []);
+
+  const handleSavePrompt = (prompt: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    try {
+      if (isPromptSaved(prompt)) {
+        // Find and delete
+        const existing = savedPrompts.find(p => p.text.toLowerCase().trim() === prompt.toLowerCase().trim());
+        if (existing) {
+          deletePrompt(existing.id);
+          setSavedPrompts(getSavedPrompts());
+        }
+      } else {
+        savePrompt(prompt);
+        setSavedPrompts(getSavedPrompts());
+      }
+    } catch (error) {
+      console.error('Error saving prompt:', error);
+      // Don't let errors break the UI
+    }
+  };
+
+  const handleDeleteSaved = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    deletePrompt(id);
+    setSavedPrompts(getSavedPrompts());
+  };
+
+  // Root view: show venue-specific quick actions + saved prompts
   if (selectedCategoryId === null) {
+    const quickActions = getQuickActionsForVenue(venue);
+    
     return (
-      <div className="mt-3 px-4 pb-4">
-        <div className="rounded-2xl border border-slate-100 bg-white/90 shadow-sm px-3 py-2.5 max-h-40 overflow-y-auto">
+      <div className="mt-3 px-4 pb-4 space-y-3">
+        {/* Saved Prompts Section */}
+        {savedPrompts.length > 0 && (
+          <div className="rounded-2xl border border-slate-100 bg-white/90 shadow-sm px-3 py-2.5">
+            <div className="mb-1.5 flex items-center justify-between">
+              <h3 className="text-[10px] font-semibold tracking-[0.18em] text-slate-500 uppercase">SAVED</h3>
+              <button
+                onClick={() => setShowSaved(!showSaved)}
+                className="text-[10px] text-slate-500 hover:text-slate-700"
+              >
+                {showSaved ? 'Hide' : 'Show'}
+              </button>
+            </div>
+            {showSaved && (
+              <div className="space-y-1.5 mt-2">
+                {savedPrompts.map((prompt) => (
+                  <div
+                    key={prompt.id}
+                    className="group relative rounded-lg border border-slate-100 bg-white px-2.5 py-2 hover:bg-pink-50/60 hover:border-pink-200 transition-all"
+                  >
+                    <button
+                      onClick={() => onSelectPrompt(prompt.text)}
+                      className="w-full text-left"
+                    >
+                      <div className="text-[11px] font-medium text-slate-900 pr-6">
+                        {prompt.text}
+                      </div>
+                    </button>
+                    <button
+                      onClick={(e) => handleDeleteSaved(prompt.id, e)}
+                      className="absolute right-2 top-2 p-0.5 opacity-0 group-hover:opacity-100 hover:bg-rose-100 rounded transition-opacity"
+                    >
+                      <X className="w-3 h-3 text-rose-600" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Suggested Actions - Compact Grid */}
+        <div className="rounded-2xl border border-slate-100 bg-white/90 shadow-sm px-3 py-2.5">
           <div className="mb-1.5">
-            <h3 className="text-[10px] font-semibold tracking-[0.18em] text-slate-500 uppercase">QUICK START</h3>
+            <h3 className="text-[10px] font-semibold tracking-[0.18em] text-slate-500 uppercase mb-1">SUGGESTED FIRST ACTIONS</h3>
             <div className="h-px bg-slate-100 mt-1"></div>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-            {QUICK_START_CATEGORIES.map((category) => (
-              <button
-                key={category.id}
-                onClick={() => setSelectedCategoryId(category.id)}
-                className="rounded-xl border border-slate-100 bg-white px-2.5 py-2 hover:bg-pink-50/60 hover:border-pink-200 transition-all cursor-pointer text-left"
-              >
-                <div className="text-[11px] font-medium text-slate-900">
-                  {category.label}
+          <div className="grid grid-cols-2 gap-1.5">
+            {quickActions.map((action, idx) => {
+              const isSaved = isPromptSaved(action.prompt);
+              return (
+                <div
+                  key={idx}
+                  className="group relative rounded-lg border border-slate-100 bg-white px-2 py-1.5 hover:bg-pink-50/60 hover:border-pink-200 transition-all"
+                >
+                  <button
+                    onClick={() => onSelectPrompt(action.prompt)}
+                    className="w-full text-left pr-5"
+                  >
+                    <div className="text-[10px] font-medium text-slate-900 line-clamp-1">
+                      {action.title}
+                    </div>
+                    <div className="mt-0.5 text-[9px] text-slate-500 line-clamp-1">
+                      {action.description}
+                    </div>
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleSavePrompt(action.prompt, e);
+                    }}
+                    className={`absolute right-1 top-1 p-0.5 rounded transition-colors ${
+                      isSaved
+                        ? 'text-yellow-500 bg-yellow-50'
+                        : 'opacity-0 group-hover:opacity-100 text-slate-400 hover:text-yellow-500 hover:bg-yellow-50'
+                    }`}
+                  >
+                    <Star className={`w-3 h-3 ${isSaved ? 'fill-current' : ''}`} />
+                  </button>
                 </div>
-                <div className="mt-0.5 text-[10px] text-slate-500">
-                  {category.description}
-                </div>
-              </button>
-            ))}
+              );
+            })}
           </div>
         </div>
       </div>
