@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { MoreHorizontal } from 'lucide-react';
 import { useBlossomContext } from '../context/BlossomContext';
+import { useToast } from './toast/useToast';
 
 // Helper to generate relative timestamp
 function getRelativeTimestamp(timestamp: number): string {
@@ -20,6 +21,7 @@ function getRelativeTimestamp(timestamp: number): string {
 
 export default function LeftSidebar() {
   const { resetSim, chatSessions, activeChatId, createNewChatSession, setActiveChat, deleteChatSession } = useBlossomContext();
+  const { showToast } = useToast();
   const [isResetting, setIsResetting] = useState(false);
   const [menuOpenForId, setMenuOpenForId] = useState<string | null>(null);
 
@@ -33,6 +35,11 @@ export default function LeftSidebar() {
       setIsResetting(true);
       try {
         await resetSim();
+        showToast({
+          title: 'Simulation reset',
+          description: 'Account, positions, and chats have been cleared.',
+          variant: 'success',
+        });
       } catch (error: any) {
         alert(`Failed to reset: ${error.message}`);
       } finally {
@@ -85,8 +92,14 @@ export default function LeftSidebar() {
           </div>
           <div className="flex-1 min-h-0 overflow-y-auto space-y-1">
             {chatSessions.length === 0 ? (
-              <div className="text-center py-8 text-xs text-slate-400">
-                No chats yet
+              <div className="text-center py-6 px-3">
+                <div className="text-xs font-medium text-slate-700 mb-1">No chats yet</div>
+                <div className="text-[11px] text-slate-500 leading-relaxed">
+                  Start by telling Blossom what you want to trade. For example: "Long ETH with 3% risk".
+                </div>
+                <div className="text-[11px] text-slate-500 mt-1">
+                  Each chat keeps its own strategies and history, so you can experiment in separate threads.
+                </div>
               </div>
             ) : (
               chatSessions.map((chat) => (

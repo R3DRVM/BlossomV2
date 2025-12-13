@@ -375,3 +375,4 @@ const QUICK_PROMPTS_EVENTS = [
 - `DEPLOYMENT_CHECKLIST.md` - Environment variables and deployment
 - `src/components/Header.tsx` - Venue toggle UI
 
+
