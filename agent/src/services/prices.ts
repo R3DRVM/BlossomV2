@@ -3,7 +3,7 @@
  * Fetches real market prices with safe fallbacks
  */
 
-export type PriceSymbol = 'ETH' | 'BTC' | 'SOL' | 'USDC';
+export type PriceSymbol = 'ETH' | 'BTC' | 'SOL' | 'USDC' | 'AVAX' | 'LINK';
 
 export interface PriceSnapshot {
   symbol: PriceSymbol;
@@ -21,10 +21,12 @@ const STATIC_PRICES: Record<PriceSymbol, number> = {
   BTC: 60000,
   SOL: 150,
   USDC: 1,
+  AVAX: 35,
+  LINK: 14,
 };
 
-// Cache TTL: 30 seconds
-const CACHE_TTL_MS = 30 * 1000;
+// Cache TTL: 12 seconds
+const CACHE_TTL_MS = 12 * 1000;
 
 /**
  * Get price for a symbol, with caching and fallback
@@ -72,6 +74,8 @@ async function fetchFromCoinGecko(symbol: PriceSymbol): Promise<number> {
     BTC: 'bitcoin',
     SOL: 'solana',
     USDC: 'usd-coin',
+    AVAX: 'avalanche-2',
+    LINK: 'chainlink',
   };
 
   const coinId = coinGeckoIds[symbol];

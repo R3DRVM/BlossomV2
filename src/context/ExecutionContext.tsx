@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, ReactNode } from 'react';
+import { createContext, useContext, useState, useCallback, ReactNode } from 'react';
 
 interface PendingPlan {
   id: string;
@@ -21,21 +21,21 @@ export function ExecutionProvider({ children }: { children: ReactNode }) {
   const [pendingPlans, setPendingPlans] = useState<PendingPlan[]>([]);
   const [lastAction, setLastAction] = useState<string | null>(null);
 
-  const addPendingPlan = (id: string, type: 'perp' | 'event' | 'defi') => {
+  const addPendingPlan = useCallback((id: string, type: 'perp' | 'event' | 'defi') => {
     setPendingPlans(prev => {
       // Avoid duplicates
       if (prev.some(p => p.id === id)) return prev;
       return [...prev, { id, type, timestamp: Date.now() }];
     });
-  };
+  }, []);
 
-  const removePendingPlan = (id: string) => {
+  const removePendingPlan = useCallback((id: string) => {
     setPendingPlans(prev => prev.filter(p => p.id !== id));
-  };
+  }, []);
 
-  const clearPendingPlans = () => {
+  const clearPendingPlans = useCallback(() => {
     setPendingPlans([]);
-  };
+  }, []);
 
   return (
     <ExecutionContext.Provider

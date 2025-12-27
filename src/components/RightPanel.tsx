@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useBlossomContext, getOpenPositionsCount, isOpenPerp, isOpenEvent, isActiveDefi, Strategy, DefiPosition } from '../context/BlossomContext';
+import { useBlossomContext, getOpenPositionsCount, isOpenEvent, isActiveDefi, Strategy, DefiPosition } from '../context/BlossomContext';
 import { useActivityFeed } from '../context/ActivityFeedContext';
 import PerpPositionEditor from './positions/PerpPositionEditor';
 import EventPositionEditor from './positions/EventPositionEditor';
@@ -19,7 +19,10 @@ export default function RightPanel(_props: RightPanelProps) {
   const { 
     account, 
     strategies, 
-    defiPositions, 
+    defiPositions,
+    selectedStrategyId,
+    setSelectedStrategyId,
+    derivePerpPositionsFromStrategies,
     closeStrategy,
     closeEventStrategy,
     updateEventStakeById,
@@ -131,8 +134,34 @@ export default function RightPanel(_props: RightPanelProps) {
     return () => window.removeEventListener('focusRightPanelPosition', handleFocusPosition);
   }, []);
 
-  // Get active positions
-  const activePerps = strategies.filter(isOpenPerp);
+  // Part 3: Use derived positions as single source of truth for perps
+  // Defensive guard: ensure function exists before calling
+  let derivedPerpPositions: Array<{ strategyId: string; market: string; side: 'Long' | 'Short'; notionalUsd: number; marginUsd?: number; leverage?: number }> = [];
+  if (typeof derivePerpPositionsFromStrategies === 'function') {
+    derivedPerpPositions = derivePerpPositionsFromStrategies(strategies);
+  } else {
+    if (import.meta.env.DEV) {
+      console.error('[RightPanel] derivePerpPositionsFromStrategies is not a function', { 
+        type: typeof derivePerpPositionsFromStrategies,
+        value: derivePerpPositionsFromStrategies 
+      });
+    }
+    // Fallback to empty array - panel will show "No open positions"
+  }
+  
+  // Map derived positions back to strategies for editor (carry strategyId)
+  // Part B1: RightPanel renders from derived positions, not raw strategies
+  const activePerps = derivedPerpPositions.map(pos => {
+    const strategy = strategies.find(s => s.id === pos.strategyId);
+    if (!strategy) {
+      if (import.meta.env.DEV) {
+        console.warn('[RightPanel] Derived position has no matching strategy:', pos);
+      }
+      return null;
+    }
+    return strategy;
+  }).filter((s): s is Strategy => s !== null);
+  
   const activeEvents = strategies.filter(isOpenEvent);
   const activeDefi = defiPositions.filter(isActiveDefi);
   
@@ -199,7 +228,14 @@ export default function RightPanel(_props: RightPanelProps) {
             <div className="text-xl font-semibold text-slate-900">
               ${account.accountValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </div>
-            <div className="text-[11px] text-slate-500 mt-0.5">Simulation • On-chain</div>
+            <div 
+              className="mt-1.5 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-slate-50 border border-slate-100"
+              title="Prices are live. Order execution and venue/chain routing are simulated in this demo."
+            >
+              <span className="text-[10px] font-medium text-slate-600">Demo: execution simulated</span>
+              <span className="text-[9px] text-slate-400">•</span>
+              <span className="text-[9px] text-slate-400">Prices live • Routing simulated</span>
+            </div>
           </div>
 
           {/* Summary Row */}
@@ -395,7 +431,9 @@ export default function RightPanel(_props: RightPanelProps) {
                       const formatPositionDetails = (): string => {
                         if (isPerp) {
                           const strategy = position as Strategy;
-                          return `$${(strategy.notionalUsd || 0).toLocaleString()}`;
+                          // Task 3: Show Notional (Exposure) in summary
+                          const notionalValue = strategy.notionalUsd || 0;
+                          return `Notional: $${notionalValue.toLocaleString()}`;
                         } else if (isEvent) {
                           const strategy = position as Strategy;
                           return `$${(strategy.stakeUsd || 0).toLocaleString()}`;
@@ -413,7 +451,13 @@ export default function RightPanel(_props: RightPanelProps) {
                         >
                           {/* Summary Row - Clickable */}
                           <button
-                            onClick={() => setExpandedPositionId(isExpanded ? null : position.id)}
+                            onClick={() => {
+                              // Part 2a: Set selected strategy when user clicks position
+                              if (!isExpanded) {
+                                setSelectedStrategyId(position.id);
+                              }
+                              setExpandedPositionId(isExpanded ? null : position.id);
+                            }}
                             className="w-full px-2 py-2 text-left hover:bg-slate-50 transition-colors flex items-center justify-between"
                           >
                             <div className="flex-1 min-w-0">
@@ -436,9 +480,28 @@ export default function RightPanel(_props: RightPanelProps) {
                                 <PerpPositionEditor
                                   strategy={position as Strategy}
                                   compact={true}
-                                  onUpdateSize={(newSize) => updatePerpSizeById(position.id, newSize)}
-                                  onUpdateTpSl={(newTp, newSl) => updatePerpTpSlById(position.id, newTp, newSl)}
-                                  onUpdateLeverage={(newLeverage) => updatePerpLeverageById(position.id, newLeverage)}
+                                  onUpdateSize={(newSize) => {
+                                    // Part C: Only update if this is the selected strategy
+                                    if (selectedStrategyId === position.id) {
+                                      updatePerpSizeById(position.id, newSize);
+                                    } else if (import.meta.env.DEV) {
+                                      console.warn('[RightPanel] Update blocked: position not selected', { positionId: position.id, selectedStrategyId });
+                                    }
+                                  }}
+                                  onUpdateTpSl={(newTp, newSl) => {
+                                    if (selectedStrategyId === position.id) {
+                                      updatePerpTpSlById(position.id, newTp, newSl);
+                                    } else if (import.meta.env.DEV) {
+                                      console.warn('[RightPanel] Update blocked: position not selected', { positionId: position.id, selectedStrategyId });
+                                    }
+                                  }}
+                                  onUpdateLeverage={(newLeverage) => {
+                                    if (selectedStrategyId === position.id) {
+                                      updatePerpLeverageById(position.id, newLeverage);
+                                    } else if (import.meta.env.DEV) {
+                                      console.warn('[RightPanel] Update blocked: position not selected', { positionId: position.id, selectedStrategyId });
+                                    }
+                                  }}
                                   onClose={() => {
                                     handleClosePosition(position);
                                     setExpandedPositionId(null);

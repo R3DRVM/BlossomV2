@@ -28,17 +28,17 @@ export const QUICK_START_CATEGORIES: QuickStartCategory[] = [
       {
         id: 'long-eth-3pct',
         label: 'Long ETH with 3% risk',
-        prompt: 'Long ETH with 3% risk and manage liquidation for me.'
+        prompt: 'Long ETH with 3% risk. Show me the execution plan and route across venues.'
       },
       {
         id: 'hedge-sol-spot',
         label: 'Hedge my SOL spot',
-        prompt: 'Hedge my SOL spot with perps at 2% risk.'
+        prompt: 'Hedge my SOL spot with perps at 2% risk. Route across optimal venues and chains.'
       },
       {
         id: 'market-neutral-btc',
         label: 'Market-neutral BTC funding',
-        prompt: 'Build a market-neutral funding strategy on BTC.'
+        prompt: 'Build a market-neutral funding strategy on BTC with multi-venue routing.'
       },
       {
         id: 'optimize-existing-perps',

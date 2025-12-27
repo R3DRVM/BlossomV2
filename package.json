@@ -12,6 +12,7 @@
     "install:all": "npm install && cd agent && npm install"
   },
   "dependencies": {
+    "@jridgewell/gen-mapping": "^0.3.13",
     "lucide-react": "^0.556.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",

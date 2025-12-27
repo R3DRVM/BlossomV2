@@ -384,12 +384,18 @@ app.get('/api/ticker', async (req, res) => {
       res.json({
         venue: payload.venue,
         sections: payload.sections,
+        lastUpdatedMs: payload.lastUpdatedMs ?? Date.now(),
+        isLive: payload.isLive ?? false,
+        source: payload.source ?? 'static',
       });
     } else {
       const payload = await getOnchainTicker();
       res.json({
         venue: payload.venue,
         sections: payload.sections,
+        lastUpdatedMs: payload.lastUpdatedMs ?? Date.now(),
+        isLive: payload.isLive ?? false,
+        source: payload.source ?? 'static',
       });
     }
   } catch (error: any) {
@@ -408,6 +414,9 @@ app.get('/api/ticker', async (req, res) => {
             ],
           },
         ],
+        lastUpdatedMs: Date.now(),
+        isLive: false,
+        source: 'static',
       });
     } else {
       res.json({
@@ -422,6 +431,9 @@ app.get('/api/ticker', async (req, res) => {
             ],
           },
         ],
+        lastUpdatedMs: Date.now(),
+        isLive: false,
+        source: 'static',
       });
     }
   }
