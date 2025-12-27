@@ -8,6 +8,8 @@ import RiskBadge from './RiskBadge';
 import ExecutionDetailsDisclosure from './ExecutionDetailsDisclosure';
 import { useExecution } from '../context/ExecutionContext';
 import { useActivityFeed } from '../context/ActivityFeedContext';
+import { formatLeverage, formatMarginNotional, formatVenueDisplay, getSimulatedRouteDisplay, formatUsdOrDash, formatEventVenueDisplay } from '../lib/formatPlanCard';
+import { getCachedLiveTicker, marketToSpotSymbol, computeIndicativeTpSl, getLiveSpotForMarket } from '../lib/liveSpot';
 
 interface MessageBubbleProps {
   text: string;
@@ -20,6 +22,20 @@ interface MessageBubbleProps {
   executionMode?: 'auto' | 'confirm' | 'manual';
   onInsertPrompt?: (text: string) => void;
   onRegisterStrategyRef?: (id: string, element: HTMLDivElement | null) => void;
+  // Part 1: Support for draft actions and high-risk warning
+  onConfirmDraft?: (draftId: string) => void;
+  showRiskWarning?: boolean;
+  riskReasons?: string[];
+  marketsList?: Array<{
+    id: string;
+    title: string;
+    yesPrice: number;
+    noPrice: number;
+    volume24hUsd?: number;
+    source: 'polymarket' | 'kalshi' | 'static';
+    isLive: boolean;
+  }> | null;
+  onSendMessage?: (text: string) => void; // Auto-send handler for market list buttons
 }
 
 function getStrategyReasoning(strategy: ParsedStrategy, instrumentType?: 'perp' | 'event'): string[] {
@@ -68,12 +84,16 @@ function getPortfolioBiasWarning(strategies: any[], newStrategy: ParsedStrategy)
   return null;
 }
 
-export default function MessageBubble({ text, isUser, timestamp, strategy, strategyId, selectedStrategyId, defiProposalId, executionMode, onInsertPrompt, onRegisterStrategyRef }: MessageBubbleProps) {
+export default function MessageBubble({ text, isUser, timestamp, strategy, strategyId, selectedStrategyId, defiProposalId, executionMode, onInsertPrompt, onRegisterStrategyRef, onConfirmDraft, showRiskWarning, riskReasons, marketsList, onSendMessage }: MessageBubbleProps) {
   const { updateStrategyStatus, recomputeAccountFromStrategies, strategies, setActiveTab, setSelectedStrategyId, setOnboarding, closeStrategy, closeEventStrategy, defiPositions, latestDefiProposal, confirmDefiPlan, updateFromBackendPortfolio, account, riskProfile, venue } = useBlossomContext();
   const { addPendingPlan, removePendingPlan, setLastAction } = useExecution();
   const { pushEvent } = useActivityFeed();
   const [isClosing, setIsClosing] = useState(false);
   const [showReasoning, setShowReasoning] = useState(false);
+  const [isCardExpanded, setIsCardExpanded] = useState(false);
+  const [livePrices, setLivePrices] = useState<{ BTC?: number; ETH?: number; SOL?: number; AVAX?: number; LINK?: number }>({});
+  const [liveEntrySnapshot, setLiveEntrySnapshot] = useState<{ entryUsd: number; source: 'coingecko' | 'agent' } | null>(null);
+  const isMountedRef = useRef(true);
   
   // Find the DeFi proposal for this message
   const defiProposal = defiProposalId 
@@ -87,6 +107,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
   const currentStatus = currentStrategy?.status || 'draft';
   const isDraft = currentStatus === 'draft';
   const isExecuted = currentStatus === 'executed';
+  const isBlocked = (currentStatus as string) === 'blocked'; // Type assertion for pre-existing 'blocked' status
   const isClosed = currentStrategy?.isClosed || false;
   
   const maxPerTrade = riskProfile?.maxPerTradeRiskPct ?? 3;
@@ -94,6 +115,79 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
   const isVeryHighRisk = strategy ? strategy.riskPercent >= maxPerTrade * 1.5 : false;
   
   const biasWarning = strategy ? getPortfolioBiasWarning(strategies, strategy) : null;
+  
+  // Fetch live prices for perp instruments (display-only)
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (currentStrategy?.instrumentType === 'perp' && strategy?.market) {
+      // Try direct market lookup first (more accurate)
+      getLiveSpotForMarket(strategy.market).then(snapshot => {
+        if (isMountedRef.current && snapshot) {
+          setLiveEntrySnapshot(snapshot);
+          // Also update livePrices for backward compatibility
+          const symbol = marketToSpotSymbol(strategy.market);
+          if (symbol) {
+            setLivePrices(prev => ({ ...prev, [symbol]: snapshot.entryUsd }));
+          }
+        }
+      }).catch(() => {
+        // Fail silently
+      });
+
+      // Also fetch all prices for ticker compatibility
+      getCachedLiveTicker().then(prices => {
+        if (isMountedRef.current) {
+          setLivePrices(prices);
+        }
+      }).catch(() => {
+        // Fail silently, fall back to parser values
+      });
+    }
+  }, [currentStrategy?.instrumentType, strategy?.market]);
+  
+  // Compute live-anchored entry/TP/SL for perps (stable derived object, always defined)
+  const perpDisplay = (() => {
+    // Only compute for perp instruments
+    if (currentStrategy?.instrumentType !== 'perp' || !strategy) {
+      return {
+        entry: strategy?.entryPrice ?? null,
+        tp: strategy?.takeProfit ?? null,
+        sl: strategy?.stopLoss ?? null,
+        hasLive: false,
+      };
+    }
+    
+    // Prefer direct market lookup, then fall back to livePrices
+    const liveEntry = liveEntrySnapshot?.entryUsd ?? (() => {
+      const spotSymbol = strategy.market ? marketToSpotSymbol(strategy.market) : null;
+      return spotSymbol && livePrices[spotSymbol] ? livePrices[spotSymbol] : null;
+    })();
+    
+    if (liveEntry && liveEntry > 0 && strategy.side) {
+      // Use live entry and compute indicative TP/SL
+      const indicativeTpSl = computeIndicativeTpSl({ side: strategy.side, entry: liveEntry });
+      return {
+        entry: liveEntry,
+        tp: indicativeTpSl.tp,
+        sl: indicativeTpSl.sl,
+        hasLive: true,
+      };
+    }
+    
+    // Fall back to strategy values
+    return {
+      entry: strategy.entryPrice ?? null,
+      tp: strategy.takeProfit ?? null,
+      sl: strategy.stopLoss ?? null,
+      hasLive: false,
+    };
+  })();
   
   // Determine if button should be disabled (only for technical reasons, not risk)
   const disableReason = !strategyId || !isDraft 
@@ -195,6 +289,102 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
           >
             {text}
           </p>
+          {/* Markets List (for list_top_event_markets intent) */}
+          {!isUser && Array.isArray(marketsList) && marketsList.length > 0 && (() => {
+            try {
+              return (
+                <div className="mt-3 space-y-2">
+                  {marketsList.map((market) => {
+                    // Null-safe field extraction
+                    const marketId = market?.id || `market-${Math.random()}`;
+                    const marketTitle = market?.title || '—';
+                    const yesPrice = typeof market?.yesPrice === 'number' ? market.yesPrice : 0.5;
+                    const noPrice = typeof market?.noPrice === 'number' ? market.noPrice : 0.5;
+                    const volume24hUsd = typeof market?.volume24hUsd === 'number' ? market.volume24hUsd : undefined;
+                    const source = market?.source || 'static';
+                    const isLive = market?.isLive === true;
+                    
+                    // Only render if we have at least a title
+                    if (!marketTitle || marketTitle === '—') {
+                      if (import.meta.env.DEV) {
+                        console.warn('[MessageBubble] Skipping market with missing title', { market });
+                      }
+                      return null;
+                    }
+                    
+                    return (
+                      <div
+                        key={marketId}
+                        className="border border-slate-200 rounded-lg bg-white p-3 space-y-2"
+                      >
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1 min-w-0">
+                            <div className="text-xs font-medium text-slate-900 mb-1">
+                              {marketTitle}
+                            </div>
+                            <div className="flex items-center gap-3 text-[10px] text-slate-500">
+                              <span>YES: {Math.round(yesPrice * 100)}%</span>
+                              <span>NO: {Math.round(noPrice * 100)}%</span>
+                              {volume24hUsd !== undefined && volume24hUsd > 0 && (
+                                <span>Vol: ${(volume24hUsd / 1000).toFixed(0)}k</span>
+                              )}
+                              <span className="text-slate-400">
+                                {source === 'polymarket' ? 'Polymarket' : source === 'kalshi' ? 'Kalshi' : 'Demo'}
+                                {isLive && <span className="ml-1 text-[9px]">• Live</span>}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex gap-2 pt-1">
+                          <button
+                            onClick={() => {
+                              if (!marketTitle || marketTitle === '—') return;
+                              
+                              const messageText = `Bet YES on "${marketTitle}" with 2% risk`;
+                              
+                              // Prefer auto-send if available, otherwise fall back to insert prompt
+                              if (onSendMessage) {
+                                onSendMessage(messageText);
+                              } else if (onInsertPrompt) {
+                                onInsertPrompt(messageText);
+                              }
+                            }}
+                            disabled={!marketTitle || marketTitle === '—'}
+                            className="flex-1 px-2 py-1.5 text-[10px] font-medium rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-pink-50 hover:border-pink-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            Bet YES
+                          </button>
+                          <button
+                            onClick={() => {
+                              if (!marketTitle || marketTitle === '—') return;
+                              
+                              const messageText = `Bet NO on "${marketTitle}" with 2% risk`;
+                              
+                              // Prefer auto-send if available, otherwise fall back to insert prompt
+                              if (onSendMessage) {
+                                onSendMessage(messageText);
+                              } else if (onInsertPrompt) {
+                                onInsertPrompt(messageText);
+                              }
+                            }}
+                            disabled={!marketTitle || marketTitle === '—'}
+                            className="flex-1 px-2 py-1.5 text-[10px] font-medium rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-pink-50 hover:border-pink-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            Bet NO
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  }).filter(Boolean)}
+                </div>
+              );
+            } catch (error) {
+              if (import.meta.env.DEV) {
+                console.warn('[MessageBubble] Error rendering markets list', error);
+              }
+              return null;
+            }
+          })()}
         </div>
         {!isUser && strategy && (
           <div 
@@ -209,121 +399,325 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                 : ''
             }             ${isSelected ? 'ring-2 ring-blossom-pink/30' : ''}`}
           >
-            {/* Header - always visible */}
-            <div className="flex items-center justify-between p-3 pb-1.5 border-b border-blossom-outline/20">
+            {/* Header - clickable to expand/collapse */}
+            <button
+              onClick={() => setIsCardExpanded(!isCardExpanded)}
+              className="w-full flex items-center justify-between p-3 pb-1.5 border-b border-blossom-outline/20 hover:bg-slate-50/50 transition-colors"
+            >
               <h3 className="text-xs font-semibold text-blossom-ink">
                 {currentStrategy?.eventLabel || currentStrategy?.eventKey || strategy.market}
               </h3>
-              <span className={`px-2.5 py-1 text-xs font-medium rounded-full ${
-                currentStatus === 'draft'
-                  ? 'bg-gray-100 text-gray-600'
-                  : currentStatus === 'queued'
-                  ? 'bg-blossom-slate/10 text-blossom-slate'
-                  : currentStatus === 'executing'
-                  ? 'bg-blossom-pink/10 text-blossom-pink border border-blossom-pink/30'
-                  : currentStatus === 'executed' && !isClosed
-                  ? 'bg-blossom-pink text-white'
-                  : isClosed && currentStrategy?.realizedPnlUsd && currentStrategy.realizedPnlUsd > 0
-                  ? 'bg-blossom-success text-white'
-                  : isClosed && currentStrategy?.realizedPnlUsd && currentStrategy.realizedPnlUsd < 0
-                  ? 'bg-blossom-danger text-white'
-                  : 'bg-gray-100 text-gray-600 border border-blossom-outline'
-              }`}>
-                {currentStatus === 'draft' ? 'Draft' :
-                 currentStatus === 'queued' ? 'Queued' :
-                 currentStatus === 'executing' ? 'Executing' :
-                 currentStatus === 'executed' && !isClosed ? 'Executed' :
-                 isClosed && currentStrategy?.eventOutcome === 'won' ? 'Settled - Won' :
-                 isClosed && currentStrategy?.eventOutcome === 'lost' ? 'Settled - Lost' :
-                 isClosed ? 'Closed' : 'Active'}
-              </span>
-            </div>
-            {/* Scrollable content */}
-            <div className="max-h-[60vh] overflow-y-auto p-3 pt-1.5">
-              <div className="grid grid-cols-2 gap-1.5 text-xs mb-2">
-              {currentStrategy?.instrumentType === 'event' ? (
-                <>
-                  <div>
-                    <div className="text-xs text-blossom-slate mb-0.5">Type</div>
-                    <div className="font-medium text-blossom-ink">Event Contract</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-blossom-slate mb-0.5">Side</div>
-                    <div className={`font-medium ${
-                      currentStrategy.eventSide === 'YES' ? 'text-blossom-success' : 'text-blossom-danger'
-                    }`}>
-                      {currentStrategy.eventSide}
+              <div className="flex items-center gap-2">
+                <span className={`px-2.5 py-1 text-xs font-medium rounded-full ${
+                  currentStatus === 'draft'
+                    ? 'bg-gray-100 text-gray-600'
+                    : currentStatus === 'queued'
+                    ? 'bg-blossom-slate/10 text-blossom-slate'
+                    : currentStatus === 'executing'
+                    ? 'bg-blossom-pink/10 text-blossom-pink border border-blossom-pink/30'
+                    : (currentStatus as string) === 'blocked'
+                    ? 'bg-amber-100 text-amber-700 border border-amber-300'
+                    : currentStatus === 'executed' && !isClosed
+                    ? 'bg-blossom-pink text-white'
+                    : isClosed && currentStrategy?.realizedPnlUsd && currentStrategy.realizedPnlUsd > 0
+                    ? 'bg-blossom-success text-white'
+                    : isClosed && currentStrategy?.realizedPnlUsd && currentStrategy.realizedPnlUsd < 0
+                    ? 'bg-blossom-danger text-white'
+                    : 'bg-gray-100 text-gray-600 border border-blossom-outline'
+                }`}>
+                  {currentStatus === 'draft' ? 'Draft' :
+                   currentStatus === 'queued' ? 'Queued' :
+                   currentStatus === 'executing' ? 'Executing' :
+                   (currentStatus as string) === 'blocked' ? 'Needs funding' :
+                   currentStatus === 'executed' && !isClosed ? 'Executed' :
+                   isClosed && currentStrategy?.eventOutcome === 'won' ? 'Settled - Won' :
+                   isClosed && currentStrategy?.eventOutcome === 'lost' ? 'Settled - Lost' :
+                   isClosed ? 'Closed' : 'Active'}
+                </span>
+                <svg
+                  className={`w-3 h-3 text-slate-400 transition-transform ${isCardExpanded ? 'rotate-180' : ''}`}
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </div>
+            </button>
+            
+            {/* Collapsed: 2 compact rows (perp and event) */}
+            {!isCardExpanded && (currentStrategy?.instrumentType === 'perp' || currentStrategy?.instrumentType === 'event') && (
+              <div className="px-3 py-2 space-y-1.5 text-[11px]">
+                {currentStrategy?.instrumentType === 'perp' ? (
+                  <>
+                    {/* Row 1: Trade (Perp) */}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className={`font-medium ${strategy.side === 'Long' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                          {strategy.side}
+                        </span>
+                        <span className="text-slate-600">{strategy.market}</span>
+                        <span className="text-slate-400">•</span>
+                        <span className="text-slate-600 truncate">
+                          {formatMarginNotional(currentStrategy.notionalUsd || (currentStrategy.marginUsd || 0) * (currentStrategy.leverage || 1))}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 text-slate-600 flex-shrink-0">
+                        <span>{formatLeverage(currentStrategy.leverage)}</span>
+                        <span className="text-slate-400">•</span>
+                        <span>{strategy.riskPercent}%</span>
+                      </div>
                     </div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-blossom-slate mb-0.5">Stake</div>
-                    <div className="font-medium text-blossom-ink">${(currentStrategy.stakeUsd || strategy.entryPrice).toLocaleString()}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-blossom-slate mb-0.5">Max Payout</div>
-                    <div className="font-medium text-blossom-success">${(currentStrategy.maxPayoutUsd || strategy.takeProfit).toLocaleString()}</div>
-                  </div>
-                  <div className="col-span-2">
-                    <div className="text-xs text-blossom-slate mb-0.5">Max Loss</div>
-                    <div className="font-medium text-blossom-danger">${(currentStrategy.maxLossUsd || strategy.stopLoss).toLocaleString()}</div>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div>
-                    <div className="text-xs text-blossom-slate mb-0.5">Side</div>
-                    <div className={`font-medium ${
-                      strategy.side === 'Long' ? 'text-blossom-success' : 'text-blossom-danger'
-                    }`}>
-                      {strategy.side}
+                    
+                    {/* Row 2: Routing (Perp) */}
+                    {(() => {
+                      const route = getSimulatedRouteDisplay({
+                        strategyId,
+                        market: strategy.market,
+                        instrumentType: currentStrategy?.instrumentType,
+                        executionMode,
+                      });
+                      return (
+                        <div className="flex items-center justify-between text-slate-500">
+                          <span className="truncate">
+                            {executionMode === 'auto' || executionMode === undefined
+                              ? `${route.venueLabel} • ${route.chainLabel}`
+                              : formatVenueDisplay(venue, executionMode)}
+                          </span>
+                          <div className="flex items-center gap-2 flex-shrink-0">
+                            <span>{route.slippageLabel}</span>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </>
+                ) : currentStrategy?.instrumentType === 'event' ? (
+                  <>
+                    {/* Row 1: Event */}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className={`font-medium ${(currentStrategy.eventSide || strategy.side) === 'YES' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                          {currentStrategy.eventSide || strategy.side}
+                        </span>
+                        <span className="text-slate-600 truncate">
+                          {currentStrategy.eventLabel || currentStrategy.eventKey || strategy.market}
+                        </span>
+                        <span className="text-slate-400">•</span>
+                        <span className="text-slate-600 truncate">
+                          {formatUsdOrDash(currentStrategy.stakeUsd ?? strategy.entryPrice)}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 text-slate-600 flex-shrink-0">
+                        <span>{strategy.riskPercent}%</span>
+                      </div>
                     </div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-blossom-slate mb-0.5">Risk</div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium text-blossom-ink">
-                        {strategy.riskPercent}%
+                    
+                    {/* Row 2: Venue (Event) */}
+                    <div className="flex items-center justify-between text-slate-500">
+                      <span className="truncate">
                         {(() => {
-                          const riskUsd = (strategy.riskPercent / 100) * account.accountValue;
-                          return riskUsd > 0 ? (
-                            <span className="text-[11px] text-slate-500 ml-1">
-                              · ${riskUsd.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                            </span>
-                          ) : null;
+                          const venueDisplay = formatEventVenueDisplay(currentStrategy.eventMarketSource);
+                          const chainPart = venueDisplay.chain === '—' ? '' : ` • ${venueDisplay.chain}`;
+                          return (
+                            <>
+                              {venueDisplay.venue}{chainPart} <span className="text-slate-400 text-[9px]">(simulated)</span>
+                            </>
+                          );
                         })()}
                       </span>
-                      <RiskBadge riskPercent={strategy.riskPercent} />
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <span className="text-slate-400 text-[9px]">Max payout: {formatUsdOrDash(currentStrategy.maxPayoutUsd ?? strategy.takeProfit)}</span>
+                      </div>
                     </div>
+                  </>
+                ) : null}
+                
+                {/* Chips row (single-line, truncation-safe) */}
+                {(isExecuted || isDraft) && (
+                  <div className="flex items-center gap-1.5 flex-wrap overflow-hidden">
+                    {isExecuted && (
+                      <>
+                        <span className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-blue-50 text-blue-700 whitespace-nowrap">Monitoring</span>
+                        {currentStrategy?.instrumentType === 'perp' && currentStrategy.stopLoss && currentStrategy.stopLoss > 0 && (
+                          <span className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-rose-50 text-rose-700 whitespace-nowrap">SL armed</span>
+                        )}
+                        {currentStrategy?.instrumentType === 'perp' && currentStrategy.takeProfit && currentStrategy.takeProfit > 0 && (
+                          <span className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-emerald-50 text-emerald-700 whitespace-nowrap">TP armed</span>
+                        )}
+                        <RiskBadge riskPercent={strategy.riskPercent} />
+                      </>
+                    )}
+                    {isDraft && (
+                      <span className="text-slate-500 text-[10px] whitespace-nowrap">Draft ready to confirm</span>
+                    )}
                   </div>
-                  <div>
-                    <div className="text-xs text-blossom-slate mb-0.5">Entry</div>
-                    <div className="font-medium text-blossom-ink">${strategy.entryPrice.toLocaleString()}</div>
+                )}
+                
+                {/* CTA row (collapsed) - only for drafts */}
+                {isDraft && strategyId && (
+                  <div className="pt-1.5 border-t border-slate-100">
+                    <button
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        if (onConfirmDraft) {
+                          onConfirmDraft(strategyId);
+                        } else {
+                          handleConfirmAndQueue();
+                        }
+                      }}
+                      disabled={!!disableReason}
+                      className={`w-full px-3 py-2 text-xs font-medium rounded-lg transition-colors ${
+                        !disableReason
+                          ? 'bg-blossom-pink text-white hover:bg-blossom-pink/90 shadow-sm'
+                          : 'bg-blossom-outline/40 text-slate-400 cursor-not-allowed'
+                      }`}
+                      title={disableReason ?? (isVeryHighRisk ? 'Risk is elevated, proceed with caution' : undefined)}
+                    >
+                      Confirm & Execute
+                    </button>
                   </div>
-                  <div>
-                    <div className="text-xs text-blossom-slate mb-0.5">Take Profit</div>
-                    <div className="font-medium text-blossom-success">${strategy.takeProfit.toLocaleString()}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-blossom-slate mb-0.5">Stop Loss</div>
-                    <div className="font-medium text-blossom-danger">${strategy.stopLoss.toLocaleString()}</div>
-                  </div>
-                </>
-              )}
-            </div>
+                )}
+              </div>
+            )}
             
-            {/* Explanation microcopy */}
-            {currentStrategy?.instrumentType === 'perp' && (
+            {/* Expanded: Full details */}
+            {isCardExpanded && (
+              <div className="max-h-[60vh] overflow-y-auto p-3 pt-1.5">
+                <div className="grid grid-cols-2 gap-1.5 text-xs mb-2">
+                {currentStrategy?.instrumentType === 'event' ? (
+                  <>
+                    <div>
+                      <div className="text-xs text-blossom-slate mb-0.5">Type</div>
+                      <div className="font-medium text-blossom-ink">Event Contract</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-blossom-slate mb-0.5">Side</div>
+                      <div className={`font-medium ${
+                        currentStrategy.eventSide === 'YES' ? 'text-blossom-success' : 'text-blossom-danger'
+                      }`}>
+                        {currentStrategy.eventSide}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-blossom-slate mb-0.5">Stake</div>
+                      <div className="font-medium text-blossom-ink">{formatUsdOrDash(currentStrategy.stakeUsd ?? strategy.entryPrice)}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-blossom-slate mb-0.5">Max Payout</div>
+                      <div className="font-medium text-blossom-success">{formatUsdOrDash(currentStrategy.maxPayoutUsd ?? strategy.takeProfit)}</div>
+                    </div>
+                    <div className="col-span-2">
+                      <div className="text-xs text-blossom-slate mb-0.5">Max Loss</div>
+                      <div className="font-medium text-blossom-danger">{formatUsdOrDash(currentStrategy.maxLossUsd ?? strategy.stopLoss)}</div>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div>
+                      <div className="text-xs text-blossom-slate mb-0.5">Side</div>
+                      <div className={`font-medium ${
+                        strategy.side === 'Long' ? 'text-blossom-success' : 'text-blossom-danger'
+                      }`}>
+                        {strategy.side}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-blossom-slate mb-0.5">Risk</div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-blossom-ink">
+                          {strategy.riskPercent}%
+                          {(() => {
+                            const riskUsd = (strategy.riskPercent / 100) * account.accountValue;
+                            return riskUsd > 0 ? (
+                              <span className="text-[11px] text-slate-500 ml-1">
+                                · ${riskUsd.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                              </span>
+                            ) : null;
+                          })()}
+                        </span>
+                        <RiskBadge riskPercent={strategy.riskPercent} />
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-blossom-slate mb-0.5">Entry</div>
+                      <div className="flex items-center gap-1">
+                        <span className="font-medium text-blossom-ink">{formatUsdOrDash(perpDisplay.entry)}</span>
+                        {perpDisplay.hasLive && (
+                          <span 
+                            className="text-slate-400 text-[9px]"
+                            title="Prices are live. Execution is simulated. TP/SL are indicative for demo."
+                          >
+                            Live
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-blossom-slate mb-0.5">Take Profit</div>
+                      <div className="flex items-center gap-1">
+                        <span className="font-medium text-blossom-success">{formatUsdOrDash(perpDisplay.tp)}</span>
+                        {perpDisplay.hasLive && (
+                          <span 
+                            className="text-slate-400 text-[9px]"
+                            title="Prices are live. Execution is simulated. TP/SL are indicative for demo."
+                          >
+                            Live
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-blossom-slate mb-0.5">Stop Loss</div>
+                      <div className="flex items-center gap-1">
+                        <span className="font-medium text-blossom-danger">{formatUsdOrDash(perpDisplay.sl)}</span>
+                        {perpDisplay.hasLive && (
+                          <span 
+                            className="text-slate-400 text-[9px]"
+                            title="Prices are live. Execution is simulated. TP/SL are indicative for demo."
+                          >
+                            Live
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
+                </div>
+                
+                {/* Explanation microcopy */}
+                {currentStrategy?.instrumentType === 'perp' && (
               <div className="mt-1.5 px-3 pb-1.5">
                 <p className="text-[11px] text-slate-500">
                   Blossom interpreted this as: <span className="font-medium text-slate-700">{strategy.side}</span>{' '}
                   {(() => {
-                    const sizeUsd = currentStrategy.notionalUsd || (strategy.riskPercent / 100) * account.accountValue;
-                    return `$${sizeUsd.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+                    // Use final notional if available (after execution), otherwise compute from parsed values
+                    const notionalUsd = currentStrategy.notionalUsd || (strategy.riskPercent / 100) * account.accountValue * (currentStrategy.leverage || 1);
+                    return `$${notionalUsd.toLocaleString(undefined, { maximumFractionDigits: 0 })} notional`;
                   })()} on <span className="font-medium text-slate-700">{strategy.market}</span>{' '}
                   {(() => {
-                    const leverage = currentStrategy ? Math.round((currentStrategy.takeProfit - currentStrategy.stopLoss) / currentStrategy.entry * 10) : 1;
-                    return `at ${leverage}x`;
-                  })()} using ~<span className="font-medium text-slate-700">{strategy.riskPercent}%</span> of your account.
+                    return `at ${formatLeverage(currentStrategy.leverage)}`;
+                  })()} using {(() => {
+                    // Use final margin if available, otherwise compute from riskPercent
+                    const marginUsd = currentStrategy.marginUsd || (strategy.riskPercent / 100) * account.accountValue;
+                    const marginPct = account.accountValue > 0 ? (marginUsd / account.accountValue) * 100 : 0;
+                    return `$${marginUsd.toLocaleString(undefined, { maximumFractionDigits: 0 })} margin (~${marginPct.toFixed(1)}% of portfolio)`;
+                  })()}
+                  {perpDisplay.hasLive && (
+                    <span className="text-slate-400 text-[9px] ml-1" title="Prices are live. Execution is simulated. TP/SL are indicative for demo.">
+                      (Live prices)
+                    </span>
+                  )}.
+                  {/* Step 3: Show collateral note if margin is capped or blocked */}
+                  {((currentStrategy as any).executionNote || currentStrategy.marginUsd === 0 || 
+                    (currentStrategy.marginUsd && currentStrategy.marginUsd < (strategy.riskPercent / 100) * account.accountValue)) && (
+                    <span className="block mt-0.5 text-[10px] text-slate-400 italic">
+                      Perps are collateralized by USDC only in this demo.
+                    </span>
+                  )}
+                  {(currentStrategy as any).executionNote && (
+                    <span className="block mt-0.5 text-[10px] text-amber-600">Note: {(currentStrategy as any).executionNote}</span>
+                  )}
                 </p>
               </div>
             )}
@@ -331,13 +725,16 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
               <div className="mt-1.5 px-3 pb-1.5">
                 <p className="text-[11px] text-slate-500">
                   Blossom interpreted this as: <span className="font-medium text-slate-700">{currentStrategy.eventSide || strategy.side}</span>{' '}
-                  ${(currentStrategy.stakeUsd || strategy.entryPrice || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })} on{' '}
+                  {formatUsdOrDash(currentStrategy.stakeUsd ?? strategy.entryPrice)} on{' '}
                   <span className="font-medium text-slate-700">{currentStrategy.eventLabel || currentStrategy.eventKey || strategy.market}</span>{' '}
-                  with max payoff of ${(currentStrategy.maxPayoutUsd || strategy.takeProfit || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })} if your outcome wins.
+                  with max payoff of {formatUsdOrDash(currentStrategy.maxPayoutUsd ?? strategy.takeProfit)} if your outcome wins.
                 </p>
               </div>
             )}
             
+            {/* Risk Guardrails - only show when expanded */}
+            {isCardExpanded && (
+              <>
             {/* Risk Guardrails */}
             {!isHighRisk && (
               <div className="mt-1.5 text-[11px] text-gray-500">
@@ -351,44 +748,69 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
               </div>
             )}
             
-            {isDraft && (
+            {isBlocked && (
               <div className="pt-1.5 border-t border-blossom-outline/50 space-y-2">
+                <div className="text-[11px] text-amber-700 mb-2 px-1">
+                  {(currentStrategy as any)?.executionNote || 'Insufficient USDC collateral to open this position.'}
+                </div>
                 <button 
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    handleConfirmAndQueue();
+                    // Feature 8: Fund USDC button (disabled - fundUsdc not available)
+                    // if (fundUsdc) {
+                    //   fundUsdc(2000);
+                    if (import.meta.env.DEV) {
+                      console.warn('[MessageBubble] fundUsdc not available');
+                    }
+                    // }
                   }}
+                  className="w-full h-10 px-4 text-sm font-medium rounded-xl transition-all bg-amber-500 hover:bg-amber-600 text-white shadow-sm"
+                >
+                  Fund USDC
+                </button>
+              </div>
+            )}
+            {/* Part 1: Inline high-risk warning (compact, collapses after confirm) */}
+            {isDraft && showRiskWarning && riskReasons && riskReasons.length > 0 && (
+              <div className="mb-3 p-2.5 bg-amber-50 border border-amber-200 rounded-lg">
+                <div className="flex items-start gap-2">
+                  <div className="flex-1">
+                    <div className="text-xs font-medium text-amber-800 mb-1">High-risk trade</div>
+                    <ul className="text-xs text-amber-700 space-y-0.5 list-disc list-inside">
+                      {riskReasons.map((reason, idx) => (
+                        <li key={idx}>{reason}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            )}
+            {/* Part 1: Draft action button - only "Confirm & Execute" (no Edit/Cancel) */}
+            {isDraft && strategyId && (
+              <div className="pt-3 border-t border-slate-100">
+                <button
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (onConfirmDraft) {
+                      onConfirmDraft(strategyId);
+                    } else {
+                      // Fallback to existing handler
+                      handleConfirmAndQueue();
+                    }
+                  }}
+                  data-testid="confirm-trade"
                   disabled={!!disableReason}
-                className={`w-full h-10 px-4 text-sm font-medium rounded-xl transition-all ${
-                  !disableReason
-                    ? 'bg-blossom-pink hover:bg-[#FF5A96] shadow-[0_10px_25px_rgba(255,107,160,0.35)]'
-                    : 'bg-blossom-outline/40 cursor-not-allowed'
-                }`}
+                  className={`w-full px-3 py-2 text-xs font-medium rounded-lg transition-colors ${
+                    !disableReason
+                      ? 'bg-blossom-pink text-white hover:bg-blossom-pink/90 shadow-sm'
+                      : 'bg-blossom-outline/40 text-slate-400 cursor-not-allowed'
+                  }`}
                   title={disableReason ?? (isVeryHighRisk ? 'Risk is elevated, proceed with caution' : undefined)}
                 >
-                  <span 
-                    className={!disableReason ? 'chat-button-text-enabled' : 'chat-button-text-disabled'}
-                    style={{ display: 'inline-block', width: '100%' }}
-                  >
-                    Confirm & Queue
-                  </span>
+                  Confirm & Execute
                 </button>
-                {strategyId && (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      setSelectedStrategyId(strategyId);
-                      // Open drawer with highlighted strategy
-                      window.dispatchEvent(new CustomEvent('openStrategyDrawer', { detail: { strategyId } }));
-                    }}
-                    className="w-full text-xs font-medium text-blossom-pink hover:text-blossom-pink/80 hover:underline transition-colors"
-                  >
-                    View in Positions →
-                  </button>
-                )}
               </div>
             )}
             
@@ -399,6 +821,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                 defiPosition={defiProposalId ? (defiPositions.find(p => p.id === defiProposalId) || undefined) : undefined}
                 venue={venue}
                 isExecuted={isExecuted && !isClosed}
+                executionMode={executionMode}
               />
             )}
             {isExecuted && !isClosed && currentStrategy?.instrumentType === 'event' && (
@@ -431,7 +854,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                 disabled={isClosing}
                 className="w-full h-9 px-3 text-xs font-medium rounded-xl bg-blossom-success text-white hover:bg-blossom-success/90 hover:shadow-md transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
               >
-                {isClosing ? 'Closing...' : 'Close & settle this event (Sim)'}
+                {isClosing ? 'Closing...' : 'Close & Settle (Sim)'}
               </button>
             )}
             {isExecuted && !isClosed && currentStrategy?.instrumentType !== 'event' && (
@@ -490,40 +913,50 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                 {currentStatus === 'queued' ? 'Queued...' : 'Executing...'}
               </div>
             )}
-            </div>
+              </>
+            )}
+              </div>
+            )}
           </div>
         )}
         
-        {/* Reasoning Block - Collapsible */}
+        {/* Reasoning Block - 2 bullets max + "More rationale" disclosure */}
         {!isUser && strategy && (
           <div className="mt-1.5 rounded-lg border border-gray-100/80 bg-gray-50/60 px-2.5 py-1.5">
-            <button
-              onClick={() => setShowReasoning(!showReasoning)}
-              className="w-full flex items-center justify-between text-left"
-            >
-              <span className="text-[11px] font-medium text-gray-600">Why this setup?</span>
-              <svg
-                className={`w-3 h-3 text-gray-500 transition-transform ${showReasoning ? 'rotate-180' : ''}`}
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-              </svg>
-            </button>
-            {showReasoning && (
-              <div className="mt-1.5 pt-1.5 border-t border-gray-200/60">
-                <ul className="list-disc pl-4 space-y-0.5 text-[11px] text-gray-600">
-                  {getStrategyReasoning(strategy, currentStrategy?.instrumentType).map((line, idx) => (
-                    <li key={idx}>{line}</li>
-                  ))}
-                </ul>
-                
-                {biasWarning && (
-                  <div className="mt-1.5 rounded-md bg-blossom-pinkSoft/60 px-2 py-1 text-[10px] text-blossom-ink border border-blossom-pink/30">
-                    {biasWarning}
+            <div className="text-[11px] font-medium text-gray-600 mb-1">Why this setup?</div>
+            <ul className="list-disc pl-4 space-y-0.5 text-[11px] text-gray-600">
+              {getStrategyReasoning(strategy, currentStrategy?.instrumentType).slice(0, 2).map((line, idx) => (
+                <li key={idx}>{line}</li>
+              ))}
+            </ul>
+            {getStrategyReasoning(strategy, currentStrategy?.instrumentType).length > 2 && (
+              <>
+                <button
+                  onClick={() => setShowReasoning(!showReasoning)}
+                  className="text-left mt-1.5 pt-1.5 border-t border-gray-200/60 w-full"
+                >
+                  <span className="text-[10px] text-gray-500 hover:text-gray-700 underline">{showReasoning ? 'Less' : 'More rationale'}</span>
+                </button>
+                {showReasoning && (
+                  <div className="mt-1.5 pt-1.5 border-t border-gray-200/60">
+                    <ul className="list-disc pl-4 space-y-0.5 text-[11px] text-gray-600">
+                      {getStrategyReasoning(strategy, currentStrategy?.instrumentType).slice(2).map((line, idx) => (
+                        <li key={idx + 2}>{line}</li>
+                      ))}
+                    </ul>
+                    
+                    {biasWarning && (
+                      <div className="mt-1.5 rounded-md bg-blossom-pinkSoft/60 px-2 py-1 text-[10px] text-blossom-ink border border-blossom-pink/30">
+                        {biasWarning}
+                      </div>
+                    )}
                   </div>
                 )}
+              </>
+            )}
+            {biasWarning && getStrategyReasoning(strategy, currentStrategy?.instrumentType).length <= 2 && (
+              <div className="mt-1.5 rounded-md bg-blossom-pinkSoft/60 px-2 py-1 text-[10px] text-blossom-ink border border-blossom-pink/30">
+                {biasWarning}
               </div>
             )}
           </div>

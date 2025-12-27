@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useCallback, ReactNode } from 'react';
 import { mapBackendPortfolioToFrontendState } from '../lib/portfolioMapping';
 import { USE_AGENT_BACKEND } from '../lib/config';
+import { derivePerpPositionsFromStrategies } from '../lib/derivePerpPositions';
 
 export type StrategyStatus = 'draft' | 'queued' | 'executing' | 'executed' | 'closed';
 
@@ -16,6 +17,7 @@ export interface Strategy {
   status: StrategyStatus;
   sourceText: string;
   notionalUsd?: number;
+  marginUsd?: number; // Explicit margin amount (for margin-anchored sizing)
   isClosed: boolean;
   closedAt?: string;
   realizedPnlUsd?: number;
@@ -32,6 +34,7 @@ export interface Strategy {
   liveMarkToMarketUsd?: number; // Optional: live mark-to-market value for event positions
   overrideRiskCap?: boolean; // default false - allows stake above 3% cap
   requestedStakeUsd?: number; // original user request before capping
+  eventMarketSource?: 'polymarket' | 'kalshi' | 'static'; // Source of event market data (for venue/chain display)
 }
 
 export interface AssetBalance {
@@ -102,6 +105,15 @@ export interface ChatMessage {
   strategy?: any | null; // ParsedStrategy from mockParser
   strategyId?: string | null;
   defiProposalId?: string | null;
+  marketsList?: Array<{
+    id: string;
+    title: string;
+    yesPrice: number;
+    noPrice: number;
+    volume24hUsd?: number;
+    source: 'polymarket' | 'kalshi' | 'static';
+    isLive: boolean;
+  }> | null;
 }
 
 // Chat session type
@@ -155,6 +167,7 @@ interface BlossomContextType {
   setActiveChat: (id: string) => void;
   appendMessageToActiveChat: (message: ChatMessage) => void;
   appendMessageToChat: (chatId: string, message: ChatMessage) => void;
+  updateMessageInChat: (chatId: string, messageId: string, updates: Partial<ChatMessage>) => void;
   updateChatSessionTitle: (id: string, title: string) => void;
   deleteChatSession: (id: string) => void;
   // Risk profile
@@ -166,6 +179,8 @@ interface BlossomContextType {
   addWatchAsset: (asset: Omit<ManualWatchAsset, 'id'>) => void;
   removeWatchAsset: (id: string) => void;
   updateWatchAsset: (id: string, patch: Partial<ManualWatchAsset>) => void;
+  // Perp position derivation
+  derivePerpPositionsFromStrategies: (strategies: Strategy[]) => ReturnType<typeof derivePerpPositionsFromStrategies>;
 }
 
 const BlossomContext = createContext<BlossomContextType | undefined>(undefined);
@@ -355,6 +370,21 @@ function saveManualWatchlistToStorage(watchlist: ManualWatchAsset[]) {
   } catch {
     // swallow
   }
+}
+
+// Compute margin from risk percent and leverage
+// Formula: marginUsd = (accountValue * riskPercent / 100) / leverage
+export function computePerpFromRisk(params: {
+  accountValue: number;
+  riskPercent: number;
+  leverage: number;
+}): { marginUsd: number; notionalUsd: number } {
+  const { accountValue, riskPercent, leverage } = params;
+  // Risk amount in USD = accountValue * riskPercent / 100
+  // With leverage, margin = risk amount / leverage
+  const marginUsd = (accountValue * riskPercent / 100) / leverage;
+  const notionalUsd = marginUsd * leverage;
+  return { marginUsd: Math.round(marginUsd), notionalUsd: Math.round(notionalUsd) };
 }
 
 // Helper to apply executed strategy to balances
@@ -681,24 +711,65 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
 
   const setActiveChat = useCallback((id: string) => {
     setActiveChatId(id);
-    saveChatSessionsToStorage(chatSessions, id);
-  }, [chatSessions]);
+    setChatSessions(prev => {
+      // Use functional update to get latest sessions
+      saveChatSessionsToStorage(prev, id);
+      return prev;
+    });
+  }, []);
 
   // Helper that appends to a specific chat by ID (doesn't depend on activeChatId for append logic)
   const appendMessageToChat = useCallback(
     (chatId: string, message: ChatMessage) => {
       setChatSessions(prev => {
-        const next = prev.map(session =>
-          session.id === chatId
-            ? { ...session, messages: [...session.messages, message] }
-            : session
-        );
-        // Persist updated sessions + current active id to localStorage
-        saveChatSessionsToStorage(next, activeChatId ?? chatId);
+        // Defensive: ensure session exists (handles race condition where session creation hasn't flushed)
+        const sessionExists = prev.some(s => s.id === chatId);
+        let next: ChatSession[];
+        if (!sessionExists) {
+          // Session doesn't exist yet - create it inline
+          const newSession: ChatSession = {
+            id: chatId,
+            title: 'New chat',
+            createdAt: Date.now(),
+            messages: [message],
+          };
+          next = [newSession, ...prev];
+        } else {
+          next = prev.map(session => {
+            if (session.id === chatId) {
+              const updatedSession = { ...session, messages: [...session.messages, message] };
+              // B4: Update title if this is the first user message (inside same state update to avoid stale reads)
+              if (message.isUser && session.title === 'New chat') {
+                const userMessages = updatedSession.messages.filter(m => m.isUser);
+                if (userMessages.length === 1) {
+                  // First user message - generate title from message text (first 8 words)
+                  const words = message.text.trim().split(/\s+/);
+                  const title = words.slice(0, 8).join(' ') + (words.length > 8 ? '…' : '');
+                  updatedSession.title = title;
+                }
+              }
+              return updatedSession;
+            }
+            return session;
+          });
+        }
+        // Use chatId directly (not activeChatId from closure)
+        saveChatSessionsToStorage(next, chatId);
+        
+        // DEV tripwire: assert session and message exist after mutation
+        if (import.meta.env.DEV) {
+          const targetSession = next.find(s => s.id === chatId);
+          if (!targetSession) {
+            console.error('[appendMessageToChat] Session missing after append', { chatId, sessionIds: next.map(s => s.id) });
+          } else if (!targetSession.messages.some(m => m.id === message.id)) {
+            console.error('[appendMessageToChat] Message missing after append', { chatId, messageId: message.id, messageCount: targetSession.messages.length });
+          }
+        }
+        
         return next;
       });
     },
-    [activeChatId]
+    [] // Remove activeChatId dependency
   );
 
   // Thin wrapper that uses activeChatId (for backward compatibility)
@@ -710,6 +781,45 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
     [activeChatId, appendMessageToChat]
   );
 
+  const updateMessageInChat = useCallback(
+    (chatId: string, messageId: string, updates: Partial<ChatMessage>) => {
+      setChatSessions(prev => {
+        const session = prev.find(s => s.id === chatId);
+        if (!session) {
+          if (import.meta.env.DEV) {
+            console.error('[updateMessageInChat] Session not found', { chatId, messageId });
+          }
+          return prev;
+        }
+        
+        const messageExists = session.messages.some(m => m.id === messageId);
+        if (!messageExists) {
+          if (import.meta.env.DEV) {
+            console.error('[updateMessageInChat] Message not found', { chatId, messageId });
+          }
+          return prev;
+        }
+        
+        const next = prev.map(s => {
+          if (s.id === chatId) {
+            return {
+              ...s,
+              messages: s.messages.map(msg =>
+                msg.id === messageId ? { ...msg, ...updates } : msg
+              ),
+            };
+          }
+          return s;
+        });
+        
+        // Use chatId parameter directly (not activeChatId from closure)
+        saveChatSessionsToStorage(next, chatId);
+        return next;
+      });
+    },
+    []
+  );
+
   const updateChatSessionTitle = useCallback((id: string, title: string) => {
     setChatSessions(prev => {
       const updated = prev.map(session => {
@@ -718,10 +828,11 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
         }
         return session;
       });
-      saveChatSessionsToStorage(updated, activeChatId);
+      // Use id parameter directly (not activeChatId from closure)
+      saveChatSessionsToStorage(updated, id);
       return updated;
     });
-  }, [activeChatId]);
+  }, []);
 
   const deleteChatSession = useCallback((id: string) => {
     setChatSessions(prev => {
@@ -1229,6 +1340,7 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
         setActiveChat,
         appendMessageToActiveChat,
         appendMessageToChat,
+        updateMessageInChat,
         updateChatSessionTitle,
         deleteChatSession,
         riskProfile,
@@ -1238,6 +1350,7 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
         addWatchAsset,
         removeWatchAsset,
         updateWatchAsset,
+        derivePerpPositionsFromStrategies,
       }}
     >
       {children}

@@ -27,25 +27,30 @@ function getQuickActionsForVenue(venue: Venue): Array<{ title: string; descripti
         description: 'Use a conservative stake based on my risk rules.',
         prompt: 'Risk 2% on the highest volume event market',
       },
+      {
+        title: 'Explore top markets',
+        description: 'View the highest-volume prediction markets right now.',
+        prompt: 'Show me the top 5 prediction markets by volume',
+      },
     ];
   }
 
   // Default: on-chain / hyperliquid
   return [
     {
-      title: 'Start with ETH',
-      description: 'Open a small trend-following long on ETH.',
-      prompt: 'Long ETH perps with 2% of my account and a 3x leverage',
+      title: 'Long BTC with live prices',
+      description: 'Route across venues for optimal execution.',
+      prompt: 'Long BTC with 20x leverage using 2% risk. Show me the execution plan across venues.',
     },
     {
-      title: 'Check my exposure',
+      title: 'Check exposure & risk',
       description: 'See where my risk is concentrated right now.',
       prompt: 'Show me my current perp exposure and largest risk buckets',
     },
     {
-      title: 'Add a BTC hedge',
-      description: 'Set up a hedge against my existing BTC/ETH exposure.',
-      prompt: 'Hedge my BTC and ETH exposure with a short BTC perp position',
+      title: 'Multi-venue execution',
+      description: 'Route a hedge across optimal venues and chains.',
+      prompt: 'Hedge my BTC and ETH exposure with a short BTC perp position. Route across the best venues.',
     },
   ];
 }
