@@ -35,6 +35,7 @@ export interface Strategy {
   overrideRiskCap?: boolean; // default false - allows stake above 3% cap
   requestedStakeUsd?: number; // original user request before capping
   eventMarketSource?: 'polymarket' | 'kalshi' | 'static'; // Source of event market data (for venue/chain display)
+  originMessageKey?: string; // Message key that originated this strategy (for idempotency/debugging)
 }
 
 export interface AssetBalance {

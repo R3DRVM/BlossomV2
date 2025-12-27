@@ -1,9 +1,7 @@
-import { BlossomProvider } from '../context/BlossomContext';
-import { ActivityFeedProvider } from '../context/ActivityFeedContext';
 import { ToastProvider } from '../components/toast/ToastProvider';
 import CopilotLayout from '../components/CopilotLayout';
 
-function AppContent() {
+export default function BlossomAppShell() {
   return (
     <div className="h-screen w-screen overflow-hidden bg-slate-50">
       {/* Stable subtle blossom bloom gradient - does not change on tab switch */}
@@ -11,21 +9,11 @@ function AppContent() {
         <div className="absolute -top-40 left-[-10%] h-96 w-96 rounded-full bg-[radial-gradient(circle_at_center,#FFC0E4,transparent)]" />
       </div>
       <div className="relative z-10 h-full w-full">
-        <CopilotLayout />
+        <ToastProvider>
+          <CopilotLayout />
+        </ToastProvider>
       </div>
     </div>
-  );
-}
-
-export default function BlossomAppShell() {
-  return (
-    <BlossomProvider>
-      <ActivityFeedProvider>
-        <ToastProvider>
-          <AppContent />
-        </ToastProvider>
-      </ActivityFeedProvider>
-    </BlossomProvider>
   );
 }
 

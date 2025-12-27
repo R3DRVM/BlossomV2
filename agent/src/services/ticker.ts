@@ -26,6 +26,9 @@ export interface TickerSection {
 export interface TickerPayload {
   venue: 'hyperliquid' | 'event_demo';
   sections: TickerSection[];
+  lastUpdatedMs?: number;
+  isLive?: boolean;
+  source?: 'coingecko' | 'static' | 'snapshot' | 'kalshi' | 'polymarket';
 }
 
 // Legacy interfaces for backward compatibility
@@ -64,8 +67,10 @@ const STATIC_EVENT_TICKER: EventTickerItem[] = [
  * Get on-chain ticker (crypto prices) - new unified format
  */
 export async function getOnchainTicker(): Promise<TickerPayload> {
-  const symbols: PriceSymbol[] = ['BTC', 'ETH', 'SOL'];
-  const priceData: Array<{ symbol: string; priceUsd: number; change24hPct: number }> = [];
+  const symbols: PriceSymbol[] = ['BTC', 'ETH', 'SOL', 'AVAX', 'LINK'];
+  const priceData: Array<{ symbol: string; priceUsd: number; change24hPct: number; source: 'coingecko' | 'static' }> = [];
+  let hasLiveData = false;
+  let hasStaticFallback = false;
 
   try {
     for (const symbol of symbols) {
@@ -77,21 +82,26 @@ export async function getOnchainTicker(): Promise<TickerPayload> {
           symbol,
           priceUsd: snapshot.priceUsd,
           change24hPct,
+          source: snapshot.source,
         });
+        
+        if (snapshot.source === 'coingecko') {
+          hasLiveData = true;
+        } else {
+          hasStaticFallback = true;
+        }
       } catch (error) {
         console.warn(`Failed to fetch ${symbol} price:`, error);
         const staticItem = STATIC_ONCHAIN_TICKER.find(item => item.symbol === symbol);
         if (staticItem) {
-          priceData.push(staticItem);
+          priceData.push({
+            ...staticItem,
+            source: 'static',
+          });
+          hasStaticFallback = true;
         }
       }
     }
-
-    // Add AVAX and LINK from static data
-    priceData.push(
-      STATIC_ONCHAIN_TICKER.find(item => item.symbol === 'AVAX')!,
-      STATIC_ONCHAIN_TICKER.find(item => item.symbol === 'LINK')!
-    );
 
     // If we have no data, use static fallback
     const allPrices = priceData.length > 0 ? priceData : STATIC_ONCHAIN_TICKER;
@@ -130,6 +140,10 @@ export async function getOnchainTicker(): Promise<TickerPayload> {
         { id: 'gainers', label: 'Top gainers (24h)', items: gainers },
         { id: 'defi', label: 'DeFi TVL', items: defiItems },
       ],
+      lastUpdatedMs: Date.now(),
+      // isLive is true only if we have at least one CoinGecko fetch (not cached static)
+      isLive: hasLiveData,
+      source: hasLiveData ? 'coingecko' : 'static',
     };
   } catch (error) {
     console.error('Failed to build on-chain ticker, using static fallback:', error);
@@ -148,6 +162,9 @@ export async function getOnchainTicker(): Promise<TickerPayload> {
           })),
         },
       ],
+      lastUpdatedMs: Date.now(),
+      isLive: false,
+      source: 'static',
     };
   }
 }
@@ -157,9 +174,14 @@ export async function getOnchainTicker(): Promise<TickerPayload> {
  */
 export async function getEventMarketsTicker(): Promise<TickerPayload> {
   try {
-    // Fetch live data from APIs (with fallback to static)
-    const kalshiMarkets = await fetchKalshiMarkets();
+    // Prefer Polymarket public feed first (no keys), then Kalshi if configured
     const polymarketMarkets = await fetchPolymarketMarkets();
+    const kalshiMarkets = await fetchKalshiMarkets();
+    
+    // Check if we have any live data
+    const hasLivePolymarket = polymarketMarkets.some(m => m.isLive);
+    const hasLiveKalshi = kalshiMarkets.some(m => m.isLive);
+    const hasLiveData = hasLivePolymarket || hasLiveKalshi;
     
     // Merge and sort by volume/open interest
     const allMarkets: RawPredictionMarket[] = [...kalshiMarkets, ...polymarketMarkets];
@@ -205,6 +227,9 @@ export async function getEventMarketsTicker(): Promise<TickerPayload> {
           { id: 'kalshi', label: 'Kalshi', items: kalshiItems },
           { id: 'polymarket', label: 'Polymarket', items: polymarketItems },
         ],
+        lastUpdatedMs: Date.now(),
+        isLive: hasLiveData,
+        source: hasLivePolymarket ? 'polymarket' : hasLiveKalshi ? 'kalshi' : 'static',
       };
     }
 
@@ -279,6 +304,9 @@ export async function getEventMarketsTicker(): Promise<TickerPayload> {
             })),
           },
         ],
+        lastUpdatedMs: Date.now(),
+        isLive: false,
+        source: 'static',
       };
     }
 
@@ -293,6 +321,103 @@ export async function getEventMarketsTicker(): Promise<TickerPayload> {
     return {
       venue: 'event_demo',
       sections,
+      lastUpdatedMs: Date.now(),
+      isLive: false,
+      source: 'snapshot',
+    };
+    }
+
+    // Fallback to seeded markets if no live data
+    const eventSnapshot = getEventSnapshot();
+    const allMarketsSeeded = eventSnapshot.markets;
+
+    // Separate markets by source
+    const kalshiMarketsSeeded: Array<{ label: string; impliedProb: number }> = [];
+    const polymarketMarketsSeeded: Array<{ label: string; impliedProb: number }> = [];
+
+    for (const market of allMarketsSeeded) {
+      let source: 'Kalshi' | 'Polymarket' | 'Demo' = 'Demo';
+      if (market.key.includes('FED') || market.key.includes('ETF')) {
+        source = 'Kalshi';
+      } else if (market.key.includes('ELECTION') || market.key.includes('MCAP')) {
+        source = 'Polymarket';
+      }
+
+      const item = {
+        label: market.label,
+        impliedProb: market.winProbability,
+      };
+
+      if (source === 'Kalshi') {
+        kalshiMarketsSeeded.push(item);
+      } else if (source === 'Polymarket') {
+        polymarketMarketsSeeded.push(item);
+      }
+    }
+
+    // Convert to TickerItems
+    const kalshiItems: TickerItem[] = kalshiMarketsSeeded.slice(0, 4).map(m => ({
+      label: m.label,
+      value: `${Math.round(m.impliedProb * 100)}%`,
+      impliedProb: m.impliedProb,
+      meta: 'Kalshi',
+      lean: m.impliedProb > 0.5 ? 'YES' : 'NO',
+    }));
+
+    const polymarketItems: TickerItem[] = polymarketMarketsSeeded.slice(0, 4).map(m => ({
+      label: m.label,
+      value: `${Math.round(m.impliedProb * 100)}%`,
+      impliedProb: m.impliedProb,
+      meta: 'Polymarket',
+      lean: m.impliedProb > 0.5 ? 'YES' : 'NO',
+    }));
+
+    // If no markets found, use static fallback
+    if (kalshiItems.length === 0 && polymarketItems.length === 0) {
+      return {
+        venue: 'event_demo',
+        sections: [
+          {
+            id: 'kalshi',
+            label: 'Kalshi',
+            items: STATIC_EVENT_TICKER.filter(item => item.source === 'Kalshi').slice(0, 4).map(item => ({
+              label: item.label,
+              value: `${Math.round(item.impliedProb * 100)}%`,
+              meta: 'Kalshi',
+              lean: item.impliedProb > 0.5 ? 'YES' : 'NO',
+            })),
+          },
+          {
+            id: 'polymarket',
+            label: 'Polymarket',
+            items: STATIC_EVENT_TICKER.filter(item => item.source === 'Polymarket').slice(0, 4).map(item => ({
+              label: item.label,
+              value: `${Math.round(item.impliedProb * 100)}%`,
+              meta: 'Polymarket',
+              lean: item.impliedProb > 0.5 ? 'YES' : 'NO',
+            })),
+          },
+        ],
+        lastUpdatedMs: Date.now(),
+        isLive: false,
+        source: 'static',
+      };
+    }
+
+    const sections: TickerSection[] = [];
+    if (kalshiItems.length > 0) {
+      sections.push({ id: 'kalshi', label: 'Kalshi', items: kalshiItems });
+    }
+    if (polymarketItems.length > 0) {
+      sections.push({ id: 'polymarket', label: 'Polymarket', items: polymarketItems });
+    }
+
+    return {
+      venue: 'event_demo',
+      sections,
+      lastUpdatedMs: Date.now(),
+      isLive: hasLiveData,
+      source: hasLiveKalshi ? 'kalshi' : hasLivePolymarket ? 'polymarket' : 'snapshot',
     };
   } catch (error) {
     console.error('Failed to build event markets ticker, using static fallback:', error);
@@ -320,6 +445,9 @@ export async function getEventMarketsTicker(): Promise<TickerPayload> {
             })),
           },
       ],
+      lastUpdatedMs: Date.now(),
+      isLive: false,
+      source: 'static',
     };
   }
 }

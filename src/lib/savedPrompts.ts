@@ -39,3 +39,5 @@ export function isPromptSaved(text: string): boolean {
   return prompts.some(p => p.text.toLowerCase().trim() === text.toLowerCase().trim());
 }
 
+
+
