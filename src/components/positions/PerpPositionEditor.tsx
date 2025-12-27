@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Strategy } from '../../context/BlossomContext';
 import { useActivityFeed } from '../../context/ActivityFeedContext';
 import RiskBadge from '../RiskBadge';
+import { getCanonicalPerpDisplay, type PerpDisplayData } from '../../lib/perpDisplay';
 
 interface PerpPositionEditorProps {
   strategy: Strategy;
@@ -24,6 +25,37 @@ export default function PerpPositionEditor({
   const [sizeInput, setSizeInput] = useState('');
   const [isUpdatingSize, setIsUpdatingSize] = useState(false);
   const [updateSizeSuccess, setUpdateSizeSuccess] = useState(false);
+  const isMountedRef = useRef(true);
+  
+  // Canonical perp display data (live-anchored Entry/TP/SL)
+  const [perpDisplay, setPerpDisplay] = useState<PerpDisplayData | null>(null);
+  
+  // Fetch canonical display data on mount and when strategy changes
+  useEffect(() => {
+    isMountedRef.current = true;
+    
+    getCanonicalPerpDisplay(strategy).then(data => {
+      if (isMountedRef.current) {
+        setPerpDisplay(data);
+      }
+    }).catch(() => {
+      // Fail silently, use strategy values
+      if (isMountedRef.current) {
+        setPerpDisplay({
+          entryUsd: strategy.entry || 0,
+          tpUsd: strategy.takeProfit || null,
+          slUsd: strategy.stopLoss || null,
+          source: 'static',
+          lastUpdatedMs: Date.now(),
+          hasLiveData: false,
+        });
+      }
+    });
+    
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, [strategy.id, strategy.market, strategy.side, strategy.entry, strategy.takeProfit, strategy.stopLoss]);
   
   // Discrete leverage ticks - slider only allows these values
   const LEVERAGE_TICKS = [1, 3, 5, 10, 15, 20] as const;
@@ -73,7 +105,10 @@ export default function PerpPositionEditor({
   const pnlUsd = strategy.realizedPnlUsd || 0;
   const pnlPct = strategy.realizedPnlPct || 0;
   const pnlSign = pnlPct >= 0 ? '+' : '';
-  const currentSize = strategy.notionalUsd || 0;
+  const currentNotional = strategy.notionalUsd || 0;
+  const currentMargin = strategy.marginUsd || 0;
+  // Task 3: riskUsd = marginUsd (in this demo, risk corresponds to margin posted)
+  const riskUsd = currentMargin;
 
   const handleUpdateSize = (e: React.MouseEvent | React.KeyboardEvent) => {
     e.stopPropagation();
@@ -91,9 +126,9 @@ export default function PerpPositionEditor({
       type: 'updated',
       positionId: strategy.id,
       positionType: 'perp',
-      message: `Updated ${strategy.market} ${strategy.side} size`,
+      message: `Updated ${strategy.market} ${strategy.side} notional`,
       metadata: {
-        field: 'size',
+        field: 'notional',
         oldValue: oldSize,
         newValue: newSize,
       },
@@ -275,9 +310,11 @@ export default function PerpPositionEditor({
             </span>
           </div>
           <div className={`${detailSize} text-slate-500 space-y-0.5`}>
-            <div>Size: ${currentSize.toLocaleString()}</div>
+            {/* Task 3: Show Notional (Exposure) and Margin (Collateral) clearly */}
+            <div>Notional (Exposure): ${currentNotional.toLocaleString()}</div>
+            <div>Margin (Collateral): ${currentMargin.toLocaleString()}</div>
             <div className="flex items-center gap-2">
-              <span>Risk: {strategy.riskPercent.toFixed(1)}%</span>
+              <span>Risk: {strategy.riskPercent.toFixed(1)}% (${riskUsd.toLocaleString()})</span>
               <RiskBadge riskPercent={strategy.riskPercent} />
             </div>
           </div>
@@ -294,10 +331,10 @@ export default function PerpPositionEditor({
       
       {/* Inline Quick Controls */}
       <div className={`${spacingClass} space-y-0`} onClick={(e) => e.stopPropagation()}>
-        {/* Size Control */}
+        {/* Notional (Exposure) Control */}
         <div className={`${spacingClass} border-t border-slate-100/60`}>
           <div className="flex items-center gap-2">
-            <label className={`${labelClass} font-medium text-slate-500 ${compact ? 'w-10' : 'w-12'} flex-shrink-0`}>Size:</label>
+            <label className={`${labelClass} font-medium text-slate-500 ${compact ? 'w-16' : 'w-20'} flex-shrink-0`}>Notional:</label>
             <input
               type="number"
               value={sizeInput}
@@ -307,7 +344,7 @@ export default function PerpPositionEditor({
               }}
               onKeyDown={handleSizeKeyDown}
               onClick={(e) => e.stopPropagation()}
-              placeholder={`${currentSize.toLocaleString()}`}
+              placeholder={`${currentNotional.toLocaleString()}`}
               className={`flex-1 ${inputClass} border border-slate-200 ${compact ? 'rounded' : 'rounded-lg'} focus:outline-none focus:ring-1 focus:ring-pink-300 focus:border-pink-300`}
               min="0"
               step="0.01"
@@ -389,7 +426,7 @@ export default function PerpPositionEditor({
               }}
               onKeyDown={handleTpKeyDown}
               onClick={(e) => e.stopPropagation()}
-              placeholder={`${strategy.takeProfit.toLocaleString()}`}
+              placeholder={perpDisplay?.tpUsd ? perpDisplay.tpUsd.toLocaleString() : strategy.takeProfit.toLocaleString()}
               className={`flex-1 ${inputClass} border border-slate-200 ${compact ? 'rounded' : 'rounded-lg'} focus:outline-none focus:ring-1 focus:ring-pink-300 focus:border-pink-300`}
               min="0"
               step="0.01"
@@ -428,7 +465,7 @@ export default function PerpPositionEditor({
               }}
               onKeyDown={handleSlKeyDown}
               onClick={(e) => e.stopPropagation()}
-              placeholder={`${strategy.stopLoss.toLocaleString()}`}
+              placeholder={perpDisplay?.slUsd ? perpDisplay.slUsd.toLocaleString() : strategy.stopLoss.toLocaleString()}
               className={`flex-1 ${inputClass} border border-slate-200 ${compact ? 'rounded' : 'rounded-lg'} focus:outline-none focus:ring-1 focus:ring-pink-300 focus:border-pink-300`}
               min="0"
               step="0.01"

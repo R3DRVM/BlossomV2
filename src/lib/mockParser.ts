@@ -2,7 +2,7 @@
 // See src/lib/blossomApi.ts for the integration layer
 // When ready, update Chat.tsx to use callBlossomChat() instead of parseUserMessage()
 
-export type ParsedIntent = 'trade' | 'risk_question' | 'general' | 'defi' | 'event' | 'update_event_stake' | 'hedge' | 'modify_perp_strategy' | 'modify_event_strategy' | 'show_riskiest_positions';
+export type ParsedIntent = 'trade' | 'risk_question' | 'general' | 'defi' | 'event' | 'update_event_stake' | 'hedge' | 'modify_perp_strategy' | 'modify_event_strategy' | 'show_riskiest_positions' | 'list_top_event_markets';
 
 export interface ParsedStrategy {
   market: string;
@@ -50,6 +50,7 @@ export interface ParsedMessage {
     newStakeUsd?: number;
     overrideRiskCap: boolean;
   };
+  clarification?: string; // Step 2: For market clarification requests
 }
 
 // Helper to find active perp strategy for editing
@@ -382,6 +383,20 @@ export function parseUserMessage(
   const upperText = text.toUpperCase();
   const lowerText = text.toLowerCase();
   
+  // CRITICAL: Check for "list top markets" intent FIRST (before domain detection)
+  // This prevents "show me top 5 markets" from creating a Generic Event draft
+  const LIST_MARKETS_RE = /\b(show\s+me\s+)?(top\s+(\d+)\s+)?(prediction\s+)?markets?\s+(by\s+)?(volume|trending|open\s+interest)\b/i;
+  const hasListMarketsIntent = LIST_MARKETS_RE.test(text) || 
+    /\b(list|show|display|fetch|get)\s+(top|trending|highest)\s+(\d+)?\s*(prediction\s+)?markets?\b/i.test(text);
+  
+  if (hasListMarketsIntent && (opts?.venue === 'event_demo' || detectStrategyDomain(text, opts?.venue) === 'event')) {
+    return {
+      intent: 'list_top_event_markets',
+      strategy: undefined,
+      eventStrategy: undefined,
+    };
+  }
+  
   // CRITICAL: Detect domain FIRST, before any perp modification checks
   // This ensures event messages never get misclassified as perp modifications
   const domain = detectStrategyDomain(text, opts?.venue);
@@ -696,13 +711,60 @@ export function parseUserMessage(
   
   // If intent is trade, parse strategy
   if (intent === 'trade') {
-    // Detect market
-    let market = 'ETH';
-    for (const m of MARKETS) {
-      if (upperText.includes(m)) {
-        market = m;
+    // Step 2: Detect market with aliases and hard-stop on unknown
+    let market: string | null = null;
+    
+    // Market aliases (case-insensitive)
+    const marketAliases: Record<string, string> = {
+      'BITCOIN': 'BTC',
+      'BITCOIN-PERP': 'BTC',
+      'BTC': 'BTC',
+      'ETH': 'ETH',
+      'ETHEREUM': 'ETH',
+      'ETHEREUM-PERP': 'ETH',
+      'SOL': 'SOL',
+      'SOLANA': 'SOL',
+      'SOLANA-PERP': 'SOL',
+      'BNB': 'BNB',
+      'BINANCE': 'BNB',
+      'AVAX': 'AVAX',
+      'AVALANCHE': 'AVAX',
+    };
+    
+    // Check for explicit market mentions
+    for (const [alias, mappedMarket] of Object.entries(marketAliases)) {
+      if (upperText.includes(alias)) {
+        market = mappedMarket;
         break;
       }
+    }
+    
+    // Also check MARKETS array for direct matches
+    if (!market) {
+      for (const m of MARKETS) {
+        if (upperText.includes(m)) {
+          market = m;
+          break;
+        }
+      }
+    }
+    
+    // Step 1: Invariant 0.1 - If market is still unknown and intent is clearly trade, return clarification
+    // NEVER default to ETH or any fallback market
+    if (!market) {
+      // Check if this is clearly a trade intent (has leverage, side, risk, etc.)
+      const hasTradeKeywords = /(?:long|short|buy|sell|trade|position|leverage|risk|%)/i.test(text);
+      if (hasTradeKeywords) {
+        return {
+          intent: 'general' as ParsedIntent, // Use general to trigger clarification
+          clarification: `Which market do you want: BTC-PERP, ETH-PERP, SOL-PERP, AVAX-PERP, or BNB-PERP?`,
+        };
+      }
+      // If not clearly a trade, still return clarification (no fallback)
+      return {
+        intent: 'general' as ParsedIntent,
+        clarification: `Which market do you want: BTC-PERP, ETH-PERP, SOL-PERP, AVAX-PERP, or BNB-PERP?`,
+      };
     }
     
     // Detect side
@@ -778,9 +840,13 @@ This reduces your net ${baseAsset} exposure and maintains a liquidation buffer o
   if (parsed.intent === 'trade' && parsed.strategy) {
     const { market, side, riskPercent, entryPrice, takeProfit, stopLoss, liqBuffer, fundingImpact } = parsed.strategy;
     
+    const stopLossText = stopLoss === 0 
+      ? 'Stop loss: none (not recommended).'
+      : `a stop-loss around $${stopLoss.toLocaleString()}`;
+    
     return `Got it. I'll go ${side.toUpperCase()} on ${market} with ${riskPercent}% account risk.
 
-I'll set an entry near $${entryPrice.toLocaleString()}, a take-profit around $${takeProfit.toLocaleString()}, and a stop-loss around $${stopLoss.toLocaleString()}.
+I'll set an entry near $${entryPrice.toLocaleString()}, a take-profit around $${takeProfit.toLocaleString()}, and ${stopLossText}.
 
 This keeps an estimated liquidation buffer of ~${liqBuffer}% with ${fundingImpact.toLowerCase()} funding impact in current conditions.`;
   }
