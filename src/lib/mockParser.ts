@@ -2,7 +2,7 @@
 // See src/lib/blossomApi.ts for the integration layer
 // When ready, update Chat.tsx to use callBlossomChat() instead of parseUserMessage()
 
-export type ParsedIntent = 'trade' | 'risk_question' | 'general' | 'defi' | 'event' | 'update_event_stake' | 'hedge' | 'modify_perp_strategy' | 'modify_event_strategy' | 'show_riskiest_positions' | 'list_top_event_markets';
+export type ParsedIntent = 'trade' | 'risk_question' | 'general' | 'defi' | 'event' | 'update_event_stake' | 'hedge' | 'modify_perp_strategy' | 'modify_event_strategy' | 'show_riskiest_positions' | 'list_top_event_markets' | 'list_top_defi_protocols';
 
 export interface ParsedStrategy {
   market: string;
@@ -383,18 +383,92 @@ export function parseUserMessage(
   const upperText = text.toUpperCase();
   const lowerText = text.toLowerCase();
   
-  // CRITICAL: Check for "list top markets" intent FIRST (before domain detection)
+  // CRITICAL: Check for "list top protocols" intent FIRST (before domain detection)
+  // This prevents "show me top 5 defi protocols" from creating a Generic DeFi draft
+  // Must work regardless of venue (DeFi is cross-venue)
+  const LIST_DEFI_PROTOCOLS_RE = /\b(show\s+me\s+)?(top\s+(\d+)\s+)?(defi\s+)?protocols?\s+(by\s+)?(tvl|total\s+value\s+locked)\b/i;
+  const hasListDefiProtocolsIntent = LIST_DEFI_PROTOCOLS_RE.test(text) || 
+    /\b(list|show|display|fetch|get|explore)\s+(top|best|highest)\s+(\d+)?\s*(defi\s+)?protocols?\b/i.test(text) ||
+    /\b(best\s+defi|top\s+defi|explore\s+top\s+protocols)\b/i.test(text) ||
+    /\b(top\s+5\s+defi|top\s+defi\s+protocols|defi\s+protocols\s+by\s+tvl)\b/i.test(text);
+  
+  if (hasListDefiProtocolsIntent) {
+    // Extract requested count from text (e.g., "top 5" -> 5, "top ten" -> 10)
+    let requestedCount: number | undefined = undefined;
+    
+    // Try numeric match first (e.g., "top 5", "top 10")
+    const numericMatch = text.match(/\btop\s+(\d+)\s+(defi\s+)?protocols?\b/i);
+    if (numericMatch && numericMatch[1]) {
+      requestedCount = parseInt(numericMatch[1], 10);
+    } else {
+      // Try word match (e.g., "top five", "top ten")
+      const wordMatch = text.match(/\btop\s+(five|ten|fifteen|twenty)\s+(defi\s+)?protocols?\b/i);
+      if (wordMatch) {
+        const word = wordMatch[1].toLowerCase();
+        const wordToNumber: Record<string, number> = {
+          'five': 5,
+          'ten': 10,
+          'fifteen': 15,
+          'twenty': 20,
+        };
+        requestedCount = wordToNumber[word];
+      }
+    }
+    
+    // Default to 5 if no count specified
+    if (!requestedCount || requestedCount <= 0) {
+      requestedCount = 5;
+    }
+    
+    return {
+      intent: 'list_top_defi_protocols',
+      strategy: undefined,
+      eventStrategy: undefined,
+      requestedCount, // Pass through to handler
+    } as ParsedMessage & { requestedCount: number };
+  }
+  
+  // CRITICAL: Check for "list top markets" intent (after DeFi protocols check)
   // This prevents "show me top 5 markets" from creating a Generic Event draft
   const LIST_MARKETS_RE = /\b(show\s+me\s+)?(top\s+(\d+)\s+)?(prediction\s+)?markets?\s+(by\s+)?(volume|trending|open\s+interest)\b/i;
   const hasListMarketsIntent = LIST_MARKETS_RE.test(text) || 
     /\b(list|show|display|fetch|get)\s+(top|trending|highest)\s+(\d+)?\s*(prediction\s+)?markets?\b/i.test(text);
   
   if (hasListMarketsIntent && (opts?.venue === 'event_demo' || detectStrategyDomain(text, opts?.venue) === 'event')) {
+    // Extract requested count (similar to DeFi protocols)
+    let requestedCount: number | undefined = undefined;
+    
+    // Try numeric match first (e.g., "top 5", "top 10")
+    const numericMatch = text.match(/\btop\s+(\d+)\b/i);
+    if (numericMatch) {
+      requestedCount = parseInt(numericMatch[1], 10);
+    }
+    
+    // Try word match (e.g., "top five", "top ten")
+    if (!requestedCount) {
+      const wordToNumber: Record<string, number> = {
+        'five': 5, 'ten': 10, 'fifteen': 15, 'twenty': 20,
+        'one': 1, 'two': 2, 'three': 3, 'four': 4,
+        'six': 6, 'seven': 7, 'eight': 8, 'nine': 9,
+      };
+      const wordMatch = text.match(/\btop\s+(\w+)\b/i);
+      if (wordMatch) {
+        const word = wordMatch[1].toLowerCase();
+        requestedCount = wordToNumber[word];
+      }
+    }
+    
+    // Default to 5 if not specified
+    if (!requestedCount || requestedCount <= 0) {
+      requestedCount = 5;
+    }
+    
     return {
       intent: 'list_top_event_markets',
       strategy: undefined,
       eventStrategy: undefined,
-    };
+      requestedCount, // Pass through to handler
+    } as ParsedMessage & { requestedCount: number };
   }
   
   // CRITICAL: Detect domain FIRST, before any perp modification checks

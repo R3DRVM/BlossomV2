@@ -121,34 +121,73 @@ async function fetchPolymarketPublicMarkets(): Promise<EventMarket[]> {
 }
 
 /**
- * Get top event markets (prefers live Polymarket, falls back to static)
+ * Get top event markets (prefers live Polymarket Gamma API if enabled, falls back to existing flow, then static)
  * Never throws - always returns best-effort payload
  */
-export async function getTopEventMarkets(): Promise<EventMarket[]> {
+export async function getTopEventMarkets(requestedCount?: number): Promise<EventMarket[]> {
   const now = Date.now();
+  const count = requestedCount || 5;
+
+  // Check if Polymarket Gamma API is enabled via env var
+  const usePolymarketGamma = import.meta.env.VITE_EVENT_MARKETS_SOURCE === 'polymarket';
 
   // Check cache first
   if (marketsCache && now - marketsCache.fetchedAt < CACHE_TTL_MS) {
-    return marketsCache.data;
+    return marketsCache.data.slice(0, count);
   }
 
   // If in backoff period, return cached data or static
   if (now < nextAllowedFetchMs) {
     if (marketsCache) {
-      return marketsCache.data;
+      return marketsCache.data.slice(0, count);
     }
-    return getStaticMarkets();
+    return getStaticMarkets().slice(0, count);
   }
 
   // Deduplicate in-flight requests
   if (inFlightRequest) {
-    return inFlightRequest;
+    return inFlightRequest.then(list => list.slice(0, count));
   }
 
   // Create new request
   inFlightRequest = (async () => {
     try {
-      const markets = await fetchPolymarketPublicMarkets();
+      let markets: EventMarket[] = [];
+      
+      // Try Polymarket Gamma API first if enabled
+      if (usePolymarketGamma) {
+        try {
+          const { getTopPolymarketMarkets } = await import('./polymarket');
+          const polymarketMarkets = await getTopPolymarketMarkets(count);
+          
+          if (polymarketMarkets.length > 0) {
+            // Map Polymarket markets to EventMarket shape
+            markets = polymarketMarkets.map(pm => ({
+              id: pm.id,
+              title: pm.title,
+              yesPrice: pm.yesPrice,
+              noPrice: pm.noPrice,
+              volume24hUsd: pm.volume24hUsd,
+              source: 'polymarket',
+              isLive: pm.isLive,
+            }));
+            
+            if (import.meta.env.DEV) {
+              console.log(`[eventMarkets] Using Polymarket Gamma API, got ${markets.length} markets`);
+            }
+          }
+        } catch (gammaError) {
+          if (import.meta.env.DEV) {
+            console.warn('[eventMarkets] Polymarket Gamma API failed, trying fallback:', gammaError);
+          }
+          // Continue to fallback
+        }
+      }
+      
+      // Fallback to existing Polymarket public API if Gamma didn't work or not enabled
+      if (markets.length === 0) {
+        markets = await fetchPolymarketPublicMarkets();
+      }
       
       if (markets.length > 0) {
         // Success: update cache and reset backoff
@@ -172,19 +211,24 @@ export async function getTopEventMarkets(): Promise<EventMarket[]> {
       nextAllowedFetchMs = now + delay;
       
       if (import.meta.env.DEV && !hasLoggedWarning) {
-        console.warn('[eventMarkets] Polymarket fetch failed, using static fallback', { failureCount, nextAllowedFetchMs });
+        console.warn('[eventMarkets] All fetch attempts failed, using static fallback', { failureCount, nextAllowedFetchMs });
         hasLoggedWarning = true;
       }
       
       // Return cached data if available, otherwise static
       if (marketsCache) {
         inFlightRequest = null;
-        return marketsCache.data;
+        return marketsCache.data.slice(0, count);
       }
       
       const staticMarkets = getStaticMarkets();
       inFlightRequest = null;
-      return staticMarkets;
+      
+      if (import.meta.env.DEV) {
+        console.log('[eventMarkets] fallback to static');
+      }
+      
+      return staticMarkets.slice(0, count);
     }
   })();
 
@@ -213,16 +257,6 @@ function getStaticMarkets(): EventMarket[] {
       noPrice: 0.28,
       volume24hUsd: 980000,
       openInterestUsd: 4200000,
-      source: 'static',
-      isLive: false,
-    },
-    {
-      id: 'us-election-2024',
-      title: 'Who will win the 2024 US Presidential Election?',
-      yesPrice: 0.48,
-      noPrice: 0.52,
-      volume24hUsd: 2100000,
-      openInterestUsd: 8500000,
       source: 'static',
       isLive: false,
     },
