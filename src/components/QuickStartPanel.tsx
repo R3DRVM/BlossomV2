@@ -52,6 +52,11 @@ function getQuickActionsForVenue(venue: Venue): Array<{ title: string; descripti
       description: 'Route a hedge across optimal venues and chains.',
       prompt: 'Hedge my BTC and ETH exposure with a short BTC perp position. Route across the best venues.',
     },
+    {
+      title: 'Explore top DeFi protocols',
+      description: 'View the highest TVL DeFi protocols right now.',
+      prompt: 'Show me the top 5 DeFi protocols by TVL',
+    },
   ];
 }
 
@@ -148,9 +153,11 @@ export default function QuickStartPanel({ onSelectPrompt }: QuickStartPanelProps
           <div className="grid grid-cols-2 gap-1.5">
             {quickActions.map((action, idx) => {
               const isSaved = isPromptSaved(action.prompt);
+              const isExploreTopMarkets = action.title === 'Explore top markets';
               return (
                 <div
                   key={idx}
+                  {...(isExploreTopMarkets ? { 'data-coachmark': 'event-explore-top-markets' } : {})}
                   className="group relative rounded-lg border border-slate-100 bg-white px-2 py-1.5 hover:bg-pink-50/60 hover:border-pink-200 transition-all"
                 >
                   <button

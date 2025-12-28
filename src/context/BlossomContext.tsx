@@ -115,6 +115,15 @@ export interface ChatMessage {
     source: 'polymarket' | 'kalshi' | 'static';
     isLive: boolean;
   }> | null;
+  defiProtocolsList?: Array<{
+    id: string;
+    name: string;
+    tvlUsd: number;
+    chains: string[];
+    category?: string;
+    source: 'defillama' | 'static';
+    isLive: boolean;
+  }> | null;
 }
 
 // Chat session type
@@ -156,7 +165,7 @@ interface BlossomContextType {
   setVenue: (v: Venue) => void;
   defiPositions: DefiPosition[];
   latestDefiProposal: DefiPosition | null;
-  createDefiPlanFromCommand: (command: string) => DefiPosition;
+  createDefiPlanFromCommand: (command: string, protocolOverride?: string) => DefiPosition;
   confirmDefiPlan: (id: string) => void;
   updateDeFiPlanDeposit: (id: string, newDepositUsd: number) => void;
   updateFromBackendPortfolio: (portfolio: any) => void; // For agent mode
@@ -950,20 +959,93 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const createDefiPlanFromCommand = useCallback((command: string): DefiPosition => {
+  const createDefiPlanFromCommand = useCallback((command: string, protocolOverride?: string): DefiPosition => {
     const idleUsdc = account.balances.find(b => b.symbol === 'REDACTED')?.balanceUsd || 3000;
-    const depositUsd = Math.min(idleUsdc * 0.5, 2000);
+    let depositUsd = Math.min(idleUsdc * 0.5, 2000); // Fallback default
 
     let protocol = 'RootsFi';
     let apyPct = 6.4;
     const lowerCommand = command.toLowerCase();
 
-    if (lowerCommand.includes('kamino')) {
+    // Extract amount with priority: amountUsd token > $<number> > amountPct token > percent text > fallback
+    // 1. Try amountUsd:"..." token first (highest priority)
+    const amountUsdTokenMatch = command.match(/amountUsd:"([^"]+)"/i);
+    if (amountUsdTokenMatch) {
+      const amountStr = amountUsdTokenMatch[1].replace(/,/g, ''); // Remove commas
+      const parsedAmount = parseFloat(amountStr);
+      if (!isNaN(parsedAmount) && parsedAmount > 0) {
+        depositUsd = Math.round(parsedAmount);
+      }
+    } else {
+      // 2. Try $<number> pattern (accept commas/decimals)
+      const dollarAmountMatch = command.match(/\$(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)/);
+      if (dollarAmountMatch) {
+        const amountStr = dollarAmountMatch[1].replace(/,/g, '');
+        const parsedAmount = parseFloat(amountStr);
+        if (!isNaN(parsedAmount) && parsedAmount > 0) {
+          depositUsd = Math.round(parsedAmount);
+        }
+      } else {
+        // 3. Try amountPct:"..." token (requires account value, handled in Chat.tsx before calling this)
+        // This is a fallback - Chat.tsx should rewrite to amountUsd before calling
+        const amountPctTokenMatch = command.match(/amountPct:"([^"]+)"/i);
+        if (amountPctTokenMatch) {
+          // If we see this token, it means Chat.tsx didn't rewrite it - use fallback
+          // (This shouldn't happen in normal flow, but handle gracefully)
+        } else {
+          // 4. Try percent allocations (10%, 5%, etc.) - only if no explicit amount found
+          const percentMatch = command.match(/(\d+(?:\.\d+)?)\s*%/);
+          if (percentMatch) {
+            const percent = parseFloat(percentMatch[1]);
+            if (!isNaN(percent) && percent > 0 && percent <= 100) {
+              // Use account value if available, otherwise fallback
+              const accountValue = account.accountValue || 10000;
+              depositUsd = Math.round((accountValue * percent) / 100);
+            }
+          }
+        }
+      }
+    }
+
+    // Extract protocol from protocol:"..." token if present
+    const protocolTokenMatch = command.match(/protocol:"([^"]+)"/i);
+    const extractedProtocol = protocolTokenMatch ? protocolTokenMatch[1] : null;
+    
+    // Use override > extracted > fallback logic
+    if (protocolOverride) {
+      protocol = protocolOverride;
+    } else if (extractedProtocol) {
+      protocol = extractedProtocol;
+    } else if (lowerCommand.includes('kamino')) {
       protocol = 'Kamino';
       apyPct = 8.5;
     } else if (lowerCommand.includes('jet')) {
       protocol = 'Jet';
       apyPct = 7.2;
+    } else if (lowerCommand.includes('lido')) {
+      protocol = 'Lido';
+      apyPct = 3.5;
+    } else if (lowerCommand.includes('aave')) {
+      protocol = 'Aave';
+      apyPct = 4.2;
+    } else if (lowerCommand.includes('morpho')) {
+      protocol = 'Morpho';
+      apyPct = 5.8;
+    } else if (lowerCommand.includes('pendle')) {
+      protocol = 'Pendle';
+      apyPct = 7.5;
+    } else if (lowerCommand.includes('compound')) {
+      protocol = 'Compound';
+      apyPct = 3.8;
+    } else if (lowerCommand.includes('uniswap')) {
+      protocol = 'Uniswap';
+      apyPct = 2.1;
+    } else if (lowerCommand.includes('ethena')) {
+      protocol = 'Ethena';
+      apyPct = 15.2;
+    } else if (lowerCommand.includes('maker')) {
+      protocol = 'Maker';
+      apyPct = 1.5;
     }
 
     const newPosition: DefiPosition = {

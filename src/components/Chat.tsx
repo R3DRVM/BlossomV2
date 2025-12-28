@@ -1004,6 +1004,61 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
     if (!USE_AGENT_BACKEND && !opts?.bypassClarification) {
       const parsed = parseUserMessage(userText, { venue, strategies, selectedStrategyId, accountValue: account.accountValue });
       
+      // B) Defensive guard: Never ask for perp market if message looks like DeFi allocation
+      const looksLikeDefiCommand = 
+        /protocol:"[^"]+"/i.test(userText) ||
+        (/\b(yield|apy|apr|deposit|lending|allocate)\b/i.test(userText) && /\b(usdc|stable)\b/i.test(userText));
+      
+      if (looksLikeDefiCommand && parsed.clarification && parsed.clarification.includes('Which market do you want')) {
+        if (import.meta.env.DEV) {
+          console.log('[Chat] Bypassing perp market clarification for DeFi command:', userText);
+        }
+        // 3) Handle amountPct token: compute USD amount and rewrite command
+        let commandToUse = userText;
+        const amountPctMatch = userText.match(/amountPct:"([^"]+)"/i);
+        if (amountPctMatch) {
+          const percent = parseFloat(amountPctMatch[1]);
+          if (!isNaN(percent) && percent > 0 && percent <= 100) {
+            const accountValue = account.accountValue || 10000; // Demo fallback
+            const computedUsd = Math.round((accountValue * percent) / 100);
+            // Rewrite command to include amountUsd token
+            commandToUse = userText.replace(/amountPct:"[^"]+"/i, `amountUsd:"${computedUsd}"`);
+            if (import.meta.env.DEV) {
+              console.log('[Chat] DeFi amountPct converted (bypass path)', {
+                percent,
+                accountValue,
+                computedUsd,
+              });
+            }
+          }
+        }
+        // Force DeFi creation path
+        const defiProposal = createDefiPlanFromCommand(commandToUse);
+        setOnboarding(prev => ({ ...prev, queuedStrategy: true }));
+        
+        window.dispatchEvent(
+          new CustomEvent('planDrafted', {
+            detail: { type: 'defi', id: defiProposal.id },
+          })
+        );
+        
+        const defiResponse: ChatMessage = {
+          id: `defi-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          text: "I've prepared a DeFi yield plan. Review the details below and confirm to execute.",
+          isUser: false,
+          timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+          defiProposalId: defiProposal.id,
+        };
+        appendMessageToChat(targetChatId, defiResponse);
+        
+        if (textareaRef.current) {
+          textareaRef.current.value = '';
+        }
+        setInputValue('');
+        setIsTyping(false);
+        return; // Early return - prevent clarification flow
+      }
+      
       // Step 4: Clarification before high-risk - if market is missing, ask clarification and return early
       // Make it impossible to set pendingClarification during continuation
       if (parsed.clarification) {
@@ -1221,6 +1276,56 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
         let strategy: ParsedStrategy | null = null;
         let defiProposalId: string | null = null;
 
+        // B) Defensive guard: Never ask for perp market if message looks like DeFi allocation
+        const looksLikeDefiCommand = 
+          /protocol:"[^"]+"/i.test(userText) ||
+          (/\b(yield|apy|apr|deposit|lending|allocate)\b/i.test(userText) && /\b(usdc|stable)\b/i.test(userText));
+        
+        if (looksLikeDefiCommand && parsed.clarification && parsed.clarification.includes('Which market do you want') && !bypassFlag) {
+          if (import.meta.env.DEV) {
+            console.log('[Chat] Bypassing perp market clarification for DeFi command (mock mode):', userText);
+          }
+          // 3) Handle amountPct token: compute USD amount and rewrite command
+          let commandToUse = userText;
+          const amountPctMatch = userText.match(/amountPct:"([^"]+)"/i);
+          if (amountPctMatch) {
+            const percent = parseFloat(amountPctMatch[1]);
+            if (!isNaN(percent) && percent > 0 && percent <= 100) {
+              const accountValue = account.accountValue || 10000; // Demo fallback
+              const computedUsd = Math.round((accountValue * percent) / 100);
+              // Rewrite command to include amountUsd token
+              commandToUse = userText.replace(/amountPct:"[^"]+"/i, `amountUsd:"${computedUsd}"`);
+              if (import.meta.env.DEV) {
+                console.log('[Chat] DeFi amountPct converted (bypass path, mock mode)', {
+                  percent,
+                  accountValue,
+                  computedUsd,
+                });
+              }
+            }
+          }
+          // Force DeFi creation path
+          const defiProposal = createDefiPlanFromCommand(commandToUse);
+          setOnboarding(prev => ({ ...prev, queuedStrategy: true }));
+          
+          window.dispatchEvent(
+            new CustomEvent('planDrafted', {
+              detail: { type: 'defi', id: defiProposal.id },
+            })
+          );
+          
+          const defiResponse: ChatMessage = {
+            id: `defi-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            text: "I've prepared a DeFi yield plan. Review the details below and confirm to execute.",
+            isUser: false,
+            timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+            defiProposalId: defiProposal.id,
+          };
+          appendMessageToChat(targetChatId, defiResponse);
+          clearInputAndStopTyping();
+          return; // Early return - prevent clarification flow
+        }
+
         // Step 4: Handle market clarification request (skip if bypass is set)
         // Step 6: Regression guard - should never set pendingClarification during bypass
         if (parsed.clarification && !bypassFlag) {
@@ -1300,10 +1405,41 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
         }
 
         if (parsed.intent === 'defi') {
+          // 3) Handle amountPct token: compute USD amount and rewrite command
+          let commandToUse = userText;
+          const amountPctMatch = userText.match(/amountPct:"([^"]+)"/i);
+          if (amountPctMatch) {
+            const percent = parseFloat(amountPctMatch[1]);
+            if (!isNaN(percent) && percent > 0 && percent <= 100) {
+              const accountValue = account.accountValue || 10000; // Demo fallback
+              const computedUsd = Math.round((accountValue * percent) / 100);
+              // Rewrite command to include amountUsd token
+              commandToUse = userText.replace(/amountPct:"[^"]+"/i, `amountUsd:"${computedUsd}"`);
+              if (import.meta.env.DEV) {
+                console.log('[Chat] DeFi amountPct converted', {
+                  percent,
+                  accountValue,
+                  computedUsd,
+                  originalCommand: userText,
+                  rewrittenCommand: commandToUse,
+                });
+              }
+            }
+          }
+          
           // Create DeFi plan and get the proposal
-          const defiProposal = createDefiPlanFromCommand(userText);
+          const defiProposal = createDefiPlanFromCommand(commandToUse);
           defiProposalId = defiProposal.id;
           setOnboarding(prev => ({ ...prev, queuedStrategy: true }));
+          
+          if (import.meta.env.DEV) {
+            console.log('[Chat] DeFi plan created', {
+              intent: parsed.intent,
+              defiProposalId: defiProposal.id,
+              protocol: defiProposal.protocol,
+              depositUsd: defiProposal.depositUsd,
+            });
+          }
           
           // Dispatch planDrafted event
           window.dispatchEvent(
@@ -1311,10 +1447,25 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
               detail: { type: 'defi', id: defiProposal.id },
             })
           );
+          
+          // A) Immediately append assistant message with defiProposalId (match perps/events pattern)
+          const defiResponse: ChatMessage = {
+            id: `defi-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            text: "I've prepared a DeFi yield plan. Review the details below and confirm to execute.",
+            isUser: false,
+            timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+            defiProposalId: defiProposal.id,
+          };
+          appendMessageToChat(targetChatId, defiResponse);
+          clearInputAndStopTyping();
+          return; // Early return - prevent fallthrough to other flows
         } else if (parsed.intent === 'list_top_event_markets') {
+          // Extract requested count from parsed message (default 5)
+          const requestedCount = (parsed as any).requestedCount || 5;
+          
           // Fetch and display top markets list (not a strategy creation)
           import('../lib/eventMarkets').then(({ getTopEventMarkets }) => {
-            getTopEventMarkets().then(markets => {
+            getTopEventMarkets(requestedCount).then(markets => {
               const marketsMessage: ChatMessage = {
                 id: `markets-${Date.now()}`,
                 text: `Here are the top ${markets.length} prediction markets by volume:`,
@@ -1345,6 +1496,94 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
               clearInputAndStopTyping();
             });
           });
+        } else if (parsed.intent === 'list_top_defi_protocols') {
+          // Extract requested count from parsed message
+          const requestedCount = (parsed as any).requestedCount || 5;
+          
+          if (import.meta.env.DEV) {
+            console.log('[Chat] list_top_defi_protocols intent detected', { requestedCount });
+          }
+          
+          // Show loading message immediately
+          const loadingMessageId = `protocols-loading-${Date.now()}`;
+          const loadingMessage: ChatMessage = {
+            id: loadingMessageId,
+            text: 'Fetching top DeFi protocols by TVL...',
+            isUser: false,
+            timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+          };
+          appendMessageToChat(targetChatId, loadingMessage);
+          
+          // Fetch and display top DeFi protocols list (not a strategy creation)
+          import('../lib/defiProtocols').then(({ getTopDefiProtocolsByTvl }) => {
+            getTopDefiProtocolsByTvl(requestedCount).then(protocols => {
+              if (import.meta.env.DEV) {
+                console.log('[Chat] DeFi protocols fetched', { 
+                  requestedCount, 
+                  returnedCount: protocols.length,
+                  hasDefiProtocolsList: true 
+                });
+              }
+              
+              // Remove loading message and add final message
+              // Ensure text matches actual rendered count
+              const actualCount = protocols.length;
+              const finalMessage: ChatMessage = {
+                id: `protocols-${Date.now()}`,
+                text: `Here are the top ${actualCount} DeFi protocol${actualCount !== 1 ? 's' : ''} by TVL right now:`,
+                isUser: false,
+                timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+                defiProtocolsList: protocols.map(p => ({
+                  id: p.id,
+                  name: p.name,
+                  tvlUsd: p.tvlUsd,
+                  chains: p.chains,
+                  category: p.category,
+                  source: p.source,
+                  isLive: p.isLive,
+                })),
+              } as ChatMessage;
+              
+              // Replace loading message with final message
+              updateMessageInChat(targetChatId, loadingMessageId, finalMessage);
+              
+              clearInputAndStopTyping();
+            }).catch((error) => {
+              if (import.meta.env.DEV) {
+                console.error('[Chat] DeFi protocols fetch error', error);
+              }
+              
+              // Replace loading message with error, but still show static fallback
+              import('../lib/defiProtocols').then(({ getTopDefiProtocolsByTvl }) => {
+                getTopDefiProtocolsByTvl(requestedCount).then(protocols => {
+                  // Even on error, getTopDefiProtocolsByTvl returns static fallback
+                  // Ensure text matches actual rendered count
+                  const actualCount = protocols.length;
+                  const fallbackMessage: ChatMessage = {
+                    id: `protocols-${Date.now()}`,
+                    text: `Here are the top ${actualCount} DeFi protocol${actualCount !== 1 ? 's' : ''} by TVL:`,
+                    isUser: false,
+                    timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+                    defiProtocolsList: protocols.map(p => ({
+                      id: p.id,
+                      name: p.name,
+                      tvlUsd: p.tvlUsd,
+                      chains: p.chains,
+                      category: p.category,
+                      source: p.source,
+                      isLive: p.isLive,
+                    })),
+                  } as ChatMessage;
+                  
+                  // Replace loading message with final message (static fallback)
+                  updateMessageInChat(targetChatId, loadingMessageId, fallbackMessage);
+                  
+                  clearInputAndStopTyping();
+                });
+              });
+            });
+          });
+          return; // Early return - prevents generic fallback
         } else if (parsed.intent === 'event' && parsed.eventStrategy) {
           // Create event strategy
           const eventStrat = parsed.eventStrategy;
@@ -2227,8 +2466,12 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
         }
         
         // Step 5: Remove generic fallback for trade intents definitively
+        // Also skip generic response for list intents (they handle their own responses)
         let responseText: string;
-        if ((parsed.intent === 'trade' || parsed.intent === 'general') && !strategy && !defiProposalId) {
+        if ((parsed.intent as string) === 'list_top_defi_protocols' || parsed.intent === 'list_top_event_markets') {
+          // List intents handle their own responses asynchronously, skip generic response
+          return; // Early return - list handlers already appended message
+        } else if ((parsed.intent === 'trade' || parsed.intent === 'general') && !strategy && !defiProposalId) {
           // Step 5: Trade intent or clarification continuation should never show generic help
           if (import.meta.env.DEV) {
             console.log('[Chat] guard: prevented generic fallback for trade intent');
@@ -2622,6 +2865,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
                   defiProposalId={msg.defiProposalId}
                       executionMode={executionMode}
                   marketsList={msg.marketsList}
+                  defiProtocolsList={msg.defiProtocolsList}
                   onInsertPrompt={(text) => {
                     setInputValue(text);
                     textareaRef.current?.focus();
@@ -2651,7 +2895,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
           <div ref={messagesEndRef} />
         </div>
       </div>
-      <div className="flex-shrink-0 border-t border-slate-100 bg-white/90 backdrop-blur-sm shadow-[0_-4px_20px_rgba(15,23,42,0.08)]">
+      <div className="flex-shrink-0 border-t border-slate-100 bg-white/90 backdrop-blur-sm shadow-[0_-4px_20px_rgba(15,23,42,0.08)]" style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
         <div className="max-w-3xl mx-auto">
           {/* Latest Execution Plan Fallback - pinned above input */}
           {/* Latest Execution Plan Fallback removed - execution details now live inside chat plan card */}
@@ -2660,6 +2904,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
             <button
               type="button"
               onClick={() => setShowQuickStart(v => !v)}
+              data-coachmark="quick-actions"
               className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-medium text-slate-500 hover:bg-pink-50 transition-colors"
             >
               <span>Quick actions</span>

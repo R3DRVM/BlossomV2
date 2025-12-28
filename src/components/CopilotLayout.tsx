@@ -11,6 +11,7 @@ import PortfolioView from './PortfolioView';
 import PositionsTray from './PositionsTray';
 import ExecutionStatusBar from './ExecutionStatusBar';
 import OnboardingCoachmarks from './OnboardingCoachmarks';
+import EventMarketsCoachmarks from './EventMarketsCoachmarks';
 
 type CenterView = 'copilot' | 'risk' | 'portfolio';
 type ExecutionMode = 'auto' | 'confirm' | 'manual';
@@ -49,7 +50,7 @@ export default function CopilotLayout() {
   // Local center view state - syncs with global activeTab but keeps 3-panel layout
   const [centerView, setCenterView] = useState<CenterView>('copilot');
   
-  // Onboarding coachmarks
+  // Onboarding coachmarks (on-chain)
   const [showOnboarding, setShowOnboarding] = useState(() => {
     if (typeof window === 'undefined') return false;
     return localStorage.getItem('blossom.onboardingSeen') !== 'true';
@@ -57,6 +58,16 @@ export default function CopilotLayout() {
   
   const handleOnboardingComplete = () => {
     setShowOnboarding(false);
+  };
+
+  // Event Markets coachmarks (separate from on-chain)
+  const [showEventOnboarding, setShowEventOnboarding] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return localStorage.getItem('blossom.onboardingSeen.event') !== 'true';
+  });
+  
+  const handleEventOnboardingComplete = () => {
+    setShowEventOnboarding(false);
   };
   
   // Sync centerView with global activeTab when it changes
@@ -190,6 +201,7 @@ export default function CopilotLayout() {
               </button>
               <button
                 onClick={() => setVenue('event_demo')}
+                data-coachmark="event-tab"
                 className={`px-2.5 py-1 text-[11px] font-medium rounded-full transition-all flex items-center gap-1.5 ${
                   venue === 'event_demo'
                     ? 'bg-pink-50 text-blossom-pink border border-pink-200'
@@ -255,7 +267,7 @@ export default function CopilotLayout() {
                   </button>
                 </div>
               )}
-              <div className="flex-1 flex flex-col min-h-0 overflow-hidden relative" style={{ minHeight: 'calc(100vh - 160px)' }}>
+              <div className="flex-1 flex flex-col min-h-0 overflow-hidden relative">
                 <div className="flex-1 overflow-y-auto">
                   <Chat 
                     selectedStrategyId={selectedStrategyId}
@@ -269,8 +281,11 @@ export default function CopilotLayout() {
                   executionMode={executionMode}
                   venue={venue}
                 />
-                {showOnboarding && centerView === 'copilot' && (
+                {showOnboarding && centerView === 'copilot' && venue !== 'event_demo' && (
                   <OnboardingCoachmarks onComplete={handleOnboardingComplete} />
+                )}
+                {showEventOnboarding && centerView === 'copilot' && venue === 'event_demo' && (
+                  <EventMarketsCoachmarks onComplete={handleEventOnboardingComplete} />
                 )}
               </div>
             </>

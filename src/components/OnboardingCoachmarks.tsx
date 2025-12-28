@@ -14,14 +14,14 @@ const COACHMARKS: Coachmark[] = [
     id: 'execution-mode',
     targetSelector: '[data-coachmark="execution-mode"]',
     title: 'Execution Mode',
-    description: 'Choose how plans execute: Auto (immediate), Confirm (requires approval), or Manual (copy plan)',
+    description: 'Choose execution: Auto, Confirm, or Manual',
     position: 'bottom',
   },
   {
     id: 'quick-actions',
     targetSelector: '[data-coachmark="quick-actions"]',
     title: 'Quick Actions',
-    description: 'Start with suggested prompts or save your own favorites',
+    description: 'Start with suggested prompts or save favorites',
     position: 'top',
   },
   {

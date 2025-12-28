@@ -197,7 +197,27 @@ export default function ExecutionDetailsDisclosure({
           <ChevronDown className={`w-3 h-3 transition-transform ${showRouting ? 'rotate-180' : ''}`} />
         </button>
         {showRouting && (() => {
-          // For events, show source-aware venue/chain; for perps, use simulated route
+          // For DeFi, show execution path
+          if (defiPosition) {
+            return (
+              <div className="mt-1.5 pt-1.5 border-t border-slate-100 space-y-1 text-[10px] text-slate-600">
+                <div className="flex justify-between">
+                  <span>Execution path:</span>
+                  <span className="font-medium">Bridge → Swap → Deposit <span className="text-slate-400 text-[9px]">(simulated)</span></span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Protocol:</span>
+                  <span className="font-medium">{defiPosition.protocol}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Asset:</span>
+                  <span className="font-medium">{defiPosition.asset}</span>
+                </div>
+              </div>
+            );
+          }
+          
+          // For events, show source-aware venue/chain
           if (strategy?.instrumentType === 'event') {
             const venueDisplay = formatEventVenueDisplay(strategy.eventMarketSource);
             return (
@@ -218,6 +238,7 @@ export default function ExecutionDetailsDisclosure({
             );
           }
           
+          // For perps, use simulated route
           const route = getSimulatedRouteDisplay({
             strategyId: strategy?.id,
             market: strategy?.market,
@@ -234,6 +255,7 @@ export default function ExecutionDetailsDisclosure({
                       ? `${route.routeNote} → ${route.venueLabel}`
                       : route.venueLabel
                     : formatVenueDisplay(venue, executionMode)}
+                  <span className="text-slate-400 text-[9px]"> (simulated)</span>
                 </span>
               </div>
               <div className="flex justify-between">

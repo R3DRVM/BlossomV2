@@ -10,6 +10,7 @@ import { useExecution } from '../context/ExecutionContext';
 import { useActivityFeed } from '../context/ActivityFeedContext';
 import { formatLeverage, formatMarginNotional, formatVenueDisplay, getSimulatedRouteDisplay, formatUsdOrDash, formatEventVenueDisplay } from '../lib/formatPlanCard';
 import { getCachedLiveTicker, marketToSpotSymbol, computeIndicativeTpSl, getLiveSpotForMarket } from '../lib/liveSpot';
+import { getCollapsedPreviewFields, type CollapsedPreviewFields } from '../lib/collapsedPreview';
 
 interface MessageBubbleProps {
   text: string;
@@ -33,6 +34,15 @@ interface MessageBubbleProps {
     noPrice: number;
     volume24hUsd?: number;
     source: 'polymarket' | 'kalshi' | 'static';
+    isLive: boolean;
+  }> | null;
+  defiProtocolsList?: Array<{
+    id: string;
+    name: string;
+    tvlUsd: number;
+    chains: string[];
+    category?: string;
+    source: 'defillama' | 'static';
     isLive: boolean;
   }> | null;
   onSendMessage?: (text: string) => void; // Auto-send handler for market list buttons
@@ -84,7 +94,7 @@ function getPortfolioBiasWarning(strategies: any[], newStrategy: ParsedStrategy)
   return null;
 }
 
-export default function MessageBubble({ text, isUser, timestamp, strategy, strategyId, selectedStrategyId, defiProposalId, executionMode, onInsertPrompt, onRegisterStrategyRef, onConfirmDraft, showRiskWarning, riskReasons, marketsList, onSendMessage }: MessageBubbleProps) {
+export default function MessageBubble({ text, isUser, timestamp, strategy, strategyId, selectedStrategyId, defiProposalId, executionMode, onInsertPrompt, onRegisterStrategyRef, onConfirmDraft, showRiskWarning, riskReasons, marketsList, defiProtocolsList, onSendMessage }: MessageBubbleProps) {
   const { updateStrategyStatus, recomputeAccountFromStrategies, strategies, setActiveTab, setSelectedStrategyId, setOnboarding, closeStrategy, closeEventStrategy, defiPositions, latestDefiProposal, confirmDefiPlan, updateFromBackendPortfolio, account, riskProfile, venue } = useBlossomContext();
   const { addPendingPlan, removePendingPlan, setLastAction } = useExecution();
   const { pushEvent } = useActivityFeed();
@@ -307,7 +317,9 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                     // Only render if we have at least a title
                     if (!marketTitle || marketTitle === '—') {
                       if (import.meta.env.DEV) {
-                        console.warn('[MessageBubble] Skipping market with missing title', { market });
+                        if (import.meta.env.DEV) {
+                          console.warn('[MessageBubble] Skipping market with missing title', { market });
+                        }
                       }
                       return null;
                     }
@@ -329,7 +341,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                                 <span>Vol: ${(volume24hUsd / 1000).toFixed(0)}k</span>
                               )}
                               <span className="text-slate-400">
-                                {source === 'polymarket' ? 'Polymarket' : source === 'kalshi' ? 'Kalshi' : 'Demo'}
+                                {source === 'polymarket' ? 'Polymarket' : source === 'kalshi' ? 'Kalshi' : 'Synthetic'}
                                 {isLive && <span className="ml-1 text-[9px]">• Live</span>}
                               </span>
                             </div>
@@ -380,7 +392,115 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
               );
             } catch (error) {
               if (import.meta.env.DEV) {
-                console.warn('[MessageBubble] Error rendering markets list', error);
+                if (import.meta.env.DEV) {
+                  console.warn('[MessageBubble] Error rendering markets list', error);
+                }
+              }
+              return null;
+            }
+          })()}
+          
+          {/* DeFi Protocols List (for list_top_defi_protocols intent) */}
+          {!isUser && Array.isArray(defiProtocolsList) && defiProtocolsList.length > 0 && (() => {
+            try {
+              return (
+                <div className="mt-3 space-y-2">
+                  {defiProtocolsList.map((protocol) => {
+                    // Null-safe field extraction
+                    const protocolId = protocol?.id || `protocol-${Math.random()}`;
+                    const protocolName = protocol?.name || '—';
+                    const tvlUsd = typeof protocol?.tvlUsd === 'number' ? protocol.tvlUsd : 0;
+                    const chains = Array.isArray(protocol?.chains) ? protocol.chains : [];
+                    const category = protocol?.category || undefined;
+                    const source = protocol?.source || 'static';
+                    const isLive = protocol?.isLive === true;
+                    
+                    // Only render if we have at least a name
+                    if (!protocolName || protocolName === '—') {
+                      if (import.meta.env.DEV) {
+                        console.warn('[MessageBubble] Skipping protocol with missing name', { protocol });
+                      }
+                      return null;
+                    }
+                    
+                    // Format TVL
+                    const tvlFormatted = tvlUsd >= 1e9 
+                      ? `$${(tvlUsd / 1e9).toFixed(1)}B`
+                      : tvlUsd >= 1e6
+                      ? `$${(tvlUsd / 1e6).toFixed(1)}M`
+                      : `$${(tvlUsd / 1000).toFixed(0)}k`;
+                    
+                    return (
+                      <div
+                        key={protocolId}
+                        className="border border-slate-200 rounded-lg bg-white p-3 space-y-2"
+                      >
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1 min-w-0">
+                            <div className="text-xs font-medium text-slate-900 mb-1">
+                              {protocolName}
+                            </div>
+                            <div className="flex items-center gap-3 text-[10px] text-slate-500 flex-wrap">
+                              <span>TVL: {tvlFormatted}</span>
+                              {category && (
+                                <span>{category}</span>
+                              )}
+                              {chains.length > 0 && (
+                                <span>{chains.slice(0, 2).join(', ')}{chains.length > 2 ? '...' : ''}</span>
+                              )}
+                              <span className="text-slate-400">
+                                {source === 'defillama' ? 'DefiLlama' : 'Demo'}
+                                {isLive && <span className="ml-1 text-[9px]">• Live</span>}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex gap-2 pt-1">
+                          <button
+                            onClick={() => {
+                              if (!protocolName || protocolName === '—') return;
+                              
+                              const messageText = `Allocate amountPct:"10" to protocol:"${protocolName}" REDACTED yield`;
+                              
+                              // Prefer auto-send if available, otherwise fall back to insert prompt
+                              if (onSendMessage) {
+                                onSendMessage(messageText);
+                              } else if (onInsertPrompt) {
+                                onInsertPrompt(messageText);
+                              }
+                            }}
+                            disabled={!protocolName || protocolName === '—'}
+                            className="flex-1 px-2 py-1.5 text-[10px] font-medium rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-pink-50 hover:border-pink-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            Allocate 10%
+                          </button>
+                          <button
+                            onClick={() => {
+                              if (!protocolName || protocolName === '—') return;
+                              
+                              const messageText = `Allocate amountUsd:"500" to protocol:"${protocolName}" REDACTED yield`;
+                              
+                              // Prefer auto-send if available, otherwise fall back to insert prompt
+                              if (onSendMessage) {
+                                onSendMessage(messageText);
+                              } else if (onInsertPrompt) {
+                                onInsertPrompt(messageText);
+                              }
+                            }}
+                            disabled={!protocolName || protocolName === '—'}
+                            className="flex-1 px-2 py-1.5 text-[10px] font-medium rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-pink-50 hover:border-pink-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            Allocate $500
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  }).filter(Boolean)}
+                </div>
+              );
+            } catch (error) {
+              if (import.meta.env.DEV) {
+                console.warn('[MessageBubble] Error rendering DeFi protocols list', error);
               }
               return null;
             }
@@ -389,6 +509,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
         {!isUser && strategy && (
           <div 
             ref={strategyPreviewRef}
+            {...(currentStrategy?.instrumentType === 'event' && currentStatus === 'draft' ? { 'data-coachmark': 'event-draft-card' } : {})}
             className={`mt-1.5 w-full max-w-md strategy-card card-glass transition-all duration-300 ${
               currentStatus === 'draft' || currentStatus === 'queued'
                 ? ''
@@ -408,32 +529,32 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                 {currentStrategy?.eventLabel || currentStrategy?.eventKey || strategy.market}
               </h3>
               <div className="flex items-center gap-2">
-                <span className={`px-2.5 py-1 text-xs font-medium rounded-full ${
-                  currentStatus === 'draft'
-                    ? 'bg-gray-100 text-gray-600'
-                    : currentStatus === 'queued'
-                    ? 'bg-blossom-slate/10 text-blossom-slate'
-                    : currentStatus === 'executing'
-                    ? 'bg-blossom-pink/10 text-blossom-pink border border-blossom-pink/30'
+              <span className={`px-2.5 py-1 text-xs font-medium rounded-full ${
+                currentStatus === 'draft'
+                  ? 'bg-gray-100 text-gray-600'
+                  : currentStatus === 'queued'
+                  ? 'bg-blossom-slate/10 text-blossom-slate'
+                  : currentStatus === 'executing'
+                  ? 'bg-blossom-pink/10 text-blossom-pink border border-blossom-pink/30'
                     : (currentStatus as string) === 'blocked'
-                    ? 'bg-amber-100 text-amber-700 border border-amber-300'
-                    : currentStatus === 'executed' && !isClosed
-                    ? 'bg-blossom-pink text-white'
-                    : isClosed && currentStrategy?.realizedPnlUsd && currentStrategy.realizedPnlUsd > 0
-                    ? 'bg-blossom-success text-white'
-                    : isClosed && currentStrategy?.realizedPnlUsd && currentStrategy.realizedPnlUsd < 0
-                    ? 'bg-blossom-danger text-white'
-                    : 'bg-gray-100 text-gray-600 border border-blossom-outline'
-                }`}>
-                  {currentStatus === 'draft' ? 'Draft' :
-                   currentStatus === 'queued' ? 'Queued' :
-                   currentStatus === 'executing' ? 'Executing' :
+                  ? 'bg-amber-100 text-amber-700 border border-amber-300'
+                  : currentStatus === 'executed' && !isClosed
+                  ? 'bg-blossom-pink text-white'
+                  : isClosed && currentStrategy?.realizedPnlUsd && currentStrategy.realizedPnlUsd > 0
+                  ? 'bg-blossom-success text-white'
+                  : isClosed && currentStrategy?.realizedPnlUsd && currentStrategy.realizedPnlUsd < 0
+                  ? 'bg-blossom-danger text-white'
+                  : 'bg-gray-100 text-gray-600 border border-blossom-outline'
+              }`}>
+                {currentStatus === 'draft' ? 'Draft' :
+                 currentStatus === 'queued' ? 'Queued' :
+                 currentStatus === 'executing' ? 'Executing' :
                    (currentStatus as string) === 'blocked' ? 'Needs funding' :
-                   currentStatus === 'executed' && !isClosed ? 'Executed' :
-                   isClosed && currentStrategy?.eventOutcome === 'won' ? 'Settled - Won' :
-                   isClosed && currentStrategy?.eventOutcome === 'lost' ? 'Settled - Lost' :
-                   isClosed ? 'Closed' : 'Active'}
-                </span>
+                 currentStatus === 'executed' && !isClosed ? 'Executed' :
+                 isClosed && currentStrategy?.eventOutcome === 'won' ? 'Settled - Won' :
+                 isClosed && currentStrategy?.eventOutcome === 'lost' ? 'Settled - Lost' :
+                 isClosed ? 'Closed' : 'Active'}
+              </span>
                 <svg
                   className={`w-3 h-3 text-slate-400 transition-transform ${isCardExpanded ? 'rotate-180' : ''}`}
                   fill="none"
@@ -442,205 +563,224 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                 >
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                 </svg>
-              </div>
+            </div>
             </button>
             
-            {/* Collapsed: 2 compact rows (perp and event) */}
-            {!isCardExpanded && (currentStrategy?.instrumentType === 'perp' || currentStrategy?.instrumentType === 'event') && (
-              <div className="px-3 py-2 space-y-1.5 text-[11px]">
-                {currentStrategy?.instrumentType === 'perp' ? (
-                  <>
-                    {/* Row 1: Trade (Perp) */}
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className={`font-medium ${strategy.side === 'Long' ? 'text-emerald-600' : 'text-rose-600'}`}>
-                          {strategy.side}
+            {/* Collapsed: 2 compact rows (perp, event, and DeFi) */}
+            {!isCardExpanded && (currentStrategy || defiProposal) && (() => {
+              const preview = getCollapsedPreviewFields(
+                currentStrategy || undefined, 
+                defiProposal || undefined, 
+                strategy || undefined,
+                account.accountValue || 10000 // Pass account value for deriving amounts
+              );
+              if (!preview) return null;
+              
+              // Determine tone: pending (yellow-ish) for drafts/proposed, neutral (gray) for executed/active
+              const isPending = isDraft || (defiProposal?.status === 'proposed');
+              const textTone = isPending ? 'text-amber-700' : 'text-slate-600';
+              const secondaryTone = isPending ? 'text-amber-600' : 'text-slate-500';
+              
+              // Extract side/color for perp/event
+              const sideColor = currentStrategy?.instrumentType === 'perp' 
+                ? (strategy.side === 'Long' ? 'text-emerald-600' : 'text-rose-600')
+                : currentStrategy?.instrumentType === 'event'
+                ? ((currentStrategy.eventSide || strategy.side) === 'YES' ? 'text-emerald-600' : 'text-rose-600')
+                : 'text-slate-700';
+              
+              // Get routing display
+              let routingDisplay = preview.routingLabel;
+              if (currentStrategy?.instrumentType === 'perp') {
+                const route = getSimulatedRouteDisplay({
+                  strategyId,
+                  market: strategy.market,
+                  instrumentType: currentStrategy?.instrumentType,
+                  executionMode,
+                });
+                routingDisplay = executionMode === 'auto' || executionMode === undefined
+                  ? `${route.venueLabel} • ${route.chainLabel}`
+                  : formatVenueDisplay(venue, executionMode);
+              } else if (currentStrategy?.instrumentType === 'event') {
+                const venueDisplay = formatEventVenueDisplay(currentStrategy.eventMarketSource);
+                const chainPart = venueDisplay.chain === '—' ? '' : ` • ${venueDisplay.chain}`;
+                routingDisplay = `${venueDisplay.venue}${chainPart}`;
+              }
+              
+              return (
+                <div className="px-3 py-2 space-y-1.5 text-[11px]">
+                  {/* Row 1: Primary info */}
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 min-w-0">
+                      {currentStrategy && (
+                        <span className={`font-medium ${sideColor}`}>
+                          {preview.primaryLabel.split(' ')[0]}
                         </span>
-                        <span className="text-slate-600">{strategy.market}</span>
-                        <span className="text-slate-400">•</span>
-                        <span className="text-slate-600 truncate">
-                          {formatMarginNotional(currentStrategy.notionalUsd || (currentStrategy.marginUsd || 0) * (currentStrategy.leverage || 1))}
+                      )}
+                      {!currentStrategy && defiProposal && (
+                        <span className={`font-medium ${textTone}`}>
+                          {preview.primaryLabel}
                         </span>
-                      </div>
-                      <div className="flex items-center gap-2 text-slate-600 flex-shrink-0">
-                        <span>{formatLeverage(currentStrategy.leverage)}</span>
-                        <span className="text-slate-400">•</span>
-                        <span>{strategy.riskPercent}%</span>
-                      </div>
-                    </div>
-                    
-                    {/* Row 2: Routing (Perp) */}
-                    {(() => {
-                      const route = getSimulatedRouteDisplay({
-                        strategyId,
-                        market: strategy.market,
-                        instrumentType: currentStrategy?.instrumentType,
-                        executionMode,
-                      });
-                      return (
-                        <div className="flex items-center justify-between text-slate-500">
-                          <span className="truncate">
-                            {executionMode === 'auto' || executionMode === undefined
-                              ? `${route.venueLabel} • ${route.chainLabel}`
-                              : formatVenueDisplay(venue, executionMode)}
-                          </span>
-                          <div className="flex items-center gap-2 flex-shrink-0">
-                            <span>{route.slippageLabel}</span>
-                          </div>
-                        </div>
-                      );
-                    })()}
-                  </>
-                ) : currentStrategy?.instrumentType === 'event' ? (
-                  <>
-                    {/* Row 1: Event */}
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className={`font-medium ${(currentStrategy.eventSide || strategy.side) === 'YES' ? 'text-emerald-600' : 'text-rose-600'}`}>
-                          {currentStrategy.eventSide || strategy.side}
-                        </span>
-                        <span className="text-slate-600 truncate">
-                          {currentStrategy.eventLabel || currentStrategy.eventKey || strategy.market}
-                        </span>
-                        <span className="text-slate-400">•</span>
-                        <span className="text-slate-600 truncate">
-                          {formatUsdOrDash(currentStrategy.stakeUsd ?? strategy.entryPrice)}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2 text-slate-600 flex-shrink-0">
-                        <span>{strategy.riskPercent}%</span>
-                      </div>
-                    </div>
-                    
-                    {/* Row 2: Venue (Event) */}
-                    <div className="flex items-center justify-between text-slate-500">
-                      <span className="truncate">
-                        {(() => {
-                          const venueDisplay = formatEventVenueDisplay(currentStrategy.eventMarketSource);
-                          const chainPart = venueDisplay.chain === '—' ? '' : ` • ${venueDisplay.chain}`;
-                          return (
-                            <>
-                              {venueDisplay.venue}{chainPart} <span className="text-slate-400 text-[9px]">(simulated)</span>
-                            </>
-                          );
-                        })()}
+                      )}
+                      {currentStrategy && (
+                        <>
+                          <span className={textTone}>{preview.primaryLabel.split(' ').slice(1).join(' ')}</span>
+                          <span className="text-slate-400">•</span>
+                        </>
+                      )}
+                      <span className={`truncate ${textTone}`}>
+                        {preview.primaryValue}
                       </span>
+                    </div>
+                    {preview.secondaryValue && (
+                      <div className={`flex items-center gap-2 flex-shrink-0 ${secondaryTone}`}>
+                        <span>{preview.secondaryValue}</span>
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* Row 2: Routing/Execution */}
+                  <div className={`flex items-center justify-between ${secondaryTone}`}>
+                    <span className="truncate">
+                      {routingDisplay}
+                      {currentStrategy?.instrumentType === 'event' && (
+                        <span className="text-slate-400 text-[9px]"> (simulated)</span>
+                      )}
+                    </span>
+                    {preview.routingValue && (
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <span className="text-slate-400 text-[9px]">{preview.routingValue}</span>
+                      </div>
+                    )}
+                    {currentStrategy?.instrumentType === 'event' && !preview.routingValue && (
                       <div className="flex items-center gap-2 flex-shrink-0">
                         <span className="text-slate-400 text-[9px]">Max payout: {formatUsdOrDash(currentStrategy.maxPayoutUsd ?? strategy.takeProfit)}</span>
                       </div>
+                    )}
+                    {currentStrategy?.instrumentType === 'perp' && (
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        {(() => {
+                          const route = getSimulatedRouteDisplay({
+                            strategyId,
+                            market: strategy.market,
+                            instrumentType: currentStrategy?.instrumentType,
+                            executionMode,
+                          });
+                          return <span className="text-slate-400 text-[9px]">{route.slippageLabel}</span>;
+                        })()}
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* Chips row (single-line, truncation-safe) */}
+                  {(isExecuted || isDraft || (defiProposal && defiProposal.status === 'proposed')) && (
+                    <div className="flex items-center gap-1.5 flex-wrap overflow-hidden">
+                      {isExecuted && (
+                        <>
+                          <span className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-blue-50 text-blue-700 whitespace-nowrap">Monitoring</span>
+                          {currentStrategy?.instrumentType === 'perp' && currentStrategy.stopLoss && currentStrategy.stopLoss > 0 && (
+                            <span className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-rose-50 text-rose-700 whitespace-nowrap">SL armed</span>
+                          )}
+                          {currentStrategy?.instrumentType === 'perp' && currentStrategy.takeProfit && currentStrategy.takeProfit > 0 && (
+                            <span className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-emerald-50 text-emerald-700 whitespace-nowrap">TP armed</span>
+                          )}
+                          {currentStrategy && <RiskBadge riskPercent={strategy.riskPercent} />}
+                        </>
+                      )}
+                      {(isDraft || (defiProposal && defiProposal.status === 'proposed')) && (
+                        <span className="text-slate-500 text-[10px] whitespace-nowrap">Draft ready to confirm</span>
+                      )}
                     </div>
-                  </>
-                ) : null}
-                
-                {/* Chips row (single-line, truncation-safe) */}
-                {(isExecuted || isDraft) && (
-                  <div className="flex items-center gap-1.5 flex-wrap overflow-hidden">
-                    {isExecuted && (
-                      <>
-                        <span className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-blue-50 text-blue-700 whitespace-nowrap">Monitoring</span>
-                        {currentStrategy?.instrumentType === 'perp' && currentStrategy.stopLoss && currentStrategy.stopLoss > 0 && (
-                          <span className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-rose-50 text-rose-700 whitespace-nowrap">SL armed</span>
-                        )}
-                        {currentStrategy?.instrumentType === 'perp' && currentStrategy.takeProfit && currentStrategy.takeProfit > 0 && (
-                          <span className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-emerald-50 text-emerald-700 whitespace-nowrap">TP armed</span>
-                        )}
-                        <RiskBadge riskPercent={strategy.riskPercent} />
-                      </>
-                    )}
-                    {isDraft && (
-                      <span className="text-slate-500 text-[10px] whitespace-nowrap">Draft ready to confirm</span>
-                    )}
-                  </div>
-                )}
-                
-                {/* CTA row (collapsed) - only for drafts */}
-                {isDraft && strategyId && (
-                  <div className="pt-1.5 border-t border-slate-100">
-                    <button
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        if (onConfirmDraft) {
-                          onConfirmDraft(strategyId);
-                        } else {
-                          handleConfirmAndQueue();
-                        }
-                      }}
-                      disabled={!!disableReason}
-                      className={`w-full px-3 py-2 text-xs font-medium rounded-lg transition-colors ${
-                        !disableReason
-                          ? 'bg-blossom-pink text-white hover:bg-blossom-pink/90 shadow-sm'
-                          : 'bg-blossom-outline/40 text-slate-400 cursor-not-allowed'
-                      }`}
-                      title={disableReason ?? (isVeryHighRisk ? 'Risk is elevated, proceed with caution' : undefined)}
-                    >
-                      Confirm & Execute
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
+                  )}
+                  
+                  {/* CTA row (collapsed) - only for drafts */}
+                  {isDraft && strategyId && (
+                    <div className="pt-1.5 border-t border-slate-100">
+                      <button
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          if (onConfirmDraft) {
+                            onConfirmDraft(strategyId);
+                          } else {
+                            handleConfirmAndQueue();
+                          }
+                        }}
+                        disabled={!!disableReason}
+                        className={`w-full px-3 py-2 text-xs font-medium rounded-lg transition-colors ${
+                          !disableReason
+                            ? 'bg-blossom-pink text-white hover:bg-blossom-pink/90 shadow-sm'
+                            : 'bg-blossom-outline/40 text-slate-400 cursor-not-allowed'
+                        }`}
+                        title={disableReason ?? (isVeryHighRisk ? 'Risk is elevated, proceed with caution' : undefined)}
+                      >
+                        Confirm & Execute
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
             
             {/* Expanded: Full details */}
             {isCardExpanded && (
-              <div className="max-h-[60vh] overflow-y-auto p-3 pt-1.5">
-                <div className="grid grid-cols-2 gap-1.5 text-xs mb-2">
-                {currentStrategy?.instrumentType === 'event' ? (
-                  <>
-                    <div>
-                      <div className="text-xs text-blossom-slate mb-0.5">Type</div>
-                      <div className="font-medium text-blossom-ink">Event Contract</div>
+            <div className="max-h-[60vh] overflow-y-auto p-3 pt-1.5">
+              <div className="grid grid-cols-2 gap-1.5 text-xs mb-2">
+              {currentStrategy?.instrumentType === 'event' ? (
+                <>
+                  <div>
+                    <div className="text-xs text-blossom-slate mb-0.5">Type</div>
+                    <div className="font-medium text-blossom-ink">Event Contract</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-blossom-slate mb-0.5">Side</div>
+                    <div className={`font-medium ${
+                      currentStrategy.eventSide === 'YES' ? 'text-blossom-success' : 'text-blossom-danger'
+                    }`}>
+                      {currentStrategy.eventSide}
                     </div>
-                    <div>
-                      <div className="text-xs text-blossom-slate mb-0.5">Side</div>
-                      <div className={`font-medium ${
-                        currentStrategy.eventSide === 'YES' ? 'text-blossom-success' : 'text-blossom-danger'
-                      }`}>
-                        {currentStrategy.eventSide}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-xs text-blossom-slate mb-0.5">Stake</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-blossom-slate mb-0.5">Stake</div>
                       <div className="font-medium text-blossom-ink">{formatUsdOrDash(currentStrategy.stakeUsd ?? strategy.entryPrice)}</div>
-                    </div>
-                    <div>
-                      <div className="text-xs text-blossom-slate mb-0.5">Max Payout</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-blossom-slate mb-0.5">Max Payout</div>
                       <div className="font-medium text-blossom-success">{formatUsdOrDash(currentStrategy.maxPayoutUsd ?? strategy.takeProfit)}</div>
-                    </div>
-                    <div className="col-span-2">
-                      <div className="text-xs text-blossom-slate mb-0.5">Max Loss</div>
+                  </div>
+                  <div className="col-span-2">
+                    <div className="text-xs text-blossom-slate mb-0.5">Max Loss</div>
                       <div className="font-medium text-blossom-danger">{formatUsdOrDash(currentStrategy.maxLossUsd ?? strategy.stopLoss)}</div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div>
+                    <div className="text-xs text-blossom-slate mb-0.5">Side</div>
+                    <div className={`font-medium ${
+                      strategy.side === 'Long' ? 'text-blossom-success' : 'text-blossom-danger'
+                    }`}>
+                      {strategy.side}
                     </div>
-                  </>
-                ) : (
-                  <>
-                    <div>
-                      <div className="text-xs text-blossom-slate mb-0.5">Side</div>
-                      <div className={`font-medium ${
-                        strategy.side === 'Long' ? 'text-blossom-success' : 'text-blossom-danger'
-                      }`}>
-                        {strategy.side}
-                      </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-blossom-slate mb-0.5">Risk</div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-blossom-ink">
+                        {strategy.riskPercent}%
+                        {(() => {
+                          const riskUsd = (strategy.riskPercent / 100) * account.accountValue;
+                          return riskUsd > 0 ? (
+                            <span className="text-[11px] text-slate-500 ml-1">
+                              · ${riskUsd.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                            </span>
+                          ) : null;
+                        })()}
+                      </span>
+                      <RiskBadge riskPercent={strategy.riskPercent} />
                     </div>
-                    <div>
-                      <div className="text-xs text-blossom-slate mb-0.5">Risk</div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium text-blossom-ink">
-                          {strategy.riskPercent}%
-                          {(() => {
-                            const riskUsd = (strategy.riskPercent / 100) * account.accountValue;
-                            return riskUsd > 0 ? (
-                              <span className="text-[11px] text-slate-500 ml-1">
-                                · ${riskUsd.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                              </span>
-                            ) : null;
-                          })()}
-                        </span>
-                        <RiskBadge riskPercent={strategy.riskPercent} />
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-xs text-blossom-slate mb-0.5">Entry</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-blossom-slate mb-0.5">Entry</div>
                       <div className="flex items-center gap-1">
                         <span className="font-medium text-blossom-ink">{formatUsdOrDash(perpDisplay.entry)}</span>
                         {perpDisplay.hasLive && (
@@ -652,9 +792,9 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                           </span>
                         )}
                       </div>
-                    </div>
-                    <div>
-                      <div className="text-xs text-blossom-slate mb-0.5">Take Profit</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-blossom-slate mb-0.5">Take Profit</div>
                       <div className="flex items-center gap-1">
                         <span className="font-medium text-blossom-success">{formatUsdOrDash(perpDisplay.tp)}</span>
                         {perpDisplay.hasLive && (
@@ -666,9 +806,9 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                           </span>
                         )}
                       </div>
-                    </div>
-                    <div>
-                      <div className="text-xs text-blossom-slate mb-0.5">Stop Loss</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-blossom-slate mb-0.5">Stop Loss</div>
                       <div className="flex items-center gap-1">
                         <span className="font-medium text-blossom-danger">{formatUsdOrDash(perpDisplay.sl)}</span>
                         {perpDisplay.hasLive && (
@@ -680,13 +820,13 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                           </span>
                         )}
                       </div>
-                    </div>
-                  </>
-                )}
-                </div>
-                
-                {/* Explanation microcopy */}
-                {currentStrategy?.instrumentType === 'perp' && (
+                  </div>
+                </>
+              )}
+            </div>
+            
+            {/* Explanation microcopy */}
+            {currentStrategy?.instrumentType === 'perp' && (
               <div className="mt-1.5 px-3 pb-1.5">
                 <p className="text-[11px] text-slate-500">
                   Blossom interpreted this as: <span className="font-medium text-slate-700">{strategy.side}</span>{' '}
@@ -760,9 +900,9 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                     // Feature 8: Fund REDACTED button (disabled - fundUsdc not available)
                     // if (fundUsdc) {
                     //   fundUsdc(2000);
-                    if (import.meta.env.DEV) {
+                      if (import.meta.env.DEV) {
                       console.warn('[MessageBubble] fundUsdc not available');
-                    }
+                      }
                     // }
                   }}
                   className="w-full h-10 px-4 text-sm font-medium rounded-xl transition-all bg-amber-500 hover:bg-amber-600 text-white shadow-sm"
@@ -801,6 +941,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                     }
                   }}
                   data-testid="confirm-trade"
+                  {...(currentStrategy?.instrumentType === 'event' ? { 'data-coachmark': 'event-confirm' } : {})}
                   disabled={!!disableReason}
                   className={`w-full px-3 py-2 text-xs font-medium rounded-lg transition-colors ${
                     !disableReason
@@ -915,7 +1056,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
             )}
               </>
             )}
-              </div>
+            </div>
             )}
           </div>
         )}
@@ -931,25 +1072,25 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
             </ul>
             {getStrategyReasoning(strategy, currentStrategy?.instrumentType).length > 2 && (
               <>
-                <button
-                  onClick={() => setShowReasoning(!showReasoning)}
+            <button
+              onClick={() => setShowReasoning(!showReasoning)}
                   className="text-left mt-1.5 pt-1.5 border-t border-gray-200/60 w-full"
                 >
                   <span className="text-[10px] text-gray-500 hover:text-gray-700 underline">{showReasoning ? 'Less' : 'More rationale'}</span>
-                </button>
-                {showReasoning && (
-                  <div className="mt-1.5 pt-1.5 border-t border-gray-200/60">
-                    <ul className="list-disc pl-4 space-y-0.5 text-[11px] text-gray-600">
+            </button>
+            {showReasoning && (
+              <div className="mt-1.5 pt-1.5 border-t border-gray-200/60">
+                <ul className="list-disc pl-4 space-y-0.5 text-[11px] text-gray-600">
                       {getStrategyReasoning(strategy, currentStrategy?.instrumentType).slice(2).map((line, idx) => (
                         <li key={idx + 2}>{line}</li>
-                      ))}
-                    </ul>
-                    
-                    {biasWarning && (
-                      <div className="mt-1.5 rounded-md bg-blossom-pinkSoft/60 px-2 py-1 text-[10px] text-blossom-ink border border-blossom-pink/30">
-                        {biasWarning}
-                      </div>
-                    )}
+                  ))}
+                </ul>
+                
+                {biasWarning && (
+                  <div className="mt-1.5 rounded-md bg-blossom-pinkSoft/60 px-2 py-1 text-[10px] text-blossom-ink border border-blossom-pink/30">
+                    {biasWarning}
+                  </div>
+                )}
                   </div>
                 )}
               </>
@@ -998,18 +1139,77 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
         {/* DeFi Plan Card */}
         {!isUser && defiProposal && (
           <div className="mt-1.5 w-full max-w-md bg-white rounded-2xl shadow-sm border border-blossom-outline strategy-card">
-            {/* Header - always visible */}
-            <div className="flex items-center justify-between p-3 pb-1.5 border-b border-blossom-outline/20">
-              <h3 className="text-sm font-semibold text-blossom-ink">DeFi Plan (Sim)</h3>
-              <span className={`px-2.5 py-1 text-xs font-medium rounded-full ${
-                defiProposal.status === 'proposed'
-                  ? 'bg-gray-100 text-gray-600'
-                  : 'bg-blossom-pink text-white'
-              }`}>
-                {defiProposal.status === 'proposed' ? 'Proposed' : 'Active'}
-              </span>
-            </div>
-            {/* Scrollable content */}
+            {/* Header - clickable to expand/collapse */}
+            <button
+              onClick={() => setIsCardExpanded(!isCardExpanded)}
+              className="w-full flex items-center justify-between p-3 pb-1.5 border-b border-blossom-outline/20 hover:bg-slate-50/50 transition-colors"
+            >
+              <h3 className="text-sm font-semibold text-blossom-ink">DeFi Plan</h3>
+              <div className="flex items-center gap-2">
+                <span className={`px-2.5 py-1 text-xs font-medium rounded-full ${
+                  defiProposal.status === 'proposed'
+                    ? 'bg-gray-100 text-gray-600'
+                    : 'bg-blossom-pink text-white'
+                }`}>
+                  {defiProposal.status === 'proposed' ? 'Proposed' : 'Active'}
+                </span>
+                <svg
+                  className={`w-3 h-3 text-slate-400 transition-transform ${isCardExpanded ? 'rotate-180' : ''}`}
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </div>
+            </button>
+            
+            {/* Collapsed: DeFi preview (unified with perps/events) */}
+            {!isCardExpanded && defiProposal && (() => {
+              const preview = getCollapsedPreviewFields(
+                undefined,
+                defiProposal,
+                undefined,
+                account.accountValue || 10000
+              );
+              if (!preview) return null;
+              
+              const isPending = defiProposal.status === 'proposed';
+              const textTone = isPending ? 'text-amber-700' : 'text-slate-600';
+              const secondaryTone = isPending ? 'text-amber-600' : 'text-slate-500';
+              
+              return (
+                <div className="px-3 py-2 space-y-1.5 text-[11px]">
+                  {/* Row 1: Primary info */}
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className={`font-medium ${textTone}`}>
+                        {preview.primaryLabel}
+                      </span>
+                      <span className="text-slate-400">•</span>
+                      <span className={`truncate ${textTone}`}>
+                        {preview.primaryValue}
+                      </span>
+                    </div>
+                    {preview.secondaryValue && (
+                      <div className={`flex items-center gap-2 flex-shrink-0 ${secondaryTone}`}>
+                        <span>{preview.secondaryValue}</span>
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* Row 2: Routing/Execution */}
+                  <div className={`flex items-center justify-between ${secondaryTone}`}>
+                    <span className="truncate">
+                      {preview.routingLabel}
+                    </span>
+                  </div>
+                </div>
+              );
+            })()}
+            
+            {/* Expanded: Full details */}
+            {isCardExpanded && (
             <div className="max-h-[60vh] overflow-y-auto p-3 pt-1.5">
               <div className="grid grid-cols-2 gap-1.5 text-xs mb-2">
               <div>
@@ -1030,7 +1230,8 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
               </div>
             </div>
             <div className="text-[11px] text-blossom-slate mb-2 pt-1.5 border-t border-blossom-outline/50">
-              Choosing the highest APY within your risk band using idle REDACTED.
+              <div className="mb-1">Choosing the highest APY within your risk band using idle REDACTED.</div>
+              <div className="text-[10px] text-slate-400">Execution (simulated): Bridge → Swap → Deposit</div>
             </div>
             {defiProposal.status === 'proposed' ? (
               <div className="pt-1.5 border-t border-blossom-outline/50">
@@ -1042,7 +1243,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                   }}
                   className="w-full h-10 px-4 text-sm font-medium rounded-xl bg-blossom-pink text-white hover:bg-blossom-pink/90 hover:shadow-md transition-all shadow-sm"
                 >
-                  Confirm deposit (Sim)
+                  Confirm & Execute
                 </button>
               </div>
             ) : (
@@ -1054,6 +1255,23 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
               Instrument: DeFi yield (Sim – no real deposits)
             </div>
             </div>
+            )}
+            
+            {/* Collapsed CTA for DeFi */}
+            {!isCardExpanded && defiProposal.status === 'proposed' && (
+              <div className="px-3 py-2 pt-1.5 border-t border-slate-100">
+                <button
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    confirmDefiPlan(defiProposal.id);
+                  }}
+                  className="w-full px-3 py-2 text-xs font-medium rounded-lg bg-blossom-pink text-white hover:bg-blossom-pink/90 shadow-sm transition-colors"
+                >
+                  Confirm & Execute
+                </button>
+              </div>
+            )}
           </div>
         )}
 
