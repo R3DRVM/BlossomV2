@@ -1,0 +1,35 @@
+# Blossom Agent Backend - Fly.io configuration
+app = 'blossom-agent'
+primary_region = 'lax'
+
+[build]
+
+[env]
+  NODE_ENV = "production"
+  PORT = "3001"
+  TELEMETRY_DB_PATH = "/data/telemetry.sqlite"
+  # SECURITY: Block execution endpoints on public deployment
+  TELEMETRY_ONLY = "true"
+
+[http_service]
+  internal_port = 3001
+  force_https = true
+  auto_stop_machines = 'suspend'
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ['app']
+
+  [http_service.concurrency]
+    type = "requests"
+    hard_limit = 250
+    soft_limit = 200
+
+# Persistent volume for SQLite database
+[mounts]
+  source = "blossom_agent_data"
+  destination = "/data"
+
+[[vm]]
+  memory = '512mb'
+  cpu_kind = 'shared'
+  cpus = 1

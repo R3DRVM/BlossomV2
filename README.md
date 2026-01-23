@@ -72,6 +72,91 @@ The frontend runs on `http://localhost:5173` by default. The agent service runs 
 npm run build
 ```
 
+### Verification
+
+Before manual testing, run the automated verification script to ensure everything is configured correctly:
+
+```bash
+# Basic verification (contracts, builds, endpoints)
+# Note: Backend must be running separately
+./scripts/mvp-verify.sh
+
+# Auto-start backend if not running (recommended for first-time users)
+./scripts/mvp-verify.sh --start-backend
+
+# With testnet checks (requires EXECUTION_MODE=eth_testnet)
+EXECUTION_MODE=eth_testnet ./scripts/mvp-verify.sh --start-backend
+
+# With portfolio endpoint test
+EXECUTION_MODE=eth_testnet TEST_USER_ADDRESS=0xYOUR_ADDRESS ./scripts/mvp-verify.sh --start-backend
+```
+
+The script will:
+- ✅ Run contract tests (`forge test`)
+- ✅ Build frontend and backend
+- ✅ Check backend health (or auto-start with `--start-backend`)
+- ✅ Run endpoint smoke tests
+- ✅ Verify testnet readiness (if `EXECUTION_MODE=eth_testnet`)
+- ✅ Provide a clear report of remaining manual steps
+
+### E2E Sepolia Smoke Test
+
+For a more comprehensive test of the Sepolia execution flow without UI:
+
+```bash
+# Set required environment variables
+export EXECUTION_MODE=eth_testnet
+export TEST_USER_ADDRESS=0xYOUR_ADDRESS
+export EXECUTION_AUTH_MODE=direct  # or 'session'
+
+# Run E2E smoke test (dry-run, no transactions sent)
+node agent/scripts/e2e-sepolia-smoke.ts
+
+# With session mode
+EXECUTION_AUTH_MODE=session node agent/scripts/e2e-sepolia-smoke.ts
+
+# Actually relay transactions (session mode only, requires RELAYER_PRIVATE_KEY)
+EXECUTION_AUTH_MODE=session node agent/scripts/e2e-sepolia-smoke.ts --actually-relay
+```
+
+The E2E script will:
+- ✅ Test `/health` endpoint
+- ✅ Test `/api/execute/preflight`
+- ✅ Test `/api/portfolio/eth_testnet`
+- ✅ Test `/api/execute/prepare` with swap intent
+- ✅ Test `/api/token/approve/prepare` if approval needed
+- ✅ Test `/api/session/prepare` if in session mode
+- ✅ Print transaction payloads (dry-run by default)
+
+**Quickstart (Mac):**
+
+1. Install dependencies:
+   ```bash
+   npm run install:all
+   ```
+
+2. Start backend (in one terminal):
+   ```bash
+   cd agent && npm run dev
+   ```
+
+3. Run verification (in another terminal):
+   ```bash
+   ./scripts/mvp-verify.sh
+   ```
+
+   Or use auto-start:
+   ```bash
+   ./scripts/mvp-verify.sh --start-backend
+   ```
+
+4. Expected output:
+   ```
+   ✔ All automated checks PASSED
+   ```
+
+See `MANUAL_TESTING_CHECKLIST.md` for complete testing guide.
+
 ## Demo Flows
 
 Try these example prompts to explore Blossom's capabilities:

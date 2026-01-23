@@ -27,6 +27,11 @@ RUN npm ci --include=dev
 # Copy application code
 COPY . .
 
+# Set build-time environment variables for Vite
+# Use telemetry-only agent for public frontend (blocks execution endpoints)
+ARG VITE_AGENT_API_BASE_URL=https://blossom-telemetry.fly.dev
+ENV VITE_AGENT_API_BASE_URL=${VITE_AGENT_API_BASE_URL}
+
 # Build application
 RUN npm run build
 

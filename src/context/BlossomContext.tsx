@@ -1,7 +1,10 @@
-import { createContext, useContext, useState, useCallback, ReactNode } from 'react';
+import { createContext, useContext, useState, useCallback, ReactNode, useEffect, useRef } from 'react';
 import { mapBackendPortfolioToFrontendState } from '../lib/portfolioMapping';
-import { USE_AGENT_BACKEND } from '../lib/config';
+import { USE_AGENT_BACKEND, executionMode, executionAuthMode, forceDemoPortfolio } from '../lib/config';
 import { derivePerpPositionsFromStrategies } from '../lib/derivePerpPositions';
+import { callAgent } from '../lib/apiClient';
+import { getAddress, getAddressIfExplicit } from '../lib/walletAdapter';
+import { startBackendHealthCheckLoop, isBackendHealthy, onBackendHealthChange } from '../lib/apiClient';
 
 export type StrategyStatus = 'draft' | 'queued' | 'executing' | 'executed' | 'closed';
 
@@ -22,7 +25,7 @@ export interface Strategy {
   closedAt?: string;
   realizedPnlUsd?: number;
   realizedPnlPct?: number;
-  instrumentType?: 'perp' | 'event';
+  instrumentType?: 'perp' | 'event' | 'defi';
   leverage?: number; // Perp leverage (1-100x, typically 1-20x in UI)
   eventKey?: string;
   eventLabel?: string;
@@ -36,6 +39,11 @@ export interface Strategy {
   requestedStakeUsd?: number; // original user request before capping
   eventMarketSource?: 'polymarket' | 'kalshi' | 'static'; // Source of event market data (for venue/chain display)
   originMessageKey?: string; // Message key that originated this strategy (for idempotency/debugging)
+  // V1: Execution tracking
+  txHash?: string; // Transaction hash (on-chain execution)
+  blockNumber?: number; // Block number where transaction was mined
+  explorerUrl?: string; // Explorer link (e.g., https://sepolia.etherscan.io/tx/0x...)
+  strategyExecutionNonce?: number; // Nonce for idempotency (increments per execution)
 }
 
 export interface AssetBalance {
@@ -67,6 +75,10 @@ export interface DefiPosition {
   apyPct: number;
   status: DefiStatus;
   createdAt: string;
+  // Blocker #3: TX metadata for on-chain execution tracking
+  txHash?: string;
+  blockNumber?: number;
+  explorerUrl?: string;
 }
 
 export interface OnboardingState {
@@ -106,6 +118,16 @@ export interface ChatMessage {
   strategy?: any | null; // ParsedStrategy from mockParser
   strategyId?: string | null;
   defiProposalId?: string | null;
+  executionRequest?: {
+    kind: string;
+    chain: string;
+    tokenIn: string;
+    tokenOut: string;
+    amountIn?: string;
+    amountOut?: string;
+    slippageBps: number;
+    fundingPolicy: string;
+  } | null;
   marketsList?: Array<{
     id: string;
     title: string;
@@ -241,14 +263,28 @@ const INITIAL_BALANCES: AssetBalance[] = [
   { symbol: 'SOL', balanceUsd: 3000 },
 ];
 
-const INITIAL_ACCOUNT: AccountState = {
-  accountValue: 10000,
+// Empty account for eth_testnet mode (unless forceDemoPortfolio is enabled)
+const EMPTY_ACCOUNT: AccountState = {
+  accountValue: 0,
   openPerpExposure: 0,
   eventExposureUsd: 0,
   totalPnlPct: 0,
   simulatedPnlPct30d: 0,
-  balances: INITIAL_BALANCES,
+  balances: [],
 };
+
+// Use empty account in eth_testnet mode unless forceDemoPortfolio is true
+const INITIAL_ACCOUNT: AccountState = 
+  (executionMode === 'eth_testnet' && !forceDemoPortfolio) 
+    ? EMPTY_ACCOUNT 
+    : {
+        accountValue: 10000,
+        openPerpExposure: 0,
+        eventExposureUsd: 0,
+        totalPnlPct: 0,
+        simulatedPnlPct30d: 0,
+        balances: INITIAL_BALANCES,
+      };
 
 // Helper to extract base asset from market (e.g., "ETH-PERP" -> "ETH")
 export function getBaseAsset(market: string): string {
@@ -384,18 +420,19 @@ function saveManualWatchlistToStorage(watchlist: ManualWatchAsset[]) {
 
 // Compute margin from risk percent and leverage
 // Formula: marginUsd = (accountValue * riskPercent / 100) / leverage
-export function computePerpFromRisk(params: {
+// Exported as const to ensure stable reference for Vite HMR
+export const computePerpFromRisk = (params: {
   accountValue: number;
   riskPercent: number;
   leverage: number;
-}): { marginUsd: number; notionalUsd: number } {
+}): { marginUsd: number; notionalUsd: number } => {
   const { accountValue, riskPercent, leverage } = params;
   // Risk amount in USD = accountValue * riskPercent / 100
   // With leverage, margin = risk amount / leverage
   const marginUsd = (accountValue * riskPercent / 100) / leverage;
   const notionalUsd = marginUsd * leverage;
   return { marginUsd: Math.round(marginUsd), notionalUsd: Math.round(notionalUsd) };
-}
+};
 
 // Helper to apply executed strategy to balances
 function applyExecutedStrategyToBalances(
@@ -458,6 +495,26 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
   const [strategies, setStrategies] = useState<Strategy[]>(seedStrategies);
   const [selectedStrategyId, setSelectedStrategyId] = useState<string | null>(null);
   const [account, setAccount] = useState<AccountState>(INITIAL_ACCOUNT);
+
+  // Ensure account is empty when entering eth_testnet mode (unless forceDemoPortfolio)
+  useEffect(() => {
+    if (executionMode === 'eth_testnet' && !forceDemoPortfolio) {
+      if (import.meta.env.DEV) {
+        console.log('[BlossomContext] eth_testnet mode detected, initializing with empty account (no demo balances)');
+      }
+      setAccount(EMPTY_ACCOUNT);
+    } else if (executionMode !== 'eth_testnet' || forceDemoPortfolio) {
+      // In sim mode or forceDemoPortfolio mode, use demo account
+      if (import.meta.env.DEV) {
+        console.log('[BlossomContext] Sim mode or forceDemoPortfolio enabled, using demo account:', {
+          executionMode,
+          forceDemoPortfolio,
+          source: 'demo init',
+        });
+      }
+      setAccount(INITIAL_ACCOUNT);
+    }
+  }, [executionMode, forceDemoPortfolio]);
   const [activeTab, setActiveTab] = useState<ActiveTab>('copilot');
   const [venue, setVenue] = useState<Venue>('hyperliquid');
   const [onboarding, setOnboarding] = useState<OnboardingState>({
@@ -960,6 +1017,10 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const createDefiPlanFromCommand = useCallback((command: string, protocolOverride?: string): DefiPosition => {
+    if (import.meta.env.DEV) {
+      console.log('[BlossomContext] createDefiPlanFromCommand called', { command, protocolOverride });
+    }
+
     const idleUsdc = account.balances.find(b => b.symbol === 'REDACTED')?.balanceUsd || 3000;
     let depositUsd = Math.min(idleUsdc * 0.5, 2000); // Fallback default
 
@@ -1060,11 +1121,120 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
     };
 
     setLatestDefiProposal(newPosition);
-    setDefiPositions(prev => [newPosition, ...prev]);
+    setDefiPositions(prev => {
+      const updated = [newPosition, ...prev];
+      if (import.meta.env.DEV) {
+        console.log('[BlossomContext] ✓ DeFi position added to state:', {
+          newPositionId: newPosition.id,
+          protocol: newPosition.protocol,
+          totalPositions: updated.length,
+          allPositions: updated
+        });
+      }
+      return updated;
+    });
     return newPosition;
   }, [account.balances]);
 
-  const confirmDefiPlan = useCallback((id: string) => {
+  const confirmDefiPlan = useCallback(async (id: string) => {
+    // Blocker #5: Wire frontend to capture TX hash from backend
+    if (executionMode === 'eth_testnet') {
+      // In testnet mode, execute on-chain via backend
+      const position = defiPositions.find(p => p.id === id);
+      if (!position || position.status === 'active') {
+        return;
+      }
+
+      try {
+        const userAddress = await window.ethereum?.request({ method: 'eth_requestAccounts' }).then((accounts: string[]) => accounts[0]);
+        if (!userAddress) {
+          console.error('[confirmDefiPlan] No wallet address available');
+          return;
+        }
+
+        // Create executionRequest from DeFi position
+        const executionRequest = {
+          kind: 'lend_supply' as const,
+          chain: 'sepolia',
+          asset: position.asset,
+          amount: position.depositUsd.toString(),
+          protocol: position.protocol,
+          vault: position.protocol, // Use protocol as vault for now
+        };
+
+        // Use execution kernel
+        const { executePlan } = await import('../lib/executionKernel');
+        const result = await executePlan({
+          draftId: id,
+          userAddress,
+          planType: 'defi',
+          executionRequest,
+          strategy: {
+            id,
+            instrumentType: 'defi',
+            protocol: position.protocol,
+            depositUsd: position.depositUsd,
+            apyPct: position.apyPct,
+          },
+        }, { executionAuthMode });
+
+        // TRUTHFUL UI: Only mark as active if we have txHash and receipt is confirmed
+        if (result.ok && result.txHash && result.receiptStatus === 'confirmed') {
+          // Update position with tx metadata
+          setDefiPositions(prev => prev.map(p =>
+            p.id === id
+              ? {
+                  ...p,
+                  status: 'active' as DefiStatus,
+                  txHash: result.txHash,
+                  blockNumber: result.blockNumber,
+                  explorerUrl: result.explorerUrl,
+                }
+              : p
+          ));
+
+          if (latestDefiProposal?.id === id) {
+            setLatestDefiProposal(null);
+          }
+
+          // Update account from backend portfolio snapshot
+          if (result.portfolio) {
+            const mapped = mapBackendPortfolioToFrontendState(result.portfolio);
+            setAccount(mapped.account);
+          }
+
+          if (import.meta.env.DEV) {
+            console.log('[confirmDefiPlan] ✓ Execution confirmed on-chain:', {
+              positionId: id,
+              txHash: result.txHash,
+              blockNumber: result.blockNumber,
+            });
+          }
+        } else if (result.mode === 'simulated' || result.mode === 'unsupported') {
+          // TRUTHFUL UI: Show simulated/unsupported status, don't mark as active
+          if (import.meta.env.DEV) {
+            console.warn('[confirmDefiPlan] ⚠️ DeFi execution:', result.mode, result.reason);
+          }
+          // Don't mark as active - position remains proposed
+          // UI should show "Simulated" or "Not supported" status
+        } else if (!result.ok) {
+          // Execution failed
+          console.error('[confirmDefiPlan] Execution failed:', result.reason);
+          // Position remains proposed
+        } else {
+          // Receipt pending or timeout
+          if (import.meta.env.DEV) {
+            console.log('[confirmDefiPlan] Execution pending:', result.receiptStatus);
+          }
+          // Position remains proposed until confirmed
+        }
+      } catch (err) {
+        console.error('[confirmDefiPlan] Failed to execute DeFi plan:', err);
+      }
+      return;
+    }
+
+    // SIM mode - existing logic
     setDefiPositions(prev => {
       const position = prev.find(p => p.id === id);
       if (!position || position.status === 'active') {
@@ -1125,7 +1295,7 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
 
       return updated;
     });
-  }, [latestDefiProposal]);
+  }, [latestDefiProposal, defiPositions]);
 
   const updateDeFiPlanDeposit = useCallback((id: string, newDepositUsd: number) => {
     setDefiPositions(prev => {
@@ -1342,14 +1512,69 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
   }, [updateDeFiPlanDeposit]);
 
   const updateFromBackendPortfolio = useCallback((portfolio: any) => {
+    if (import.meta.env.DEV) {
+      console.log('[BlossomContext] updateFromBackendPortfolio called', {
+        portfolio,
+        stackTrace: new Error().stack
+      });
+    }
+
     const mapped = mapBackendPortfolioToFrontendState(portfolio);
     setAccount(mapped.account);
     setStrategies(mapped.strategies);
-    setDefiPositions(mapped.defiPositions);
+
+    // Merge: Preserve local 'proposed' DeFi positions that aren't in backend response
+    // This fixes the issue where clicking "Allocate $500" creates a local proposal
+    // but then backend response wipes it out because backend doesn't know about it yet
+    setDefiPositions(prev => {
+      const backendPositions = mapped.defiPositions || [];
+      const backendIds = new Set(backendPositions.map((p: DefiPosition) => p.id));
+
+      // Keep local 'proposed' positions that aren't in backend response
+      const localProposedPositions = prev.filter(
+        p => p.status === 'proposed' && !backendIds.has(p.id)
+      );
+
+      // Merge: backend positions (authoritative) + local proposed positions
+      const merged = [...backendPositions, ...localProposedPositions];
+
+      if (import.meta.env.DEV) {
+        console.log('[BlossomContext] DeFi positions merge:', {
+          previousPositions: prev,
+          backendPositions,
+          localProposedPositions,
+          mergedResult: merged
+        });
+      }
+
+      return merged;
+    });
   }, []);
 
   const resetSim = useCallback(async () => {
-    if (USE_AGENT_BACKEND) {
+    // In eth_testnet mode (without forceDemoPortfolio), reset to empty and refetch real balances
+    if (executionMode === 'eth_testnet' && !forceDemoPortfolio) {
+      if (import.meta.env.DEV) {
+        console.log('[BlossomContext] Reset SIM in eth_testnet mode - resetting to empty and refetching real balances');
+      }
+      // Reset to empty account
+      setAccount(EMPTY_ACCOUNT);
+      setStrategies([]);
+      setSelectedStrategyId(null);
+      
+      // Trigger portfolio refetch by checking wallet connection
+      const userAddress = await getAddress();
+      if (userAddress) {
+        // Portfolio sync useEffect will automatically refetch
+        if (import.meta.env.DEV) {
+          console.log('[BlossomContext] Wallet connected, portfolio will refetch automatically');
+        }
+      } else {
+        if (import.meta.env.DEV) {
+          console.log('[BlossomContext] No wallet connected, account remains empty');
+        }
+      }
+    } else if (USE_AGENT_BACKEND) {
       try {
         const { resetSim: resetSimApi } = await import('../lib/blossomApi');
         const response = await resetSimApi();
@@ -1368,7 +1593,7 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
     // Clear chat sessions and localStorage (applies to both mock and agent mode)
     setChatSessions([]);
     setActiveChatId(null);
-    
+
     if (typeof window !== 'undefined') {
       try {
         window.localStorage.removeItem('blossom_chat_sessions');
@@ -1378,7 +1603,311 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
         console.error('Failed to clear chat sessions from localStorage:', e);
       }
     }
-  }, [updateFromBackendPortfolio, setChatSessions, setActiveChatId]);
+
+    // Clear session data from localStorage
+    const userAddress = await getAddress();
+    if (userAddress) {
+      const sessionKey = `blossom_session_${userAddress.toLowerCase()}`;
+      const sessionTxHashKey = `blossom_session_${userAddress.toLowerCase()}_txHash`;
+
+      if (typeof window !== 'undefined') {
+        try {
+          window.localStorage.removeItem(sessionKey);
+          window.localStorage.removeItem(sessionTxHashKey);
+
+          if (import.meta.env.DEV) {
+            console.log('[resetSim] ✓ Cleared session data:', {
+              sessionKey,
+              sessionTxHashKey
+            });
+          }
+        } catch (e) {
+          console.error('Failed to clear session data from localStorage:', e);
+        }
+      }
+    }
+
+    // Clear wallet connection cache
+    const { clearWalletCache } = await import('../lib/walletAdapter');
+    await clearWalletCache();
+
+    // Dispatch reset event for UI components to update
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('resetSim'));
+    }
+
+    if (import.meta.env.DEV) {
+      console.log('[resetSim] ✓ Portfolio reset complete');
+    }
+  }, [executionMode, forceDemoPortfolio, updateFromBackendPortfolio, setChatSessions, setActiveChatId]);
+
+  // ETH testnet portfolio sync: fetch real balances and update account state
+  useEffect(() => {
+    if (executionMode !== 'eth_testnet') {
+      return; // Only sync in eth_testnet mode
+    }
+
+    if (import.meta.env.DEV) {
+      console.log('[BlossomContext] Portfolio sync initialized:', {
+        executionMode,
+        forceDemoPortfolio,
+        source: 'backend snapshot',
+      });
+    }
+
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+    let isMounted = true;
+    let healthCheckCleanup: (() => void) | null = null;
+
+    const syncPortfolio = async () => {
+      // Block sync if backend is not healthy
+      if (!isBackendHealthy()) {
+        if (import.meta.env.DEV) {
+          console.log('[BlossomContext] Skipping portfolio sync - backend offline');
+        }
+        return;
+      }
+      
+      try {
+        // Use explicit connect gating - only sync if user clicked "Connect Wallet"
+        const userAddress = await getAddressIfExplicit();
+        if (!userAddress) {
+          // No wallet connected or not explicitly connected - reset to empty account
+          if (import.meta.env.DEV) {
+            console.log('[BlossomContext] No wallet connected (or not explicit), resetting to empty account');
+          }
+          setAccount(prev => ({
+            ...prev,
+            balances: [],
+            accountValue: 0,
+          }));
+          return;
+        }
+
+        // Use the bulletproof /api/wallet/balances endpoint
+        if (import.meta.env.DEV) {
+          console.log('[BlossomContext] Fetching wallet balances for:', userAddress);
+        }
+        
+        // Track fetch start time for instrumentation
+        (window as any).__balanceFetchStart = performance.now();
+        
+        const response = await callAgent(`/api/wallet/balances?address=${encodeURIComponent(userAddress)}`, {
+          method: 'GET',
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          if (import.meta.env.DEV) {
+            console.warn('[BlossomContext] Wallet balance fetch failed:', response.status, errorText);
+          }
+          
+          // Handle structured error responses (503 with code)
+          if (response.status === 503) {
+            try {
+              const errorData = JSON.parse(errorText);
+              if (errorData.code) {
+                // Dispatch custom event with error details for RightPanel
+                const fetchDuration = Math.round(performance.now() - (window as any).__balanceFetchStart || 0);
+                window.dispatchEvent(new CustomEvent('blossom-wallet-balance-error', {
+                  detail: {
+                    code: errorData.code,
+                    message: errorData.message,
+                    fix: errorData.fix,
+                    duration: fetchDuration,
+                    status: response.status,
+                  },
+                }));
+              }
+            } catch {
+              // Not JSON, ignore
+            }
+          }
+          return;
+        }
+
+        const data = await response.json();
+        if (!isMounted) return;
+        
+        if (import.meta.env.DEV) {
+          console.log('[BlossomContext] Wallet balance response:', {
+            native: data.native?.formatted,
+            tokens: data.tokens?.length || 0,
+            notes: data.notes,
+          });
+        }
+        
+        // Dispatch success event so RightPanel can transition to CONNECTED_READY (with timing info)
+        const fetchDuration = Math.round(performance.now() - (window as any).__balanceFetchStart || 0);
+        window.dispatchEvent(new CustomEvent('blossom-wallet-balance-success', {
+          detail: { duration: fetchDuration, status: response.status },
+        }));
+
+        // Fetch real ETH price from backend
+        let ethPriceUsd = 3000; // Fallback
+        try {
+          const priceResponse = await callAgent('/api/prices/eth', { method: 'GET' });
+          if (priceResponse.ok) {
+            const priceData = await priceResponse.json();
+            ethPriceUsd = priceData.priceUsd || 3000;
+          }
+        } catch {
+          // Use fallback
+        }
+
+        // Calculate balances from new endpoint format
+        const ethUsd = parseFloat(data.native?.formatted || '0') * ethPriceUsd;
+        
+        const newBalances: AssetBalance[] = [];
+        
+        // Add native ETH if > 0
+        if (ethUsd > 0) {
+          newBalances.push({ symbol: 'ETH', balanceUsd: ethUsd });
+        }
+        
+        // Add demo tokens if present
+        if (data.tokens && Array.isArray(data.tokens)) {
+          for (const token of data.tokens) {
+            if (token.symbol === 'REDACTED') {
+              const usdcUsd = parseFloat(token.formatted || '0');
+              if (usdcUsd > 0) {
+                newBalances.push({ symbol: 'REDACTED', balanceUsd: usdcUsd });
+              }
+            } else if (token.symbol === 'WETH') {
+              const wethUsd = parseFloat(token.formatted || '0') * ethPriceUsd;
+              if (wethUsd > 0) {
+                newBalances.push({ symbol: 'WETH', balanceUsd: wethUsd });
+              }
+            }
+          }
+        }
+
+        // In eth_testnet mode (without forceDemoPortfolio), ONLY show real balances
+        const accountValue = newBalances.reduce((sum, b) => sum + b.balanceUsd, 0);
+
+        if (import.meta.env.DEV) {
+          console.log('[BlossomContext] Wallet balances synced:', {
+            userAddress,
+            accountValue,
+            balances: newBalances,
+            nativeETH: data.native?.formatted,
+            tokens: data.tokens?.length || 0,
+            notes: data.notes,
+          });
+        }
+
+        // Completely replace balances (no merging with demo balances)
+        setAccount(prev => ({
+          ...prev,
+          balances: newBalances, // Only real balances, no demo
+          accountValue,
+        }));
+      } catch (error: any) {
+        if (import.meta.env.DEV) {
+          console.warn('[BlossomContext] Portfolio sync error:', error.message);
+        }
+        // Silently fail - don't break the app if sync fails
+      }
+    };
+
+    // Start backend health check loop
+    healthCheckCleanup = startBackendHealthCheckLoop((healthy) => {
+      if (healthy && isMounted) {
+        // Backend came online - trigger immediate sync
+        if (import.meta.env.DEV) {
+          console.log('[BlossomContext] Backend came online, syncing portfolio');
+        }
+        syncPortfolio();
+      }
+    });
+
+    // Initial sync on mount/wallet connect (only if backend is healthy)
+    if (isBackendHealthy()) {
+      syncPortfolio();
+    }
+
+    // Set up polling every 15 seconds (only when backend is healthy)
+    const startPolling = () => {
+      if (intervalId) clearInterval(intervalId);
+      if (isBackendHealthy()) {
+        intervalId = setInterval(() => {
+          if (isBackendHealthy()) {
+            syncPortfolio();
+          } else {
+            // Stop polling if backend goes offline
+            if (intervalId) {
+              clearInterval(intervalId);
+              intervalId = null;
+            }
+          }
+        }, 15000);
+      }
+    };
+    
+    startPolling();
+    
+    // Restart polling when backend health changes
+    const healthChangeUnsubscribe = onBackendHealthChange((healthy) => {
+      if (healthy) {
+        startPolling();
+        syncPortfolio(); // Immediate sync when backend comes online
+      } else {
+        // Stop polling when backend goes offline
+        if (intervalId) {
+          clearInterval(intervalId);
+          intervalId = null;
+        }
+      }
+    });
+    
+    // Listen for storage events (wallet connect/disconnect from other tabs)
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'blossom_wallet_explicit_connected') {
+        if (import.meta.env.DEV) {
+          console.log('[BlossomContext] Wallet connection state changed (cross-tab), syncing portfolio');
+        }
+        if (isBackendHealthy()) {
+          syncPortfolio();
+        }
+      }
+    };
+    
+    // Listen for custom event (wallet connect/disconnect from same tab)
+    const handleConnectionChange = () => {
+      if (import.meta.env.DEV) {
+        console.log('[BlossomContext] Wallet connection state changed (same-tab), syncing portfolio');
+      }
+      if (isBackendHealthy()) {
+        syncPortfolio();
+      }
+    };
+    
+    // Listen for explicit disconnect event
+    const handleDisconnect = () => {
+      if (import.meta.env.DEV) {
+        console.log('[BlossomContext] Wallet disconnected, clearing account state');
+      }
+      setAccount(EMPTY_ACCOUNT);
+    };
+    
+    window.addEventListener('storage', handleStorageChange);
+    window.addEventListener('blossom-wallet-connection-change', handleConnectionChange);
+    window.addEventListener('blossom-wallet-disconnect', handleDisconnect);
+
+    return () => {
+      isMounted = false;
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+      if (healthCheckCleanup) {
+        healthCheckCleanup();
+      }
+      healthChangeUnsubscribe();
+      window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('blossom-wallet-connection-change', handleConnectionChange);
+      window.removeEventListener('blossom-wallet-disconnect', handleDisconnect);
+    };
+  }, [executionMode, forceDemoPortfolio]); // Re-run if execution mode or forceDemoPortfolio changes
 
   return (
     <BlossomContext.Provider

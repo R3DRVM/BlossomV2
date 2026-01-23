@@ -7,37 +7,37 @@ import { v4 as uuidv4 } from 'uuid';
 import { EventMarket, EventPosition, EventState } from './types';
 import { fetchKalshiMarkets, fetchPolymarketMarkets, RawPredictionMarket } from '../../services/predictionData';
 
-// Seed markets matching front-end mock
+// Seed markets matching FALLBACK_MARKETS (harmonized IDs)
 const SEEDED_MARKETS: EventMarket[] = [
   {
     key: 'FED_CUTS_MAR_2025',
     label: 'Fed cuts in March 2025',
-    winProbability: 0.55,
-    payoutMultiple: 1.7,
+    winProbability: 0.62,
+    payoutMultiple: 1.6,
   },
   {
     key: 'BTC_ETF_APPROVAL_2025',
     label: 'BTC ETF approved by Dec 31',
-    winProbability: 0.60,
-    payoutMultiple: 1.6,
+    winProbability: 0.68,
+    payoutMultiple: 1.47,
   },
   {
     key: 'ETH_ETF_APPROVAL_2025',
     label: 'ETH ETF approved by June 2025',
     winProbability: 0.58,
-    payoutMultiple: 1.65,
+    payoutMultiple: 1.72,
   },
   {
-    key: 'US_ELECTION_2024',
-    label: 'US Election Winner 2024',
-    winProbability: 0.50,
-    payoutMultiple: 1.8,
-  },
-  {
-    key: 'CRYPTO_MCAP_THRESHOLD',
-    label: 'Crypto market cap above $3T by year-end',
+    key: 'TRUMP_2024_WIN',
+    label: 'Trump wins 2024 election',
     winProbability: 0.52,
-    payoutMultiple: 1.75,
+    payoutMultiple: 1.92,
+  },
+  {
+    key: 'SOL_ADOPTION_2025',
+    label: 'Solana adoption surges in 2025',
+    winProbability: 0.64,
+    payoutMultiple: 1.56,
   },
   {
     key: 'GENERIC_EVENT_DEMO',

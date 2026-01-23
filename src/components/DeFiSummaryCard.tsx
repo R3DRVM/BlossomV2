@@ -187,6 +187,26 @@ export default function DeFiSummaryCard({ position, onInsertPrompt }: DeFiSummar
           )}
         </div>
       )}
+
+      {/* Transaction hash display for active positions */}
+      {position.status === 'active' && position.txHash && (
+        <div className="border-t border-blossom-outline/50 pt-3 mt-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-blossom-slate">Transaction</span>
+            <a
+              href={position.explorerUrl || `https://sepolia.etherscan.io/tx/${position.txHash}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-blossom-pink hover:underline inline-flex items-center gap-1"
+            >
+              View on Etherscan →
+            </a>
+          </div>
+          <div className="text-xs text-blossom-slate/60 mt-1 font-mono truncate">
+            {position.txHash}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -16,11 +16,11 @@ export interface LlmChatOutput {
   rawJson: string; // the JSON the model returned for actions
 }
 
-type ModelProvider = 'openai' | 'anthropic' | 'stub';
+type ModelProvider = 'openai' | 'anthropic' | 'gemini' | 'stub';
 
 function getProvider(): ModelProvider {
   const provider = process.env.BLOSSOM_MODEL_PROVIDER as ModelProvider;
-  if (provider === 'openai' || provider === 'anthropic') {
+  if (provider === 'openai' || provider === 'anthropic' || provider === 'gemini') {
     return provider;
   }
   return 'stub';
@@ -31,6 +31,7 @@ function getProvider(): ModelProvider {
  */
 export async function callLlm(input: LlmChatInput): Promise<LlmChatOutput> {
   const provider = getProvider();
+  console.log('[llmClient] Using provider:', provider);
 
   if (provider === 'stub') {
     return {
@@ -48,6 +49,10 @@ export async function callLlm(input: LlmChatInput): Promise<LlmChatOutput> {
 
   if (provider === 'anthropic') {
     return callAnthropic(input);
+  }
+
+  if (provider === 'gemini') {
+    return callGemini(input);
   }
 
   // Fallback to stub
@@ -142,6 +147,77 @@ async function callAnthropic(input: LlmChatInput): Promise<LlmChatOutput> {
   } catch (error: any) {
     console.error('Anthropic API error:', error.message);
     throw new Error(`Anthropic API error: ${error.message}`);
+  }
+}
+
+/**
+ * Call Google Gemini API
+ */
+async function callGemini(input: LlmChatInput): Promise<LlmChatOutput> {
+  const apiKey = process.env.BLOSSOM_GEMINI_API_KEY;
+  if (!apiKey) {
+    console.warn('[llmClient] Gemini key missing, falling back to stub');
+    // Fall back to stub instead of throwing error
+    return {
+      assistantMessage: "This is a stubbed Blossom response. Gemini API key not configured. Set BLOSSOM_GEMINI_API_KEY to enable Gemini.",
+      rawJson: JSON.stringify({
+        assistantMessage: "This is a stubbed Blossom response. Gemini API key not configured.",
+        actions: []
+      })
+    };
+  }
+
+  const model = process.env.BLOSSOM_GEMINI_MODEL || 'gemini-1.5-pro';
+  
+  try {
+    // Gemini API endpoint
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [
+          {
+            parts: [
+              { text: `${input.systemPrompt}\n\n${input.userPrompt}\n\nYou MUST respond with ONLY a valid JSON object, no other text before or after.` }
+            ]
+          }
+        ],
+        generationConfig: {
+          temperature: 0.7,
+          responseMimeType: 'application/json',
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Gemini API error: ${response.status} ${errorText}`);
+    }
+
+    const result = await response.json();
+    const content = result.candidates?.[0]?.content?.parts?.[0]?.text;
+    
+    if (!content) {
+      throw new Error('No content in Gemini response');
+    }
+
+    // Extract JSON if wrapped in markdown code blocks
+    let jsonText = content.trim();
+    if (jsonText.startsWith('```json')) {
+      jsonText = jsonText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+    } else if (jsonText.startsWith('```')) {
+      jsonText = jsonText.replace(/```\n?/g, '').trim();
+    }
+
+    return {
+      assistantMessage: '', // Will be extracted from JSON
+      rawJson: jsonText,
+    };
+  } catch (error: any) {
+    console.error('Gemini API error:', error.message);
+    throw new Error(`Gemini API error: ${error.message}`);
   }
 }
 
