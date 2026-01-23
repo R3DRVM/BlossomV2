@@ -39,7 +39,7 @@ const Navigation = ({ navigate }: { navigate: (path: string) => void }) => (
 
       <div className="hidden md:flex items-center gap-8 text-sm font-medium text-[#666666]">
         <a href="#features" className="hover:text-[#F25AA2] transition-colors">Capabilities</a>
-        <a href="#engine" className="hover:text-[#F25AA2] transition-colors">ElizaOS Engine</a>
+        <a href="https://blossom-devnet.fly.dev" target="_blank" rel="noopener noreferrer" className="hover:text-[#F25AA2] transition-colors">Devnet Statistics</a>
         <a href="#roadmap" className="hover:text-[#F25AA2] transition-colors">Roadmap</a>
       </div>
 
