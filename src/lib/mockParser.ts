@@ -56,7 +56,7 @@ export interface ParsedMessage {
 // Helper to find active perp strategy for editing
 // This should be called from Chat.tsx with access to strategies and selectedStrategyId
 export function findActivePerpStrategyForEdit(
-  strategies: Array<{ id: string; instrumentType?: 'perp' | 'event'; status: string; isClosed?: boolean }>,
+  strategies: Array<{ id: string; instrumentType?: 'perp' | 'event' | 'defi'; status: string; isClosed?: boolean }>,
   selectedStrategyId: string | null
 ): { id: string } | null {
   // First, check if selectedStrategyId refers to a perp strategy
@@ -89,7 +89,7 @@ export function findActivePerpStrategyForEdit(
 
 // Helper to find active event strategy for editing (mirrors perp version)
 export function findActiveEventStrategyForEdit(
-  strategies: Array<{ id: string; instrumentType?: 'perp' | 'event'; status: string; isClosed?: boolean }>,
+  strategies: Array<{ id: string; instrumentType?: 'perp' | 'event' | 'defi'; status: string; isClosed?: boolean }>,
   selectedStrategyId: string | null
 ): { id: string } | null {
   // First, check if selectedStrategyId refers to an event strategy
@@ -378,7 +378,7 @@ function detectStrategyDomain(
 
 export function parseUserMessage(
   text: string,
-  opts?: { venue?: 'hyperliquid' | 'event_demo'; strategies?: Array<{ id: string; instrumentType?: 'perp' | 'event'; status: string; isClosed?: boolean; eventKey?: string }>; selectedStrategyId?: string | null; accountValue?: number }
+  opts?: { venue?: 'hyperliquid' | 'event_demo'; strategies?: Array<{ id: string; instrumentType?: 'perp' | 'event' | 'defi'; status: string; isClosed?: boolean; eventKey?: string }>; selectedStrategyId?: string | null; accountValue?: number }
 ): ParsedMessage {
   const upperText = text.toUpperCase();
   const lowerText = text.toLowerCase();

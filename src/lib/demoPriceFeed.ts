@@ -57,20 +57,20 @@ const COINGECKO_IDS: Record<DemoSymbol, string> = {
 };
 
 /**
- * Fetch prices from CoinGecko Public API (CORS-safe, no key required)
+ * Fetch prices from CoinGecko via backend proxy (CORS-safe, cached, rate-limited)
  */
 async function fetchFromCoinGecko(symbols: DemoSymbol[]): Promise<Record<DemoSymbol, DemoPriceSnapshot> | null> {
   try {
     const coinIds = symbols.map(s => COINGECKO_IDS[s]).join(',');
-    const url = `https://api.coingecko.com/api/v3/simple/price?ids=${coinIds}&vs_currencies=usd&include_24hr_change=true`;
     
-    const response = await fetch(url, {
-      headers: {
-        'Accept': 'application/json',
-      },
+    // Use backend proxy instead of direct CoinGecko call
+    const { callAgent } = await import('./apiClient');
+    const response = await callAgent(`/api/prices/simple?ids=${encodeURIComponent(coinIds)}&vs_currencies=usd`, {
+      method: 'GET',
     });
 
     if (!response.ok) {
+      // Backend offline or error - return null to use static fallback
       return null;
     }
 

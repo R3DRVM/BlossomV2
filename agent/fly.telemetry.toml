@@ -1,0 +1,37 @@
+# Blossom Telemetry-Only Agent - Fly.io configuration
+# This deployment exposes ONLY read-only telemetry endpoints.
+# All execution, session, and sensitive endpoints are blocked.
+app = 'blossom-telemetry'
+primary_region = 'lax'
+
+[build]
+
+[env]
+  NODE_ENV = "production"
+  PORT = "3001"
+  TELEMETRY_DB_PATH = "/data/telemetry.sqlite"
+  # CRITICAL: This blocks all sensitive endpoints
+  TELEMETRY_ONLY = "true"
+
+[http_service]
+  internal_port = 3001
+  force_https = true
+  auto_stop_machines = 'suspend'
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ['app']
+
+  [http_service.concurrency]
+    type = "requests"
+    hard_limit = 250
+    soft_limit = 200
+
+# Persistent volume for SQLite database (separate from main agent)
+[mounts]
+  source = "blossom_telemetry_data"
+  destination = "/data"
+
+[[vm]]
+  memory = '256mb'
+  cpu_kind = 'shared'
+  cpus = 1

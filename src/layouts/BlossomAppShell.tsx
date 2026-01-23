@@ -1,7 +1,77 @@
+import { useState, useEffect } from 'react';
 import { ToastProvider } from '../components/toast/ToastProvider';
 import CopilotLayout from '../components/CopilotLayout';
+import AccessGate from '../components/AccessGate';
+import { callAgent } from '../lib/apiClient';
+import { getAddress } from '../lib/walletAdapter';
 
 export default function BlossomAppShell() {
+  const accessGateEnabled = import.meta.env.VITE_ACCESS_GATE_ENABLED === "true";
+  const [hasAccess, setHasAccess] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    // If access gate is disabled, grant access immediately
+    if (!accessGateEnabled) {
+      setHasAccess(true);
+      return;
+    }
+
+    // Check if user already has access
+    const checkAccess = async () => {
+      // Check localStorage first
+      const storedCode = localStorage.getItem('blossom_access_code');
+      const storedWallet = localStorage.getItem('blossom_access_wallet');
+      
+      if (!storedCode) {
+        setHasAccess(false);
+        return;
+      }
+
+      // Validate with backend
+      try {
+        let walletAddress: string | undefined;
+        try {
+          const addr = await getAddress();
+          walletAddress = addr ?? undefined; // Convert null to undefined
+        } catch {
+          // Wallet not connected - that's ok
+        }
+
+        const response = await callAgent('/api/access/check', {
+          method: 'POST',
+          body: JSON.stringify({
+            code: storedCode,
+            walletAddress: walletAddress || storedWallet || undefined,
+          }),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          setHasAccess(data.hasAccess || false);
+        } else {
+          setHasAccess(false);
+        }
+      } catch {
+        setHasAccess(false);
+      }
+    };
+
+    checkAccess();
+  }, [accessGateEnabled]);
+
+  if (hasAccess === null) {
+    // Loading state
+    return (
+      <div className="h-[100dvh] h-screen w-screen overflow-hidden bg-slate-50 flex items-center justify-center">
+        <div className="text-slate-600">Loading...</div>
+      </div>
+    );
+  }
+
+  if (!hasAccess) {
+    return <AccessGate onAccessGranted={() => setHasAccess(true)} />;
+  }
+
   return (
     <div className="h-[100dvh] h-screen w-screen overflow-hidden bg-slate-50">
       {/* Stable subtle blossom bloom gradient - does not change on tab switch */}

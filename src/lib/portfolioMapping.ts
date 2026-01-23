@@ -27,7 +27,7 @@ export function mapBackendPortfolioToFrontendState(
     const baseStrategy: Strategy = {
       id: s.id,
       createdAt: s.createdAt || new Date().toISOString(),
-      side: s.side === 'long' ? 'Long' : 'Short',
+      side: s.side === 'long' ? 'Long' : (s.side === 'short' ? 'Short' : (s.side === 'YES' ? 'Long' : (s.side === 'NO' ? 'Short' : 'Long'))), // Handle YES/NO for events
       market: s.market || s.eventKey || 'UNKNOWN',
       riskPercent: s.riskPct || 0,
       entry: s.entryPrice || s.entry || s.stakeUsd || 0,
@@ -36,10 +36,17 @@ export function mapBackendPortfolioToFrontendState(
       status: mapBackendStatusToFrontend(s.status),
       sourceText: s.sourceText || `Backend strategy ${s.id}`,
       isClosed: s.isClosed || s.status === 'closed',
-      notionalUsd: s.sizeUsd || s.stakeUsd,
+      notionalUsd: s.notionalUsd || s.sizeUsd || s.stakeUsd,
+      marginUsd: s.marginUsd, // Task A: Ensure marginUsd is mapped (required for ConfirmTradeCard)
+      leverage: s.leverage, // Task A: Ensure leverage is mapped (required for ConfirmTradeCard)
       closedAt: s.closedAt ? new Date(s.closedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : undefined,
       realizedPnlUsd: s.realizedPnlUsd,
       realizedPnlPct: s.realizedPnlPct,
+      // V1: Execution tracking
+      txHash: s.txHash,
+      blockNumber: s.blockNumber,
+      explorerUrl: s.explorerUrl,
+      strategyExecutionNonce: s.strategyExecutionNonce,
     };
 
     // Add event-specific fields
@@ -53,6 +60,24 @@ export function mapBackendPortfolioToFrontendState(
       baseStrategy.eventSide = s.side === 'YES' ? 'YES' : 'NO';
       baseStrategy.eventOutcome = s.outcome || 'pending';
       baseStrategy.liveMarkToMarketUsd = s.liveMarkToMarketUsd; // Carry through live MTM if present
+    } else if (s.type === 'defi') {
+      // Goal F: Add DeFi handler for confirm card rendering
+      baseStrategy.instrumentType = 'defi';
+      // Map DeFi-specific fields for ConfirmTradeCard
+      baseStrategy.market = s.protocol || s.vault || 'Unknown DeFi';
+      baseStrategy.side = 'Long'; // DeFi deposits are always "long" positions
+      baseStrategy.marginUsd = s.depositUsd || s.marginUsd || 0;
+      baseStrategy.leverage = 1; // DeFi has no leverage
+      baseStrategy.notionalUsd = s.depositUsd || s.notionalUsd || 0;
+      baseStrategy.riskPercent = s.riskPercent || s.riskPct || 0;
+      baseStrategy.entry = s.depositUsd || s.entry || 0;
+      baseStrategy.takeProfit = s.takeProfit; // May include APY-based target
+      baseStrategy.stopLoss = s.stopLoss;
+      // Preserve DeFi-specific fields (extended properties)
+      (baseStrategy as any).protocol = s.protocol;
+      (baseStrategy as any).vault = s.vault;
+      (baseStrategy as any).depositUsd = s.depositUsd;
+      (baseStrategy as any).apyPct = s.apyPct;
     } else if (s.type === 'perp' || !s.type) {
       baseStrategy.instrumentType = 'perp';
     }

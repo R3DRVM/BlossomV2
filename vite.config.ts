@@ -10,5 +10,10 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  server: {
+    host: '0.0.0.0', // Bind to all interfaces (ensures 127.0.0.1 works)
+    port: 5173,
+    strictPort: true, // Fail if port is already in use
+  },
 })
 

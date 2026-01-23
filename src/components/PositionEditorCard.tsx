@@ -411,6 +411,31 @@ function DefiEditorCard({
           </div>
         </div>
 
+        {/* Blocker #4: TX Hash Display */}
+        {position.txHash && (
+          <div className="mt-2 pt-2 border-t border-gray-700/50">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-gray-400">Transaction:</span>
+              <a
+                href={position.explorerUrl || `https://sepolia.etherscan.io/tx/${position.txHash}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1 text-blue-400 hover:text-blue-300"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {position.txHash.slice(0, 6)}...{position.txHash.slice(-4)}
+                <span className="text-gray-500">⎘</span>
+              </a>
+            </div>
+            {position.blockNumber && (
+              <div className="flex items-center justify-between text-xs mt-1">
+                <span className="text-gray-400">Status:</span>
+                <span className="text-green-400">Confirmed • Block {position.blockNumber.toLocaleString()}</span>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Deposit Input - Compact */}
         <div className="mt-1.5 pt-1.5 border-t border-slate-100" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center gap-1.5">

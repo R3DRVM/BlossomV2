@@ -11,10 +11,45 @@ export interface ChatRequest {
   clientPortfolio?: any; // keep flexible for now
 }
 
+export interface ExecutionResult {
+  success: boolean;
+  status: 'success' | 'failed';
+  txHash?: string;
+  simulatedTxId?: string;
+  positionDelta?: {
+    type: 'perp' | 'defi' | 'event' | 'swap';
+    positionId?: string;
+    sizeUsd?: number;
+    entryPrice?: number;
+    side?: 'long' | 'short' | 'YES' | 'NO';
+  };
+  portfolioDelta?: {
+    accountValueDeltaUsd: number;
+    balanceDeltas: { symbol: string; deltaUsd: number }[];
+    exposureDeltaUsd?: number;
+  };
+  error?: string;
+  errorCode?: 'INSUFFICIENT_BALANCE' | 'SESSION_EXPIRED' | 'RELAYER_FAILED' | 'SLIPPAGE_FAILURE' | 'LLM_REFUSAL' | 'UNKNOWN_ERROR';
+  portfolio: BlossomPortfolioSnapshot;
+}
+
 export interface ChatResponse {
   assistantMessage: string;
   actions: any[]; // later we can tighten this to a shared type
+  executionRequest?: {
+    kind: string;
+    chain: string;
+    tokenIn: string;
+    tokenOut: string;
+    amountIn?: string;
+    amountOut?: string;
+    slippageBps: number;
+    fundingPolicy: string;
+  } | null;
+  modelOk?: boolean;
   portfolio: any; // matches BlossomPortfolioSnapshot from backend
+  executionResults?: ExecutionResult[]; // Unified execution results
+  errorCode?: 'INSUFFICIENT_BALANCE' | 'SESSION_EXPIRED' | 'RELAYER_FAILED' | 'SLIPPAGE_FAILURE' | 'LLM_REFUSAL' | 'UNKNOWN_ERROR';
 }
 
 export interface CloseRequest {

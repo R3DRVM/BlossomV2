@@ -6,6 +6,8 @@
 import { getPrice, PriceSymbol } from './prices';
 import { getEventSnapshot } from '../plugins/event-sim';
 import { fetchKalshiMarkets, fetchPolymarketMarkets, RawPredictionMarket } from './predictionData';
+import { getMarketDataProvider } from '../providers/providerRegistry';
+import { DFLOW_ENABLED } from '../config';
 
 // Unified ticker item structure
 export interface TickerItem {
@@ -171,10 +173,45 @@ export async function getOnchainTicker(): Promise<TickerPayload> {
 
 /**
  * Get event markets ticker - new unified format with live data support
+ * Uses dFlow provider if enabled, falls back to Polymarket/Kalshi
  */
 export async function getEventMarketsTicker(): Promise<TickerPayload> {
   try {
-    // Prefer Polymarket public feed first (no keys), then Kalshi if configured
+    // Try dFlow provider first if enabled
+    if (DFLOW_ENABLED) {
+      try {
+        const provider = getMarketDataProvider();
+        if (provider.name === 'dflow' && provider.isAvailable()) {
+          const dflowMarkets = await provider.getEventMarkets();
+          if (dflowMarkets.length > 0) {
+            const topMarkets = dflowMarkets.slice(0, 12);
+            const tickerItems: TickerItem[] = topMarkets.map(market => {
+              const impliedProb = market.yesPrice;
+              const lean: 'YES' | 'NO' = impliedProb >= 0.5 ? 'YES' : 'NO';
+              return {
+                label: market.title,
+                value: `${Math.round(impliedProb * 100)}%`,
+                impliedProb,
+                meta: 'dFlow',
+                lean,
+              };
+            });
+            
+            return {
+              venue: 'event_demo',
+              sections: [{ id: 'kalshi' as const, label: 'Markets (dFlow)', items: tickerItems }],
+              lastUpdatedMs: Date.now(),
+              isLive: true,
+              source: 'kalshi', // Use kalshi as source type for compatibility
+            };
+          }
+        }
+      } catch (error: any) {
+        console.warn('[getEventMarketsTicker] dFlow provider failed, falling back:', error.message);
+      }
+    }
+    
+    // Fallback: Prefer Polymarket public feed first (no keys), then Kalshi if configured
     const polymarketMarkets = await fetchPolymarketMarkets();
     const kalshiMarkets = await fetchKalshiMarkets();
     
@@ -322,100 +359,6 @@ export async function getEventMarketsTicker(): Promise<TickerPayload> {
       venue: 'event_demo',
       sections,
       lastUpdatedMs: Date.now(),
-      isLive: false,
-      source: 'snapshot',
-    };
-    }
-
-    // Fallback to seeded markets if no live data
-    const eventSnapshot = getEventSnapshot();
-    const allMarketsSeeded = eventSnapshot.markets;
-
-    // Separate markets by source
-    const kalshiMarketsSeeded: Array<{ label: string; impliedProb: number }> = [];
-    const polymarketMarketsSeeded: Array<{ label: string; impliedProb: number }> = [];
-
-    for (const market of allMarketsSeeded) {
-      let source: 'Kalshi' | 'Polymarket' | 'Demo' = 'Demo';
-      if (market.key.includes('FED') || market.key.includes('ETF')) {
-        source = 'Kalshi';
-      } else if (market.key.includes('ELECTION') || market.key.includes('MCAP')) {
-        source = 'Polymarket';
-      }
-
-      const item = {
-        label: market.label,
-        impliedProb: market.winProbability,
-      };
-
-      if (source === 'Kalshi') {
-        kalshiMarketsSeeded.push(item);
-      } else if (source === 'Polymarket') {
-        polymarketMarketsSeeded.push(item);
-      }
-    }
-
-    // Convert to TickerItems
-    const kalshiItems: TickerItem[] = kalshiMarketsSeeded.slice(0, 4).map(m => ({
-      label: m.label,
-      value: `${Math.round(m.impliedProb * 100)}%`,
-      impliedProb: m.impliedProb,
-      meta: 'Kalshi',
-      lean: m.impliedProb > 0.5 ? 'YES' : 'NO',
-    }));
-
-    const polymarketItems: TickerItem[] = polymarketMarketsSeeded.slice(0, 4).map(m => ({
-      label: m.label,
-      value: `${Math.round(m.impliedProb * 100)}%`,
-      impliedProb: m.impliedProb,
-      meta: 'Polymarket',
-      lean: m.impliedProb > 0.5 ? 'YES' : 'NO',
-    }));
-
-    // If no markets found, use static fallback
-    if (kalshiItems.length === 0 && polymarketItems.length === 0) {
-      return {
-        venue: 'event_demo',
-        sections: [
-          {
-            id: 'kalshi',
-            label: 'Kalshi',
-            items: STATIC_EVENT_TICKER.filter(item => item.source === 'Kalshi').slice(0, 4).map(item => ({
-              label: item.label,
-              value: `${Math.round(item.impliedProb * 100)}%`,
-              meta: 'Kalshi',
-              lean: item.impliedProb > 0.5 ? 'YES' : 'NO',
-            })),
-          },
-          {
-            id: 'polymarket',
-            label: 'Polymarket',
-            items: STATIC_EVENT_TICKER.filter(item => item.source === 'Polymarket').slice(0, 4).map(item => ({
-              label: item.label,
-              value: `${Math.round(item.impliedProb * 100)}%`,
-              meta: 'Polymarket',
-              lean: item.impliedProb > 0.5 ? 'YES' : 'NO',
-            })),
-          },
-        ],
-        lastUpdatedMs: Date.now(),
-        isLive: false,
-        source: 'static',
-      };
-    }
-
-    const sections: TickerSection[] = [];
-    if (kalshiItems.length > 0) {
-      sections.push({ id: 'kalshi', label: 'Kalshi', items: kalshiItems });
-    }
-    if (polymarketItems.length > 0) {
-      sections.push({ id: 'polymarket', label: 'Polymarket', items: polymarketItems });
-    }
-
-    return {
-      venue: 'event_demo',
-      sections,
-      lastUpdatedMs: Date.now(),
       isLive: hasLiveData,
       source: hasLiveKalshi ? 'kalshi' : hasLivePolymarket ? 'polymarket' : 'snapshot',
     };
@@ -461,7 +404,9 @@ function getMock24hChange(symbol: PriceSymbol): number {
     ETH: 1.8,
     SOL: -0.5,
     USDC: 0,
+    AVAX: 3.2,
+    LINK: 0.8,
   };
-  return changes[symbol] || 0;
+  return changes[symbol] ?? 0;
 }
 

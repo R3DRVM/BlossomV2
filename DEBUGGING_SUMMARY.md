@@ -202,3 +202,4 @@ The issue was CSS specificity conflicts. Tailwind classes like `text-white` and 
 - **Result:** Prediction market queries work in both mock and backend modes
 
 
+

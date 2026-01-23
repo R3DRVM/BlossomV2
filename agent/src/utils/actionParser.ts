@@ -3,7 +3,7 @@
  * Parses and validates BlossomAction[] from LLM JSON output
  */
 
-import { BlossomAction, BlossomPortfolioSnapshot } from '../types/blossom';
+import { BlossomAction, BlossomPortfolioSnapshot, BlossomExecutionRequest } from '../types/blossom';
 import { blossomCharacter } from '../characters/blossom';
 import { getTopKalshiMarketsByVolume, getTopPolymarketMarketsByVolume, getHighestVolumeMarket, RawPredictionMarket } from '../services/predictionData';
 
@@ -169,19 +169,118 @@ CRITICAL - Environment:
 - All actions are purely for demonstration and testing purposes.
 - Mention "In this SIM environment..." occasionally to remind users.
 
+CRITICAL - Never Say "I Can't Process":
+- If the user's intent is unclear, ASK a clarifying question instead of saying "I can't process" or "I cannot".
+- Example clarifying questions:
+  * "I'd be happy to help! Are you looking to swap, trade perps, or explore yield opportunities?"
+  * "Got it, you want to trade. What asset and how much would you like to use?"
+  * "I see you're interested in prediction markets. Would you like me to show top markets by volume?"
+- ONLY respond with an error if the request is truly impossible (e.g., unsupported chain, invalid token).
+- When in doubt, offer 2-3 options for the user to choose from.
+- If user says something vague like "I want to make money" or "help me invest", suggest concrete options.
+
+CRITICAL - Token Inference:
+- "I have ETH" or "I only have ETH" + swap request → tokenIn is ETH
+- "Convert my USDC" → tokenIn is USDC
+- "Get me some WETH" → tokenOut is WETH
+- "Swap to USDC" → tokenOut is USDC
+- Always infer the most logical interpretation. Ask only if truly ambiguous.
+- If user has a balance and wants to swap, infer they want to swap FROM their largest balance.
+
 CRITICAL - Output Format:
-- You MUST respond with a single JSON object with exactly two top-level keys: "assistantMessage" (string) and "actions" (array).
-- No other top-level keys are allowed.
+- You MUST respond with a single JSON object with top-level keys: "assistantMessage" (string), "actions" (array), and optionally "executionRequest" (object).
 - No commentary or text outside the JSON object.
 - The "assistantMessage" must be short, clear, and never mention JSON or technical details.
 - The "assistantMessage" should follow the 4-step structure above (restate intent, summarize strategy, highlight risk, suggest next step).
-- The "actions" array MUST contain valid BlossomAction objects. Each BlossomAction must strictly conform to the BlossomAction TypeScript union type.
-- If no actions are proposed, the "actions" array should be empty: [].
+- The "actions" array MUST contain valid BlossomAction objects for simulation. For on-chain swaps, "actions" may be empty.
+- For on-chain swap requests, you MUST include an "executionRequest" field.
+
+CRITICAL - Execution Request Format (for on-chain swaps):
+- When user requests a swap (e.g., "Swap X USDC to WETH" or "I only have ETH, swap to USDC"), you MUST include "executionRequest":
+{
+  "executionRequest": {
+    "kind": "swap",
+    "chain": "sepolia",
+    "tokenIn": "ETH" | "WETH" | "USDC",
+    "tokenOut": "WETH" | "USDC",
+    "amountIn": "0.01",  // REQUIRED: decimal string (e.g., "0.01" for ETH, "10" for USDC)
+    "slippageBps": 50,   // basis points (50 = 0.5%)
+    "fundingPolicy": "auto"  // "auto" allows funding routes, "require_tokenIn" requires user to hold tokenIn
+  }
+}
+
+Examples:
+1. "Swap 10 USDC to WETH" → 
+{
+  "executionRequest": {
+    "kind": "swap",
+    "chain": "sepolia",
+    "tokenIn": "USDC",
+    "tokenOut": "WETH",
+    "amountIn": "10",
+    "slippageBps": 50,
+    "fundingPolicy": "require_tokenIn"
+  }
+}
+
+2. "I only have ETH. Swap 0.01 ETH to WETH" →
+{
+  "executionRequest": {
+    "kind": "swap",
+    "chain": "sepolia",
+    "tokenIn": "ETH",
+    "tokenOut": "WETH",
+    "amountIn": "0.01",
+    "slippageBps": 50,
+    "fundingPolicy": "auto"
+  }
+}
+
+3. "Swap enough ETH to get 10 USDC" →
+{
+  "executionRequest": {
+    "kind": "swap",
+    "chain": "sepolia",
+    "tokenIn": "ETH",
+    "tokenOut": "USDC",
+    "amountIn": "0.01",  // YOU must explicitly choose amountIn (cannot be "enough")
+    "amountOut": "10",   // optional target
+    "slippageBps": 50,
+    "fundingPolicy": "auto"
+  }
+}
+
+CRITICAL - amountIn requirement:
+- You MUST always provide a specific amountIn value (decimal string).
+- If user says "enough" or "sufficient", you must calculate and provide an explicit amount.
+- For ETH: use decimal format like "0.01", "0.1", "1.0"
+- For USDC: use decimal format like "10", "100", "1000"
+
+CRITICAL - Execution Request Format (for perp positions):
+- When user requests a perp position AND mentions leverage (e.g., "long BTC with 20x leverage", "5x leverage on ETH"), you MUST include "executionRequest" with the leverage field:
+{
+  "executionRequest": {
+    "kind": "perp",
+    "market": "BTC-PERP" | "ETH-PERP" | "SOL-PERP",
+    "side": "long" | "short",
+    "leverage": 20,  // REQUIRED if user mentions leverage (extract from "20x", "5x leverage", etc.)
+    "riskPct": 2.0,  // percentage of account to risk
+    "entryPrice": 95000,  // optional target entry
+    "takeProfitPrice": 105000,  // optional TP target
+    "stopLossPrice": 92000  // optional SL target
+  }
+}
+
+IMPORTANT: Extract leverage from user requests:
+- "20x leverage" → leverage: 20
+- "5.5x" → leverage: 5.5
+- "use 3x" → leverage: 3
+- If user doesn't mention leverage, do NOT include it (will default to 2x)
 
 Product Pillars:
 - Perps execution & risk: Open and manage perpetual futures positions with automatic risk management.
 - DeFi yield deployment: Park idle USDC into yield-generating protocols (Kamino, RootsFi, Jet).
-- Event market bets: Take positions on prediction markets (Fed cuts, ETF approvals, elections).
+- Event market bets: Take positions on prediction markets (Fed cuts, ETF approvals, elections). For "bet/bet YES/bet NO on [event]" requests, include executionRequest with kind: "event", marketId: "[market id]", outcome: "YES"/"NO", stakeUsd: [amount].
 
 CRITICAL - Prediction Market Queries:
 - When the user asks about "Kalshi", "Polymarket", "prediction markets", "top markets", "trending markets", or "highest volume market", you MUST focus ONLY on prediction markets.
@@ -194,9 +293,9 @@ CRITICAL - Prediction Market Queries:
 - For discovery queries (listing markets), provide ONLY the numbered list in your assistantMessage. Do NOT include actions in JSON.
 - For execution queries (risking on a market), include an event action in the JSON with the exact market details provided.
 
-Example JSON output:
+Example JSON output (perp with leverage):
 {
-  "assistantMessage": "I'll open a long ETH perp position with 3% account risk. This strategy targets $3,300 take profit and $2,900 stop loss, keeping your liquidation buffer comfortable. Risk is capped at 3% of account value. Would you like me to adjust the risk level or entry price?",
+  "assistantMessage": "I'll open a long ETH perp position with 5x leverage and 3% account risk. This strategy targets $3,640 take profit and $3,395 stop loss, keeping your liquidation buffer comfortable. Risk is capped at 3% of account value. Would you like me to adjust the risk level or entry price?",
   "actions": [
     {
       "type": "perp",
@@ -209,10 +308,155 @@ Example JSON output:
       "stopLoss": 3395,
       "reasoning": ["ETH is trending up", "Risk is within 3% cap", "Stop loss protects downside"]
     }
-  ]
+  ],
+  "executionRequest": {
+    "kind": "perp",
+    "market": "ETH-PERP",
+    "side": "long",
+    "leverage": 5,
+    "riskPct": 3.0,
+    "entryPrice": 3500,
+    "takeProfitPrice": 3640,
+    "stopLossPrice": 3395
+  }
+}
+
+CRITICAL - Execution Request Format (for DeFi lending/yield):
+- When user requests to allocate/deposit funds to a protocol (e.g., "Allocate amountUsd:500 to protocol:Aave V3", "Allocate 10% to Lido"), you MUST include "executionRequest":
+{
+  "executionRequest": {
+    "kind": "lend",
+    "chain": "sepolia",
+    "asset": "USDC",
+    "amount": "500",  // REQUIRED: decimal string (USD amount)
+    "protocol": "demo",  // Use "demo" for testnet
+    "vault": "Aave V3"  // Protocol name from user request
+  }
+}
+
+IMPORTANT - Parsing DeFi allocation requests:
+- "Allocate amountUsd:"500" to protocol:"Aave V3" USDC yield" → amount: "500", vault: "Aave V3"
+- "Allocate amountPct:"10" to protocol:"Lido" USDC yield" → calculate amount from account value (10% of portfolio), vault: "Lido"
+- Extract protocol name from protocol:"[name]" (with or without quotes)
+- Extract amount from amountUsd:"[value]" or amountPct:"[value]" (with or without quotes)
+- "Deposit $1000 into Compound" → amount: "1000", vault: "Compound"
+- "Park 500 USDC in highest APY vault" → amount: "500", vault: use highest APY from TOP YIELD VAULTS
+
+Example JSON output (DeFi yield allocation):
+{
+  "assistantMessage": "I'll allocate $500 to Aave V3's USDC lending pool, earning 6.4% APY. This uses idle USDC capital efficiently while keeping funds accessible. The allocation is within the 25% single-protocol cap. Confirm to execute?",
+  "actions": [
+    {
+      "type": "defi",
+      "action": "deposit",
+      "protocol": "Aave V3",
+      "asset": "USDC",
+      "amountUsd": 500,
+      "apr": 6.4,
+      "reasoning": ["Highest APY vault available", "Within 25% protocol cap", "USDC remains accessible"]
+    }
+  ],
+  "executionRequest": {
+    "kind": "lend",
+    "chain": "sepolia",
+    "asset": "USDC",
+    "amount": "500",
+    "protocol": "demo",
+    "vault": "Aave V3"
+  }
+}
+
+CRITICAL - Execution Request Format (for event markets):
+- When user requests to bet on an event (e.g., "Bet YES on Fed rate cut", "Risk $50 on election"), you MUST include "executionRequest":
+{
+  "executionRequest": {
+    "kind": "event",
+    "chain": "sepolia",
+    "marketId": "fed-rate-cut-march-2025",  // Extract from EVENT MARKETS data
+    "outcome": "YES" | "NO",
+    "stakeUsd": 50,  // USD amount to stake
+    "price": 0.65  // Optional: YES/NO price from EVENT MARKETS data
+  }
+}
+
+Example JSON output (event market bet):
+{
+  "assistantMessage": "I'll place a YES bet on 'Fed cuts rates in March 2025' with $50 stake at 65% implied probability. Max payout: $76.92. Max loss: $50. This is 2% of your account value. Confirm to execute?",
+  "actions": [
+    {
+      "type": "event",
+      "action": "open",
+      "eventKey": "fed-rate-cut-march-2025",
+      "label": "Fed cuts rates in March 2025",
+      "side": "YES",
+      "stakeUsd": 50,
+      "maxPayoutUsd": 76.92,
+      "maxLossUsd": 50,
+      "reasoning": ["Strong economic indicators", "Within 2% risk cap", "65% implied probability"]
+    }
+  ],
+  "executionRequest": {
+    "kind": "event",
+    "chain": "sepolia",
+    "marketId": "fed-rate-cut-march-2025",
+    "outcome": "YES",
+    "stakeUsd": 50,
+    "price": 0.65
+  }
 }`;
 
+  // Detect DeFi/yield intent
+  const lowerMessage = userMessage.toLowerCase();
+  const isDefiIntent = (/park|deposit|earn yield|lend|supply|yield|allocate/i.test(userMessage) &&
+    (lowerMessage.includes('usdc') || lowerMessage.includes('stablecoin') || lowerMessage.includes('yield') || lowerMessage.includes('protocol')));
+
+  // Fetch DefiLlama vaults if DeFi intent detected
+  let topVaults: Array<{ name: string; apy: number; tvl: number; poolId: string; protocol: string }> = [];
+  if (isDefiIntent) {
+    try {
+      const { getTopYieldVaults } = await import('../quotes/defiLlamaQuote');
+      topVaults = await getTopYieldVaults();
+    } catch (error: any) {
+      console.warn('[buildBlossomPrompts] Failed to fetch DefiLlama vaults:', error.message);
+      // Use fallback vaults (already in defiLlamaQuote.ts)
+    }
+  }
+
   let userPrompt = `**User Request:**\n${userMessage}\n\n`;
+
+  // Inject DefiLlama vault data if DeFi intent
+  if (isDefiIntent && topVaults.length > 0) {
+    userPrompt += `**TOP YIELD VAULTS (from DefiLlama):**\n`;
+    topVaults.forEach((vault, idx) => {
+      userPrompt += `${idx + 1}. ${vault.name} - ${vault.apy.toFixed(2)}% APY, TVL: $${(vault.tvl / 1000).toFixed(0)}k\n`;
+    });
+    userPrompt += `\n**Recommendation:** For "park/deposit/earn yield" requests, recommend the highest APY vault (${topVaults[0]?.name || 'Aave USDC'}) and build a PULL → LEND_SUPPLY execution plan.\n\n`;
+  }
+
+  // Detect event intent
+  const isEventIntent = /bet|wager|risk.*on|event|prediction/i.test(userMessage) && 
+    (lowerMessage.includes('yes') || lowerMessage.includes('no') || lowerMessage.includes('fed') || lowerMessage.includes('rate cut'));
+
+  // Fetch event markets if event intent detected
+  let eventMarkets: Array<{ id: string; title: string; yesPrice: number; noPrice: number }> = [];
+  if (isEventIntent) {
+    try {
+      const { getEventMarkets } = await import('../quotes/eventMarkets');
+      const markets = await getEventMarkets(5);
+      eventMarkets = markets.map(m => ({ id: m.id, title: m.title, yesPrice: m.yesPrice, noPrice: m.noPrice }));
+    } catch (error: any) {
+      console.warn('[buildBlossomPrompts] Failed to fetch event markets:', error.message);
+    }
+  }
+
+  // Inject event market data if event intent
+  if (isEventIntent && eventMarkets.length > 0) {
+    userPrompt += `**EVENT MARKETS (from dFlow/Polymarket):**\n`;
+    eventMarkets.forEach((market, idx) => {
+      userPrompt += `${idx + 1}. "${market.title}" - YES: ${(market.yesPrice * 100).toFixed(0)}%, NO: ${(market.noPrice * 100).toFixed(0)}%\n`;
+    });
+    userPrompt += `\n**Recommendation:** For "bet/bet YES/bet NO on [event]" requests, match keyword to market and build a PROOF execution plan with venueType=2.\n\n`;
+  }
 
   if (portfolio) {
     const accountValue = portfolio.accountValueUsd.toLocaleString();
@@ -256,9 +500,9 @@ Example JSON output:
     const isAskingAboutKalshi = hasKalshi && (hasTop || hasTrending || hasRightNow);
     const isAskingAboutPolymarket = hasPolymarket && (hasTop || hasTrending || hasRightNow);
     
-    isPredictionMarketQuery = isAskingTopKalshi || isAskingTopPolymarket || isAskingHighestVolume || 
+    isPredictionMarketQuery = !!(isAskingTopKalshi || isAskingTopPolymarket || isAskingHighestVolume || 
       (hasKalshi && hasPredictionMarket) || (hasPolymarket && hasPredictionMarket) ||
-      isAskingAboutKalshi || isAskingAboutPolymarket || isRiskingOnPredictionMarket;
+      isAskingAboutKalshi || isAskingAboutPolymarket || isRiskingOnPredictionMarket);
     
     // Log detection for debugging
     console.log('[prediction-detection]', {
@@ -414,6 +658,104 @@ Example JSON output:
   userPrompt += `**Remember:** This is a SIMULATED environment. No real orders are placed.`;
 
   return { systemPrompt, userPrompt, isPredictionMarketQuery };
+}
+
+/**
+ * Validate execution request from LLM
+ */
+export function validateExecutionRequest(raw: any): BlossomExecutionRequest | null {
+  if (!raw || typeof raw !== 'object') {
+    return null;
+  }
+
+  if (raw.kind === 'lend' || raw.kind === 'lend_supply') {
+    // Validate chain
+    if (raw.chain !== 'sepolia') {
+      console.warn('Invalid chain for lending:', raw.chain);
+      return null;
+    }
+
+    // Validate asset (must be USDC for now)
+    if (raw.asset !== 'USDC') {
+      console.warn('Invalid asset for lending:', raw.asset);
+      return null;
+    }
+
+    // Validate amount (required, must be decimal string)
+    if (!raw.amount || typeof raw.amount !== 'string') {
+      console.warn('Missing or invalid amount for lending');
+      return null;
+    }
+
+    // Validate amount is a valid decimal number
+    const amountNum = parseFloat(raw.amount);
+    if (isNaN(amountNum) || amountNum <= 0) {
+      console.warn('Invalid amount value for lending:', raw.amount);
+      return null;
+    }
+
+    return {
+      kind: raw.kind === 'lend_supply' ? 'lend_supply' : 'lend',
+      chain: 'sepolia',
+      asset: 'USDC',
+      amount: raw.amount,
+      protocol: raw.protocol || 'demo',
+      vault: raw.vault,
+    };
+  }
+
+  if (raw.kind === 'swap') {
+    // Validate chain
+    if (raw.chain !== 'sepolia') {
+      console.warn('Invalid chain:', raw.chain);
+      return null;
+    }
+
+    // Validate token enums
+    const validTokenIn = ['ETH', 'WETH', 'USDC'];
+    const validTokenOut = ['WETH', 'USDC'];
+    if (!validTokenIn.includes(raw.tokenIn) || !validTokenOut.includes(raw.tokenOut)) {
+      console.warn('Invalid tokenIn or tokenOut:', raw.tokenIn, raw.tokenOut);
+      return null;
+    }
+
+    // Validate amountIn (required, must be decimal string)
+    if (!raw.amountIn || typeof raw.amountIn !== 'string') {
+      console.warn('Missing or invalid amountIn');
+      return null;
+    }
+
+    // Validate amountIn is a valid decimal number
+    const amountInNum = parseFloat(raw.amountIn);
+    if (isNaN(amountInNum) || amountInNum <= 0) {
+      console.warn('Invalid amountIn value:', raw.amountIn);
+      return null;
+    }
+
+    // Validate slippageBps
+    const slippageBps = typeof raw.slippageBps === 'number' ? raw.slippageBps : 50;
+    if (slippageBps < 0 || slippageBps > 1000) {
+      console.warn('Invalid slippageBps:', slippageBps);
+      return null;
+    }
+
+    // Validate fundingPolicy
+    const fundingPolicy = raw.fundingPolicy === 'require_tokenIn' ? 'require_tokenIn' : 'auto';
+
+    return {
+      kind: 'swap',
+      chain: 'sepolia',
+      tokenIn: raw.tokenIn,
+      tokenOut: raw.tokenOut,
+      amountIn: raw.amountIn,
+      amountOut: raw.amountOut || undefined,
+      slippageBps,
+      fundingPolicy,
+    };
+  }
+
+  // Future: validate other kinds (perp, etc.)
+  return null;
 }
 
 /**

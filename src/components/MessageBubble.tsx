@@ -48,7 +48,7 @@ interface MessageBubbleProps {
   onSendMessage?: (text: string) => void; // Auto-send handler for market list buttons
 }
 
-function getStrategyReasoning(strategy: ParsedStrategy, instrumentType?: 'perp' | 'event'): string[] {
+function getStrategyReasoning(strategy: ParsedStrategy, instrumentType?: 'perp' | 'event' | 'defi'): string[] {
   const reasons: string[] = [];
 
   if (instrumentType === 'event') {
@@ -56,6 +56,11 @@ function getStrategyReasoning(strategy: ParsedStrategy, instrumentType?: 'perp' 
     reasons.push('Max payout reflects the odds implied by the market (1.7x for demo).');
     reasons.push('Your loss is limited to the stake; no liquidation risk.');
     reasons.push('This is a simulated event contract for demo purposes.');
+    return reasons;
+  } else if (instrumentType === 'defi') {
+    reasons.push('DeFi deposits earn yield passively (typically 3-8% APY).');
+    reasons.push('Risk is limited to smart contract risk and protocol solvency.');
+    reasons.push('No leverage or liquidation risk - deposits can be withdrawn anytime.');
     return reasons;
   }
 
@@ -106,9 +111,31 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
   const isMountedRef = useRef(true);
   
   // Find the DeFi proposal for this message
-  const defiProposal = defiProposalId 
+  const defiProposal = defiProposalId
     ? (defiPositions.find(p => p.id === defiProposalId) || (latestDefiProposal?.id === defiProposalId ? latestDefiProposal : null))
     : null;
+
+  // DEBUG: Track DeFi proposal lookup in MessageBubble (wrapped in useEffect to prevent spam)
+  const hasLoggedDeFiWarningRef = useRef(false);
+  useEffect(() => {
+    if (import.meta.env.DEV && defiProposalId) {
+      if (!defiProposal && !hasLoggedDeFiWarningRef.current) {
+        console.warn('[MessageBubble] ⚠️ DeFi proposal ID exists but proposal not found!', {
+          defiProposalId,
+          availableDefiPositions: defiPositions,
+          latestDefiProposal,
+          messageText: text
+        });
+        hasLoggedDeFiWarningRef.current = true;
+      } else if (defiProposal) {
+        console.log('[MessageBubble] ✓ Found DeFi proposal:', {
+          defiProposalId,
+          proposal: defiProposal
+        });
+        hasLoggedDeFiWarningRef.current = false; // Reset for next time
+      }
+    }
+  }, [defiProposalId, defiProposal, defiPositions, latestDefiProposal, text]);
   const strategyPreviewRef = useRef<HTMLDivElement>(null);
   const isSelected = strategyId && strategyId === selectedStrategyId;
   

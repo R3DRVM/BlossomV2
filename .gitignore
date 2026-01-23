@@ -31,3 +31,6 @@ dist-ssr
 *.sw?
 
 .vercel
+agent/telemetry/telemetry.db
+agent/telemetry/telemetry.db-shm
+agent/telemetry/telemetry.db-wal

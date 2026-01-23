@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "dev:agent": "cd agent && npm run dev:agent",
     "dev:all": "concurrently \"npm run dev\" \"npm run dev:agent\"",
+    "dev:demo": "npx concurrently --kill-others-on-fail --names \"frontend,backend\" --prefix-colors \"blue,green\" \"npm run dev\" \"cd agent && PORT=3001 npm run dev\"",
     "install:all": "npm install && cd agent && npm install"
   },
   "dependencies": {
@@ -16,7 +17,8 @@
     "lucide-react": "^0.556.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "react-router-dom": "^7.10.1"
+    "react-router-dom": "^7.10.1",
+    "viem": "^2.43.3"
   },
   "devDependencies": {
     "@types/react": "^18.2.43",
@@ -24,6 +26,7 @@
     "@types/react-router-dom": "^5.3.3",
     "@vitejs/plugin-react": "^4.2.1",
     "autoprefixer": "^10.4.16",
+    "concurrently": "^8.2.2",
     "postcss": "^8.4.32",
     "tailwindcss": "^3.3.6",
     "typescript": "^5.3.3",

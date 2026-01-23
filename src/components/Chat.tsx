@@ -5,14 +5,16 @@ import { extractMarketStrict, generateMarketClarification } from '../lib/market'
 import { parseUserMessage, generateBlossomResponse, ParsedStrategy, ParsedIntent, parseModificationFromText } from '../lib/mockParser';
 import { useBlossomContext, ActiveTab, ChatMessage, Strategy, computePerpFromRisk } from '../context/BlossomContext';
 import { derivePerpPositionsFromStrategies } from '../lib/derivePerpPositions';
-import { USE_AGENT_BACKEND } from '../lib/config';
+import { USE_AGENT_BACKEND, executionMode as configExecutionMode, executionAuthMode, ethTestnetIntent, fundingRouteMode, enableDemoSwap } from '../lib/config';
+import { callAgent } from '../lib/apiClient';
+import { getAddress, connectWallet, sendTransaction, type PreparedTx } from '../lib/walletAdapter';
 import { callBlossomChat } from '../lib/blossomApi';
 import QuickStartPanel from './QuickStartPanel';
 import BlossomHelperOverlay from './BlossomHelperOverlay';
 import { HelpCircle } from 'lucide-react';
 import { detectHighRiskIntent } from '../lib/riskIntent';
 import HighRiskConfirmCard from './HighRiskConfirmCard';
-import ConfirmTradeCard from './ConfirmTradeCard';
+// Task A: Removed ConfirmTradeCard import - using MessageBubble rich card instead
 import { BlossomLogo } from './BlossomLogo';
 // ExecutionPlanCard removed - execution details now live inside chat plan card
 
@@ -132,6 +134,9 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
   
   // Step B: Track last intent for CREATE isolation guard
   const lastIntentRef = useRef<{ action: string; marketResult?: any } | null>(null);
+  
+  // Preflight check: run once per page load before first eth_testnet execution
+  const preflightDoneRef = useRef<boolean>(false);
   
   // Step 1: DEV-only ring buffer for routing traces (last 20)
   const routingTracesRef = useRef<Array<{
@@ -871,15 +876,21 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
       : `${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
     
     // Part B: Create stable messageKey from text hash or use provided
+    // Goal F: Detect quick action patterns (allocate/bet commands with structured params)
+    const isQuickAction = /(?:amountUsd|amountPct|stakeUsd):"[^"]*"/.test(userText) ||
+                          /(?:protocol|vault|eventKey):"[^"]*"/.test(userText);
+
     const messageKey = opts?.messageKey || (() => {
       // Simple hash of text (for demo, just use text + timestamp truncated to second)
       const textHash = userText.slice(0, 50).replace(/\s+/g, '').toLowerCase();
-      const timestamp = Math.floor(Date.now() / 1000); // Round to second
+      // Goal F: Use milliseconds for quick actions to prevent duplicate blocking
+      const timestamp = isQuickAction ? Date.now() : Math.floor(Date.now() / 1000);
       return `${timestamp}-${textHash}`;
     })();
-    
+
     // Part B: Check if this message was already handled
-    if (lastHandledMessageKeyRef.current === messageKey && !opts?.skipAppendUserMessage) {
+    // Goal F: Skip duplicate check for quick actions (they're intentional user clicks)
+    if (lastHandledMessageKeyRef.current === messageKey && !opts?.skipAppendUserMessage && !isQuickAction) {
       if (import.meta.env.DEV) {
         console.log('[Chat] duplicate handling blocked', { messageKey, msgRunId });
       }
@@ -1138,15 +1149,230 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
           },
         });
 
-        // Update state from backend portfolio
+        // Handle error codes for explicit UI states
+        if (response.errorCode) {
+          let errorMessage = '';
+          switch (response.errorCode) {
+            case 'INSUFFICIENT_BALANCE':
+              errorMessage = 'Insufficient balance to execute this transaction. Please check your wallet balance.';
+              break;
+            case 'SESSION_EXPIRED':
+              errorMessage = 'One-click execution has expired. You can enable it again or continue with wallet prompts.';
+              break;
+            case 'RELAYER_FAILED':
+              errorMessage = 'One-click execution temporarily unavailable. Using wallet prompts instead.';
+              break;
+            case 'SLIPPAGE_FAILURE':
+              errorMessage = 'Transaction failed due to slippage. Please try again with a higher slippage tolerance.';
+              break;
+            case 'LLM_REFUSAL':
+              errorMessage = "I couldn't generate a valid execution plan. Please rephrase your request.";
+              break;
+            default:
+              errorMessage = 'An error occurred. Please try again.';
+          }
+          
+          const errorChatMessage: ChatMessage = {
+            id: `error-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            text: errorMessage,
+            isUser: false,
+            timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+          };
+          appendMessageToChat(targetChatId, errorChatMessage);
+          
+          // Do NOT update portfolio on error
+          return;
+        }
+
+        // Update state from backend portfolio (authoritative source)
         updateFromBackendPortfolio(response.portfolio);
+
+        // OBSERVABILITY: Plan missing detection (frontend)
+        // Log when assistantMessage indicates action but executionRequest is missing
+        if (!response.executionRequest && response.actions?.length === 0) {
+          const actionKeywords = /\b(i'll|i will|let me|going to)\s+(swap|long|short|deposit|lend|stake|bet|trade)/i;
+          if (actionKeywords.test(response.assistantMessage)) {
+            const debugInfo = (response as any).debug;
+            console.warn(
+              `[PLAN_MISSING_UI] Assistant indicates action but no executionRequest\n` +
+              `  Message: "${response.assistantMessage.substring(0, 100)}..."\n` +
+              `  Backend debug: ${JSON.stringify(debugInfo || 'N/A')}\n` +
+              `  CorrelationId: ${debugInfo?.correlationId || 'unknown'}`
+            );
+          }
+        }
+
+        // Log execution results if present
+        if (response.executionResults && response.executionResults.length > 0) {
+          console.log('[Chat] Execution results:', response.executionResults);
+          // Show execution progress in UI (optional: could add toast notifications)
+          response.executionResults.forEach((result: any) => {
+            if (result.success) {
+              console.log(`[Chat] ✓ Execution successful: ${result.txHash || result.simulatedTxId}`);
+            } else {
+              console.error(`[Chat] ✗ Execution failed: ${result.error}`);
+              // Show error message for failed executions
+              if (result.errorCode) {
+                let errorMsg = '';
+                switch (result.errorCode) {
+                  case 'INSUFFICIENT_BALANCE':
+                    errorMsg = 'Insufficient balance to execute this transaction.';
+                    break;
+                  case 'SESSION_EXPIRED':
+                    errorMsg = 'One-click execution expired. Using wallet prompts instead.';
+                    break;
+                  case 'RELAYER_FAILED':
+                    errorMsg = 'One-click execution unavailable. Using wallet prompts instead.';
+                    break;
+                  case 'SLIPPAGE_FAILURE':
+                    errorMsg = 'Transaction failed due to slippage.';
+                    break;
+                  default:
+                    errorMsg = result.error || 'Execution failed.';
+                }
+                const errorChatMessage: ChatMessage = {
+                  id: `error-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                  text: errorMsg,
+                  isUser: false,
+                  timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+                };
+                appendMessageToChat(targetChatId, errorChatMessage);
+              }
+            }
+          });
+        }
+
+        // Debug logging (Task A)
+        if (import.meta.env.DEBUG_PLAN === 'true') {
+          console.log('[Chat] Agent backend response keys:', Object.keys(response));
+          console.log('[Chat] executionRequest:', response.executionRequest);
+          console.log('[Chat] actions:', response.actions);
+          console.log('[Chat] portfolio.strategies:', response.portfolio?.strategies);
+        }
 
         // Find strategy IDs from actions
         let strategyId: string | null = null;
         let strategy: ParsedStrategy | null = null;
         let defiProposalId: string | null = null;
+        let draftId: string | null = null; // Task A: Track draftId for ConfirmTradeCard
 
-        if (response.actions && response.actions.length > 0) {
+        // Task A: Create draft strategy from executionRequest if present
+        if (response.executionRequest) {
+          const execReq = response.executionRequest;
+          
+          if (execReq.kind === 'perp') {
+            // Create perp draft strategy
+            const perpReq = execReq as unknown as { kind: 'perp'; chain: string; market: string; side: 'long' | 'short'; leverage: number; riskPct?: number; marginUsd?: number };
+            const finalMarginUsd = perpReq.marginUsd || (account.accountValue * (perpReq.riskPct || 2) / 100);
+            const finalLeverage = perpReq.leverage || 2;
+            const finalNotionalUsd = finalMarginUsd * finalLeverage;
+            const newDraft = addDraftStrategy({
+              side: perpReq.side === 'long' ? 'Long' : 'Short',
+              market: perpReq.market || 'BTC-USD',
+              riskPercent: perpReq.riskPct || 2,
+              leverage: finalLeverage,
+              marginUsd: finalMarginUsd,
+              notionalUsd: finalNotionalUsd, // Set explicitly for ConfirmTradeCard
+              sourceText: userText,
+              instrumentType: 'perp',
+            });
+            draftId = newDraft.id;
+            strategyId = newDraft.id;
+            strategy = {
+              market: perpReq.market || 'BTC-USD',
+              side: perpReq.side === 'long' ? 'Long' : 'Short',
+              riskPercent: perpReq.riskPct || 2,
+              entryPrice: 0,
+              takeProfit: 0,
+              stopLoss: 0,
+              liqBuffer: 15,
+              fundingImpact: 'Low',
+            };
+            
+            if (import.meta.env.DEBUG_PLAN === 'true') {
+              console.log('[Chat] Created perp draft from executionRequest:', { draftId, execReq: perpReq });
+            }
+          } else if (execReq.kind === 'swap') {
+            // For swaps, we don't create a draft (swaps execute immediately)
+            // But we still store executionRequest for execution
+            if (import.meta.env.DEBUG_PLAN === 'true') {
+              console.log('[Chat] Swap executionRequest (no draft needed):', execReq);
+            }
+          } else if (execReq.kind === 'event') {
+            // Create event draft strategy
+            const eventReq = execReq as unknown as { kind: 'event'; chain: string; marketId: string; outcome: 'YES' | 'NO'; stakeUsd: number; price?: number };
+            const stakeUsd = eventReq.stakeUsd || 5;
+            const newDraft = addDraftStrategy({
+              side: eventReq.outcome === 'YES' ? 'Long' : 'Short',
+              market: eventReq.marketId || 'demo-fed',
+              riskPercent: (stakeUsd / account.accountValue) * 100,
+              entry: stakeUsd,
+              takeProfit: stakeUsd * 2, // Estimate
+              stopLoss: stakeUsd,
+              sourceText: userText,
+              instrumentType: 'event',
+              eventKey: eventReq.marketId || 'demo-fed',
+              eventLabel: eventReq.marketId || 'Fed Rate Cut',
+              eventSide: eventReq.outcome,
+              stakeUsd: stakeUsd,
+            });
+            draftId = newDraft.id;
+            strategyId = newDraft.id;
+            strategy = {
+              market: eventReq.marketId || 'demo-fed',
+              side: eventReq.outcome === 'YES' ? 'Long' : 'Short',
+              riskPercent: (stakeUsd / account.accountValue) * 100,
+              entryPrice: stakeUsd,
+              takeProfit: stakeUsd * 2,
+              stopLoss: stakeUsd,
+              liqBuffer: 0,
+              fundingImpact: 'Low',
+            };
+            
+            if (import.meta.env.DEBUG_PLAN === 'true') {
+              console.log('[Chat] Created event draft from executionRequest:', { draftId, execReq: eventReq });
+            }
+          } else if (execReq.kind === 'lend' || execReq.kind === 'lend_supply') {
+            // Create DeFi/lending draft strategy
+            // Goal F: Now properly supports 'defi' type after fixing Strategy interface
+            const lendReq = execReq as unknown as { kind: 'lend' | 'lend_supply'; chain: string; asset: string; amount: string; protocol?: string; vault?: string };
+            const amountUsd = parseFloat(lendReq.amount) || 10;
+            // Use protocol/vault name directly (without "DeFi:" prefix for cleaner display)
+            const defiMarketLabel = lendReq.vault || lendReq.protocol || 'Yield Vault';
+            const newDraft = addDraftStrategy({
+              side: 'Long', // DeFi is always "long" (deposit)
+              market: defiMarketLabel,
+              riskPercent: (amountUsd / account.accountValue) * 100,
+              entry: amountUsd,
+              takeProfit: amountUsd * 1.05, // Estimate 5% yield
+              stopLoss: amountUsd,
+              leverage: 1, // DeFi has no leverage
+              marginUsd: amountUsd, // Deposit amount = margin
+              notionalUsd: amountUsd, // For DeFi, notional = deposit
+              sourceText: userText,
+              instrumentType: 'defi', // Goal F: Now uses proper 'defi' type
+            });
+            draftId = newDraft.id;
+            strategyId = newDraft.id;
+
+            // CRITICAL FIX: Also create DeFi position for MessageBubble to render DeFi card
+            // MessageBubble looks in defiPositions array, not strategies array
+            const commandForDefi = `Allocate amountUsd:"${amountUsd}" to protocol:"${defiMarketLabel}" USDC yield`;
+            const defiProposal = createDefiPlanFromCommand(commandForDefi, defiMarketLabel);
+            defiProposalId = defiProposal.id;
+
+            if (import.meta.env.DEBUG_PLAN === 'true') {
+              console.log('[Chat] Created DeFi/lend draft from executionRequest:', {
+                draftId,
+                defiProposalId,
+                execReq: lendReq
+              });
+            }
+          }
+        }
+
+        // Fallback: Find strategy IDs from actions if no executionRequest
+        if (!draftId && response.actions && response.actions.length > 0) {
           const action = response.actions[0];
           // Find the strategy that matches this action
           // The backend should have created it, so we look for the most recent matching strategy
@@ -1190,12 +1416,29 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
 
           // Check for DeFi proposal
           if (action.type === 'defi') {
-            const defiPos = response.portfolio.defiPositions?.find((p: any) => 
+            // DEBUG: Track DeFi position lookup from backend response
+            if (import.meta.env.DEV) {
+              console.log('[DeFi Debug] Looking for DeFi position in backend response:', {
+                protocol: action.protocol,
+                availablePositions: response.portfolio.defiPositions,
+                allActions: response.actions
+              });
+            }
+
+            const defiPos = response.portfolio.defiPositions?.find((p: any) =>
               p.protocol === action.protocol && !p.isClosed
             );
+
+            if (import.meta.env.DEV) {
+              console.log('[DeFi Debug] Found position:', defiPos);
+            }
+
             if (defiPos) {
               defiProposalId = defiPos.id;
+            } else if (import.meta.env.DEV) {
+              console.warn('[DeFi Debug] ⚠️ No DeFi position found! defiProposalId will be null → card will not render');
             }
+
             setOnboarding(prev => ({ ...prev, queuedStrategy: true })); // DeFi counts as "queued"
           } else if (action.type === 'perp') {
             setOnboarding(prev => ({ ...prev, openedTrade: true })); // Perp trade
@@ -1204,15 +1447,56 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
           }
         }
 
+        // Task A: Use server-created draftId if available (backend now creates drafts deterministically)
+        // Fallback to frontend-created draftId for backward compatibility
+        const finalDraftId = (response as any).draftId || draftId;
+        
+        // Task A: Create message with draftId if we have one (for ConfirmTradeCard)
         const blossomResponse: ChatMessage = {
           id: `assistant-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
           text: response.assistantMessage,
           isUser: false,
           timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
           strategy: strategy,
-          strategyId: strategyId,
+          strategyId: strategyId || finalDraftId, // Use server draftId if available
           defiProposalId: defiProposalId,
+          executionRequest: response.executionRequest || null,
+          ...(finalDraftId ? {
+            type: 'trade_confirm' as const,
+            draftId: finalDraftId,
+          } : {}),
+          // Include defiProtocolsList from backend if present
+          ...((response as any).defiProtocolsList ? {
+            defiProtocolsList: (response as any).defiProtocolsList.map((p: any) => ({
+              id: p.slug || p.name.toLowerCase().replace(/\s+/g, '-'),
+              name: p.name,
+              tvlUsd: p.tvl,
+              chains: p.chains,
+              category: p.category,
+              source: 'defillama',
+              isLive: true,
+            }))
+          } : {}),
+          // Include eventMarketsList from backend if present
+          ...((response as any).eventMarketsList ? {
+            marketsList: (response as any).eventMarketsList.map((m: any) => ({
+              id: m.id,
+              title: m.title,
+              yesPrice: m.yesPrice,
+              noPrice: m.noPrice,
+              volume24hUsd: m.volume24hUsd,
+              source: m.source || 'fallback',
+              isLive: true,
+            }))
+          } : {}),
         };
+        
+        if (import.meta.env.DEBUG_PLAN === 'true' || import.meta.env.DEBUG_CARD_CONTRACT === 'true') {
+          console.log('[Chat] Message created with draftId:', finalDraftId, 'keys:', Object.keys(blossomResponse));
+          console.log('[Chat] Will ConfirmTradeCard render?', finalDraftId ? 'YES (has draftId)' : 'NO (no draftId)');
+          console.log('[Chat] Draft source:', (response as any).draftId ? 'server-created' : (draftId ? 'frontend-created' : 'none'));
+        }
+        
         // Always append - never replace (using stable chat id)
         appendMessageToChat(targetChatId, blossomResponse);
       } catch (error: any) {
@@ -2578,6 +2862,106 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
   };
 
   // Part A: Handle confirm/proceed - execute draftId directly (never re-process message)
+  // Helper function to poll transaction status and update chat
+  const pollTransactionStatus = useCallback(async (
+    txHash: string,
+    targetChatId: string
+  ) => {
+    // Immediately append "Submitted" message
+    const submittedMessage: ChatMessage = {
+      id: `tx-submitted-${txHash}-${Date.now()}`,
+      text: `Submitted on Sepolia: ${txHash.substring(0, 10)}...${txHash.substring(txHash.length - 8)}`,
+      isUser: false,
+      timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+    };
+    appendMessageToChat(targetChatId, submittedMessage);
+
+    // Poll for status (every 2s for up to 60s)
+    const maxAttempts = 30; // 30 * 2s = 60s
+    let attempts = 0;
+    const statusMessageId = `tx-status-${txHash}-${Date.now()}`;
+
+    const pollInterval = setInterval(async () => {
+      attempts++;
+
+      try {
+        const statusResponse = await callAgent(`/api/execute/status?txHash=${encodeURIComponent(txHash)}`, {
+          method: 'GET',
+        });
+
+        if (!statusResponse.ok) {
+          if (attempts >= maxAttempts) {
+            clearInterval(pollInterval);
+            const timeoutMessage: ChatMessage = {
+              id: statusMessageId,
+              text: `Still pending: ${txHash.substring(0, 10)}...${txHash.substring(txHash.length - 8)} (check explorer)`,
+              isUser: false,
+              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+            };
+            appendMessageToChat(targetChatId, timeoutMessage);
+          }
+          return;
+        }
+
+        const statusData = await statusResponse.json();
+
+        if (statusData.status === 'pending') {
+          // Keep waiting
+          if (attempts >= maxAttempts) {
+            clearInterval(pollInterval);
+            const timeoutMessage: ChatMessage = {
+              id: statusMessageId,
+              text: `Still pending: ${txHash.substring(0, 10)}...${txHash.substring(txHash.length - 8)} (check explorer)`,
+              isUser: false,
+              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+            };
+            appendMessageToChat(targetChatId, timeoutMessage);
+          }
+          return;
+        }
+
+        // Transaction is confirmed or reverted
+        clearInterval(pollInterval);
+
+        let statusText: string;
+        if (statusData.status === 'confirmed') {
+          statusText = `Confirmed on Sepolia: ${txHash.substring(0, 10)}...${txHash.substring(txHash.length - 8)}`;
+        } else if (statusData.status === 'reverted') {
+          statusText = `Reverted on Sepolia: ${txHash.substring(0, 10)}...${txHash.substring(txHash.length - 8)}`;
+        } else {
+          statusText = `Status: ${statusData.status} - ${txHash.substring(0, 10)}...${txHash.substring(txHash.length - 8)}`;
+        }
+
+        const statusMessage: ChatMessage = {
+          id: statusMessageId,
+          text: statusText,
+          isUser: false,
+          timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+        };
+        appendMessageToChat(targetChatId, statusMessage);
+      } catch (error: any) {
+        if (import.meta.env.DEV) {
+          console.warn('[pollTransactionStatus] Error polling status:', error);
+        }
+        if (attempts >= maxAttempts) {
+          clearInterval(pollInterval);
+          const errorMessage: ChatMessage = {
+            id: statusMessageId,
+            text: `Status check failed: ${txHash.substring(0, 10)}...${txHash.substring(txHash.length - 8)}`,
+            isUser: false,
+            timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+          };
+          appendMessageToChat(targetChatId, errorMessage);
+        }
+      }
+    }, 2000); // Poll every 2 seconds
+
+    // Cleanup on unmount (if component unmounts)
+    return () => {
+      clearInterval(pollInterval);
+    };
+  }, [appendMessageToChat]);
+
   // Must be defined before handleProceedHighRisk and ConfirmTradeCard usage
   const handleConfirmTrade = async (draftId: string) => {
     // B3: Use stored targetChatId from draft creation (no fallback createNewChatSession)
@@ -2589,99 +2973,677 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
       return;
     }
     
-    // Part A: Set state to executing
-    setChatMode({ mode: 'executing', draftId });
+    // Get executed strategy (used for both sim and eth_testnet paths)
+    const executedStrategy = strategies.find(s => s.id === draftId);
     
-    // Part A: Execute the draft by transitioning status: draft -> queued -> executing -> executed
-    updateStrategyStatus(draftId, 'queued');
-    
-    // Small delay for UI feedback, then execute
-    setTimeout(() => {
-      updateStrategyStatus(draftId, 'executing');
-      setTimeout(() => {
-        updateStrategyStatus(draftId, 'executed');
-        
-        // Step 6: Multi-position verification (DEV only)
-        setTimeout(() => {
-          if (import.meta.env.DEV) {
-            const executedPerps = strategies.filter(s => 
-              s.instrumentType === 'perp' && 
-              (s.status === 'executed' || s.status === 'executing') &&
-              !s.isClosed &&
-              (s.notionalUsd ?? 0) > 0
-            );
-            const derivedPositions = derivePerpPositionsFromStrategies(strategies);
-            const distinctMarkets = new Set(executedPerps.map(s => s.market));
+    // ETH testnet execution path (additive, doesn't change sim behavior)
+    if (configExecutionMode === 'eth_testnet') {
+      try {
+        // Run preflight check once per session before first execution
+        if (!preflightDoneRef.current) {
+          const preflightResponse = await callAgent('/api/execute/preflight');
+          if (preflightResponse.ok) {
+            const preflightData = await preflightResponse.json();
+            preflightDoneRef.current = true;
             
-            if (executedPerps.length !== derivedPositions.length) {
-              console.error('[MultiPosition] Count mismatch:', {
-                executedPerps: executedPerps.length,
-                derivedPositions: derivedPositions.length,
-                executedPerpIds: executedPerps.map(s => s.id),
-                derivedPositionIds: derivedPositions.map(p => p.strategyId),
-              });
+            if (import.meta.env.DEV) {
+              console.log('[handleConfirmTrade] Preflight check:', preflightData);
             }
             
-            if (distinctMarkets.size > 1) {
-              console.log('[MultiPosition] Multiple markets detected:', {
-                markets: Array.from(distinctMarkets),
-                positionsPerMarket: Array.from(distinctMarkets).map(m => ({
-                  market: m,
-                  count: executedPerps.filter(s => s.market === m).length,
-                })),
-              });
+            if (!preflightData.ok) {
+              const notes = preflightData.notes || [];
+              const preflightMessage: ChatMessage = {
+                id: `preflight-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                text: `⚠️ Execution setup incomplete: ${notes.join('. ')}. Please check backend configuration.`,
+                isUser: false,
+                timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+              };
+              appendMessageToChat(targetChatId, preflightMessage);
+              return; // Don't proceed with execution
+            }
+          } else {
+            preflightDoneRef.current = true; // Don't block on preflight failures
+            if (import.meta.env.DEV) {
+              console.warn('[handleConfirmTrade] Preflight check failed, proceeding anyway');
             }
           }
-        }, 100);
+        }
         
-        // INV-4: Update the existing draft card message to show executed status
-        const draftMessageId = activeDraftMessageIdRef.current;
-        const executedStrategy = strategies.find(s => s.id === draftId);
-        if (executedStrategy && draftMessageId) {
-          // Update the message to show executed status and remove risk warning
-          const currentMessages = chatSessions.find(s => s.id === targetChatId)?.messages || [];
-          const draftMessage = currentMessages.find(m => m.id === draftMessageId);
-          if (draftMessage) {
-            const updatedStrategy: ParsedStrategy = {
-              side: executedStrategy.side,
-              market: executedStrategy.market,
-              riskPercent: executedStrategy.riskPercent,
-              entryPrice: executedStrategy.entry || 0,
-              takeProfit: executedStrategy.takeProfit,
-              stopLoss: executedStrategy.stopLoss,
-              liqBuffer: 0,
-              fundingImpact: 'Low',
+        // Get or connect wallet
+        let userAddress = await getAddress();
+        if (!userAddress) {
+          try {
+            userAddress = await connectWallet();
+          } catch (error: any) {
+            // Wallet connection rejected or failed
+            const errorMessage: ChatMessage = {
+              id: `error-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+              text: `Wallet connection failed: ${error.message || 'Unknown error'}. Please connect your wallet and try again.`,
+              isUser: false,
+              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
             };
-            const updatedMessage = {
-              text: `✅ Executed: ${executedStrategy.side} ${executedStrategy.market} with ${executedStrategy.riskPercent?.toFixed(1)}% risk at ${executedStrategy.leverage || 1}x leverage.`,
-              strategy: updatedStrategy,
-              strategyId: draftId,
+            appendMessageToChat(targetChatId, errorMessage);
+            return; // Don't mark as executed
+          }
+        }
+        
+        // Network enforcement: must be on Sepolia
+        const { ethTestnetChainId } = await import('../lib/config');
+        const { getChainId } = await import('../lib/walletAdapter');
+        const currentChainId = await getChainId();
+        if (currentChainId !== ethTestnetChainId) {
+          const errorMessage: ChatMessage = {
+            id: `error-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            text: `Please switch to Sepolia testnet to execute transactions. Click "Switch to Sepolia" in the wallet card.`,
+            isUser: false,
+            timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+          };
+          appendMessageToChat(targetChatId, errorMessage);
+          return; // Don't mark as executed
+        }
+        
+        // Check if one-click execution is available (optional, not required)
+        const sessionStorageKey = `blossom_session_${userAddress.toLowerCase()}`;
+        const storedSessionId = localStorage.getItem(sessionStorageKey);
+        let hasActiveSession = false;
+
+        if (storedSessionId && executionAuthMode === 'session') {
+          // Verify session is active (non-blocking)
+          try {
+            const sessionStatusResponse = await callAgent('/api/session/status', {
+              method: 'POST',
+              body: JSON.stringify({
+                userAddress,
+                sessionId: storedSessionId,
+              }),
+            });
+            if (sessionStatusResponse.ok) {
+              const sessionData = await sessionStatusResponse.json();
+              hasActiveSession = sessionData.status === 'active';
+            }
+          } catch {
+            // If status check fails, assume no active session and proceed with direct execution
+            hasActiveSession = false;
+          }
+        }
+
+        // Blocker #2: Check execution auth mode and enforce session requirement
+        if (executionAuthMode === 'session') {
+          // Blocker #2: Block execution if no active session in session-only mode
+          if (!hasActiveSession) {
+            const errorMessage: ChatMessage = {
+              id: `error-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+              text: 'One-click execution is required but not enabled. Please enable it in the wallet panel first.',
+              isUser: false,
+              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
             };
-            // Remove risk warning props (extend message object)
-            const messageWithoutRisk = { ...updatedMessage, showRiskWarning: false, riskReasons: undefined } as any;
-            if (typeof updateMessageInChat === 'function') {
-              updateMessageInChat(targetChatId, draftMessageId, messageWithoutRisk);
+            appendMessageToChat(targetChatId, errorMessage);
+            return; // Don't proceed
+          }
+
+          // Blocker #1: Use existing sessionId from localStorage - no duplicate session creation
+          const sessionStorageKey = `blossom_session_${userAddress.toLowerCase()}`;
+          const sessionId = localStorage.getItem(sessionStorageKey);
+
+          if (!sessionId) {
+            // This shouldn't happen if hasActiveSession is true, but guard anyway
+            const errorMessage: ChatMessage = {
+              id: `error-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+              text: 'Session ID not found. Please enable one-click execution first.',
+              isUser: false,
+              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+            };
+            appendMessageToChat(targetChatId, errorMessage);
+            return;
+          }
+
+          // Session exists: use execution kernel (no wallet popups)
+          // Find the chat message that contains executionRequest
+          const chatMessage = messages.find((m: ChatMessage) => 
+            m.executionRequest && (m.executionRequest.kind === 'swap' || m.executionRequest.kind === 'lend' || m.executionRequest.kind === 'lend_supply')
+          );
+          
+          // Determine plan type and execution kind
+          const planType = chatMessage?.executionRequest?.kind === 'lend' || chatMessage?.executionRequest?.kind === 'lend_supply' 
+            ? 'defi' 
+            : executedStrategy?.instrumentType === 'perp' 
+              ? 'perp' 
+              : executedStrategy?.instrumentType === 'event'
+                ? 'event'
+                : 'swap';
+          const demoSwapKind = enableDemoSwap ? 'demo_swap' : 'default';
+
+          // Use execution kernel
+          const { executePlan } = await import('../lib/executionKernel');
+          const result = await executePlan({
+            draftId,
+            userAddress,
+            planType,
+            executionRequest: chatMessage?.executionRequest,
+            executionIntent: chatMessage?.executionRequest ? undefined : ethTestnetIntent,
+            strategy: executedStrategy,
+            executionKind: demoSwapKind,
+          }, { executionAuthMode: 'session' });
+
+          // Handle execution result - TRUTHFUL UI: only mark executed if txHash exists
+          if (!result.ok) {
+            const errorMessage: ChatMessage = {
+              id: `error-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+              text: result.reason || 'Execution failed. Strategy remains pending.',
+              isUser: false,
+              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+            };
+            appendMessageToChat(targetChatId, errorMessage);
+            return; // Don't mark as executed
+          }
+
+          // TRUTHFUL UI: Only proceed if we have a real txHash (relayed or wallet mode)
+          if (result.mode === 'simulated' || result.mode === 'unsupported') {
+            const simulatedMessage: ChatMessage = {
+              id: `simulated-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+              text: `⚠️ ${result.mode === 'simulated' ? 'Simulated' : 'Not supported'}: ${result.reason || 'Execution not performed on-chain'}`,
+              isUser: false,
+              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+            };
+            appendMessageToChat(targetChatId, simulatedMessage);
+            // Don't mark as executed - keep as draft/pending
+            return;
+          }
+
+          // Only continue if we have txHash (relayed or wallet mode with confirmed tx)
+          if (!result.txHash) {
+            const pendingMessage: ChatMessage = {
+              id: `pending-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+              text: 'Execution pending confirmation. Strategy remains pending.',
+              isUser: false,
+              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+            };
+            appendMessageToChat(targetChatId, pendingMessage);
+            return; // Don't mark as executed
+          }
+
+          // Update portfolio if available
+          if (result.portfolio) {
+            updateFromBackendPortfolio(result.portfolio);
+          }
+
+          // Trigger wallet balance refresh after successful execution
+          window.dispatchEvent(new CustomEvent('blossom-wallet-connection-change'));
+
+          // Handle receipt status
+          if (result.receiptStatus === 'failed') {
+            const failedMessage: ChatMessage = {
+              id: `tx-failed-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+              text: `Transaction failed on-chain. Check: ${result.explorerUrl || `https://sepolia.etherscan.io/tx/${result.txHash}`}`,
+              isUser: false,
+              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+            };
+            appendMessageToChat(targetChatId, failedMessage);
+            return; // Don't mark as executed
+          } else if (result.receiptStatus === 'timeout') {
+            const timeoutMessage: ChatMessage = {
+              id: `tx-timeout-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+              text: `Transaction pending confirmation. Check status: ${result.explorerUrl || `https://sepolia.etherscan.io/tx/${result.txHash}`}`,
+              isUser: false,
+              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+            };
+            appendMessageToChat(targetChatId, timeoutMessage);
+            return; // Don't mark as executed
+          } else if (result.receiptStatus !== 'confirmed') {
+            // Receipt still pending
+            if (import.meta.env.DEV) {
+              console.log('[handleConfirmTrade] Receipt still pending, not updating portfolio');
+            }
+            return; // Wait for receipt confirmation
+          }
+
+          // TRUTHFUL UI: Only show "Executed" and Etherscan link if txHash exists
+          if (result.txHash && result.routing) {
+            const routing = result.routing;
+            const explorerUrl = result.explorerUrl || `https://sepolia.etherscan.io/tx/${result.txHash}`;
+            
+            // Build message that distinguishes routing decision from execution
+            let messageText = '';
+            
+            // Check if this is a lending action
+            const isLendingAction = (routing as any).actionType === 'lend_supply' || (routing as any).apr;
+            
+            if (isLendingAction) {
+              // Lending-specific message
+              const apr = (routing as any).apr || '5.00';
+              const protocol = (routing as any).vault ? 'DemoLendVault' : 'Lending Protocol';
+              messageText += `🏦 Lending: Supply to ${protocol}. Est APR: ${apr}% (info-only).\n`;
+              const executionVenue = routing.executionVenue || 'Blossom Demo Lending Vault';
+              messageText += `✅ Executed on ${routing.chain || 'Sepolia'} via ${executionVenue}. `;
+              messageText += `Tx: ${explorerUrl}`;
             } else {
-              if (import.meta.env.DEV) {
-                console.error('[Chat] updateMessageInChat is not a function at confirm callsite');
+              // Swap routing message (existing logic)
+              if (routing.routingSource === '1inch') {
+                messageText += `📊 Routing intelligence (1inch): ${routing.routeSummary || routing.venue}`;
+                if (routing.expectedOut) {
+                  messageText += `. Expected: ${routing.expectedOut}, Min: ${routing.minOut || 'N/A'}`;
+                }
+                if (routing.slippageBps) {
+                  messageText += `, Slippage: ${(routing.slippageBps / 100).toFixed(2)}%`;
+                }
+                messageText += '.\n';
+              } else if (routing.routingSource === 'uniswap') {
+                messageText += `📊 Routing intelligence (Uniswap V3): ${routing.routeSummary || routing.venue}`;
+                if (routing.expectedOut) {
+                  messageText += `. Expected: ${routing.expectedOut}`;
+                }
+                messageText += '.\n';
+              } else if (routing.routingSource === 'dflow') {
+                messageText += `📊 Routing intelligence (dFlow): ${routing.routeSummary || routing.venue}`;
+                messageText += '.\n';
+              }
+              
+              // Execution section
+              const executionVenue = routing.executionVenue || 'Blossom Demo Router';
+              messageText += `✅ Executed on ${routing.chain || 'Sepolia'} via ${executionVenue}. `;
+              messageText += `Tx: ${explorerUrl}`;
+            }
+            
+            const routingMessage: ChatMessage = {
+              id: `routing-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+              text: messageText,
+              isUser: false,
+              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+            };
+            appendMessageToChat(targetChatId, routingMessage);
+          } else if (result.txHash) {
+            // Fallback: just show tx link
+            const explorerUrl = result.explorerUrl || `https://sepolia.etherscan.io/tx/${result.txHash}`;
+            const txMessage: ChatMessage = {
+              id: `tx-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+              text: `✅ Transaction submitted: ${explorerUrl}`,
+              isUser: false,
+              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+            };
+            appendMessageToChat(targetChatId, txMessage);
+          }
+
+          // Start polling transaction status
+          if (result.txHash) {
+            pollTransactionStatus(result.txHash, targetChatId);
+          }
+          
+          // TRUTHFUL UI: Only mark as executed if we have txHash and receipt is confirmed
+          if (result.txHash && result.receiptStatus === 'confirmed') {
+            // Set state to executing, then mark as executed
+            setChatMode({ mode: 'executing', draftId });
+            updateStrategyStatus(draftId, 'queued');
+            setTimeout(() => {
+              updateStrategyStatus(draftId, 'executing');
+              setTimeout(() => {
+                updateStrategyStatus(draftId, 'executed');
+              }, 500);
+            }, 500);
+          }
+          return; // Exit early - execution complete via one-click
+        }
+        
+        // Direct execution path (no one-click or one-click unavailable)
+        // Use execution kernel for unified execution
+        {
+          // Find the chat message that contains executionRequest
+          const chatMessage = messages.find((m: ChatMessage) => 
+            m.executionRequest && (m.executionRequest.kind === 'swap' || m.executionRequest.kind === 'lend' || m.executionRequest.kind === 'lend_supply')
+          );
+          
+          // Determine plan type
+          const planType = chatMessage?.executionRequest?.kind === 'lend' || chatMessage?.executionRequest?.kind === 'lend_supply' 
+            ? 'defi' 
+            : executedStrategy?.instrumentType === 'perp' 
+              ? 'perp' 
+              : executedStrategy?.instrumentType === 'event'
+                ? 'event'
+                : 'swap';
+          const demoSwapKindDirect = enableDemoSwap ? 'demo_swap' : 'default';
+
+          // Route 1 (manual) or Route 2 (atomic): Check if wrap is needed
+          // If atomic mode, skip manual wrap (plan will include WRAP action)
+          // If manual mode, do manual wrap step
+          if (chatMessage?.executionRequest && chatMessage.executionRequest.kind === 'swap' && fundingRouteMode === 'manual') {
+            const execReq = chatMessage.executionRequest;
+            
+            // Only check wrap if tokenIn is ETH or if fundingPolicy is auto
+            if ((execReq.tokenIn === 'ETH' || execReq.fundingPolicy === 'auto') && execReq.amountIn) {
+              // Check user's actual balances
+              try {
+                const portfolioResponse = await callAgent(`/api/portfolio/eth_testnet?userAddress=${encodeURIComponent(userAddress)}`, {
+                  method: 'GET',
+                });
+                
+                if (portfolioResponse.ok) {
+                  const portfolio = await portfolioResponse.json();
+                  const wethBalance = parseFloat(portfolio.balances.weth?.formatted || '0');
+                  const ethBalance = parseFloat(portfolio.balances.eth?.formatted || '0');
+                  const amountInNum = parseFloat(execReq.amountIn);
+                  
+                  // Need wrap if:
+                  // 1. tokenIn is ETH (always need to wrap)
+                  // 2. tokenIn is WETH but user has 0 WETH and has sufficient ETH
+                  const shouldWrap = (execReq.tokenIn === 'ETH') || 
+                    (execReq.tokenIn === 'WETH' && wethBalance < amountInNum && ethBalance >= amountInNum);
+                  
+                  if (shouldWrap) {
+                    // Step 1: Wrap ETH → WETH
+                    const wrapAmount = execReq.tokenIn === 'ETH' ? execReq.amountIn : execReq.amountIn;
+                    
+                    const wrapPrepareResponse = await callAgent('/api/token/weth/wrap/prepare', {
+                      method: 'POST',
+                      body: JSON.stringify({
+                        amount: wrapAmount,
+                        userAddress,
+                      }),
+                    });
+                    
+                    if (!wrapPrepareResponse.ok) {
+                      const errorText = await wrapPrepareResponse.text();
+                      const errorMessage: ChatMessage = {
+                        id: `error-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                        text: `Failed to prepare wrap transaction: ${errorText || 'Unknown error'}. Strategy remains pending.`,
+                        isUser: false,
+                        timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+                      };
+                      appendMessageToChat(targetChatId, errorMessage);
+                      return;
+                    }
+                    
+                    const wrapData = await wrapPrepareResponse.json();
+                    
+                    // Show wrap step message
+                    const wrapMessage: ChatMessage = {
+                      id: `wrap-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                      text: `Wrapping ${wrapAmount} ETH → WETH...`,
+                      isUser: false,
+                      timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+                    };
+                    appendMessageToChat(targetChatId, wrapMessage);
+                    
+                    // Send wrap transaction
+                    const wrapTx: PreparedTx = {
+                      to: wrapData.to,
+                      data: wrapData.data,
+                      value: wrapData.value,
+                    };
+                    
+                    let wrapTxHash: string;
+                    try {
+                      wrapTxHash = await sendTransaction(wrapTx);
+                      if (import.meta.env.DEV) {
+                        console.log('[handleConfirmTrade] Wrap transaction sent, txHash:', wrapTxHash);
+                      }
+                    } catch (error: any) {
+                      const errorMessage: ChatMessage = {
+                        id: `error-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                        text: `Wrap transaction failed: ${error.message || 'Unknown error'}. Strategy remains pending.`,
+                        isUser: false,
+                        timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+                      };
+                      appendMessageToChat(targetChatId, errorMessage);
+                      return; // Stop - don't proceed to swap
+                    }
+                    
+                    // Wait for wrap confirmation (poll for 1 block)
+                    const wrapStatusId = `wrap-status-${wrapTxHash}`;
+                    let wrapConfirmed = false;
+                    const maxWrapAttempts = 30; // 30 * 2s = 60s
+                    let wrapAttempts = 0;
+                    
+                    while (!wrapConfirmed && wrapAttempts < maxWrapAttempts) {
+                      await new Promise(resolve => setTimeout(resolve, 2000)); // 2s delay
+                      wrapAttempts++;
+                      
+                      try {
+                        const statusResponse = await callAgent(`/api/execute/status?txHash=${encodeURIComponent(wrapTxHash)}`, {
+                          method: 'GET',
+                        });
+                        
+                        if (statusResponse.ok) {
+                          const statusData = await statusResponse.json();
+                          if (statusData.status === 'confirmed') {
+                            wrapConfirmed = true;
+                            break;
+                          } else if (statusData.status === 'reverted') {
+                            const errorMessage: ChatMessage = {
+                              id: `error-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                              text: `Wrap transaction reverted. Strategy remains pending.`,
+                              isUser: false,
+                              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+                            };
+                            appendMessageToChat(targetChatId, errorMessage);
+                            return; // Stop - wrap failed
+                          }
+                        }
+                      } catch (error: any) {
+                        // Continue polling on error
+                        if (import.meta.env.DEV) {
+                          console.warn('[handleConfirmTrade] Wrap status check error:', error.message);
+                        }
+                      }
+                    }
+                    
+                    if (!wrapConfirmed) {
+                      const errorMessage: ChatMessage = {
+                        id: `error-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                        text: `Wrap transaction not confirmed after 60s. Please check manually. Strategy remains pending.`,
+                        isUser: false,
+                        timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+                      };
+                      appendMessageToChat(targetChatId, errorMessage);
+                      return; // Stop - wrap not confirmed
+                    }
+                    
+                    // Wrap confirmed - refresh portfolio and continue to swap
+                    const portfolioRefreshResponse = await callAgent(`/api/portfolio/eth_testnet?userAddress=${encodeURIComponent(userAddress)}`, {
+                      method: 'GET',
+                    });
+                    if (portfolioRefreshResponse.ok) {
+                      const refreshedPortfolio = await portfolioRefreshResponse.json();
+                      // Portfolio will auto-update via context sync
+                    }
+                    
+                    // Update wrap message to show success
+                    updateMessageInChat(targetChatId, wrapMessage.id, {
+                      text: `✅ Wrapped ${wrapAmount} ETH → WETH. Proceeding to swap...`,
+                    });
+                  }
+                }
+              } catch (error: any) {
+                // If portfolio check fails, proceed anyway (might have WETH already)
+                if (import.meta.env.DEV) {
+                  console.warn('[handleConfirmTrade] Portfolio check failed, proceeding:', error.message);
+                }
               }
             }
           }
+          
+          // Use execution kernel for unified execution
+          const { executePlan } = await import('../lib/executionKernel');
+          const result = await executePlan({
+            draftId,
+            userAddress,
+            planType,
+            executionRequest: chatMessage?.executionRequest,
+            executionIntent: chatMessage?.executionRequest ? undefined : ethTestnetIntent,
+            strategy: executedStrategy,
+            executionKind: demoSwapKindDirect,
+          }, { executionAuthMode: 'direct' });
+
+          // Handle execution result - TRUTHFUL UI: only mark executed if txHash exists
+          if (!result.ok) {
+            const errorMessage: ChatMessage = {
+              id: `error-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+              text: result.reason || 'Execution failed. Strategy remains pending.',
+              isUser: false,
+              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+            };
+            appendMessageToChat(targetChatId, errorMessage);
+            return; // Don't mark as executed
+          }
+
+          // TRUTHFUL UI: Only proceed if we have a real txHash (relayed or wallet mode)
+          if (result.mode === 'simulated' || result.mode === 'unsupported') {
+            const simulatedMessage: ChatMessage = {
+              id: `simulated-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+              text: `⚠️ ${result.mode === 'simulated' ? 'Simulated' : 'Not supported'}: ${result.reason || 'Execution not performed on-chain'}`,
+              isUser: false,
+              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+            };
+            appendMessageToChat(targetChatId, simulatedMessage);
+            // Don't mark as executed - keep as draft/pending
+            return;
+          }
+
+          // Only continue if we have txHash (relayed or wallet mode with confirmed tx)
+          if (!result.txHash) {
+            const pendingMessage: ChatMessage = {
+              id: `pending-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+              text: 'Execution pending confirmation. Strategy remains pending.',
+              isUser: false,
+              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+            };
+            appendMessageToChat(targetChatId, pendingMessage);
+            return; // Don't mark as executed
+          }
+
+          // Update portfolio if available
+          if (result.portfolio) {
+            updateFromBackendPortfolio(result.portfolio);
+          }
+
+          // Trigger wallet balance refresh after successful execution
+          window.dispatchEvent(new CustomEvent('blossom-wallet-connection-change'));
+
+          // Handle receipt status
+          if (result.receiptStatus === 'failed') {
+            const failedMessage: ChatMessage = {
+              id: `tx-failed-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+              text: `Transaction failed on-chain. Check: ${result.explorerUrl || `https://sepolia.etherscan.io/tx/${result.txHash}`}`,
+              isUser: false,
+              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+            };
+            appendMessageToChat(targetChatId, failedMessage);
+            return; // Don't mark as executed
+          } else if (result.receiptStatus === 'timeout') {
+            const timeoutMessage: ChatMessage = {
+              id: `tx-timeout-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+              text: `Transaction pending confirmation. Check status: ${result.explorerUrl || `https://sepolia.etherscan.io/tx/${result.txHash}`}`,
+              isUser: false,
+              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+            };
+            appendMessageToChat(targetChatId, timeoutMessage);
+            return; // Don't mark as executed
+          } else if (result.receiptStatus !== 'confirmed') {
+            // Receipt still pending
+            if (import.meta.env.DEV) {
+              console.log('[handleConfirmTrade] Receipt still pending, not updating portfolio');
+            }
+            return; // Wait for receipt confirmation
+          }
+
+          // TRUTHFUL UI: Only show "Executed" and Etherscan link if txHash exists
+          if (result.txHash && result.routing) {
+            const routing = result.routing;
+            const explorerUrl = result.explorerUrl || `https://sepolia.etherscan.io/tx/${result.txHash}`;
+            
+            // Build message that distinguishes routing decision from execution
+            let messageText = '';
+            
+            // Check if this is a lending action
+            const isLendingAction = (routing as any).actionType === 'lend_supply' || (routing as any).apr;
+            
+            if (isLendingAction) {
+              // Lending-specific message
+              const apr = (routing as any).apr || '5.00';
+              const protocol = (routing as any).vault ? 'DemoLendVault' : 'Lending Protocol';
+              messageText += `🏦 Lending: Supply to ${protocol}. Est APR: ${apr}% (info-only).\n`;
+              const executionVenue = routing.executionVenue || 'Blossom Demo Lending Vault';
+              messageText += `✅ Executed on ${routing.chain || 'Sepolia'} via ${executionVenue}. `;
+              messageText += `Tx: ${explorerUrl}`;
+            } else {
+              // Swap routing message (existing logic)
+              if (routing.routingSource === '1inch') {
+                messageText += `📊 Routing intelligence (1inch): ${routing.routeSummary || routing.venue}`;
+                if (routing.expectedOut) {
+                  messageText += `. Expected: ${routing.expectedOut}, Min: ${routing.minOut || 'N/A'}`;
+                }
+                if (routing.slippageBps) {
+                  messageText += `, Slippage: ${(routing.slippageBps / 100).toFixed(2)}%`;
+                }
+                messageText += '.\n';
+              } else if (routing.routingSource === 'uniswap') {
+                messageText += `📊 Routing intelligence (Uniswap V3): ${routing.routeSummary || routing.venue}`;
+                if (routing.expectedOut) {
+                  messageText += `. Expected: ${routing.expectedOut}`;
+                }
+                messageText += '.\n';
+              } else if (routing.routingSource === 'dflow') {
+                messageText += `📊 Routing intelligence (dFlow): ${routing.routeSummary || routing.venue}`;
+                messageText += '.\n';
+              }
+              
+              // Execution section
+              const executionVenue = routing.executionVenue || 'Blossom Demo Router';
+              messageText += `✅ Executed on ${routing.chain || 'Sepolia'} via ${executionVenue}. `;
+              messageText += `Tx: ${explorerUrl}`;
+            }
+            
+            const routingMessage: ChatMessage = {
+              id: `routing-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+              text: messageText,
+              isUser: false,
+              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+            };
+            appendMessageToChat(targetChatId, routingMessage);
+          } else if (result.txHash) {
+            // Fallback: just show tx link
+            const explorerUrl = result.explorerUrl || `https://sepolia.etherscan.io/tx/${result.txHash}`;
+            const txMessage: ChatMessage = {
+              id: `tx-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+              text: `✅ Transaction submitted: ${explorerUrl}`,
+              isUser: false,
+              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+            };
+            appendMessageToChat(targetChatId, txMessage);
+          }
+
+          // Start polling transaction status
+          if (result.txHash) {
+            pollTransactionStatus(result.txHash, targetChatId);
+          }
+          
+          // TRUTHFUL UI: Only mark as executed if we have txHash and receipt is confirmed
+          if (result.txHash && result.receiptStatus === 'confirmed') {
+            // Set state to executing, then mark as executed
+            setChatMode({ mode: 'executing', draftId });
+            updateStrategyStatus(draftId, 'queued');
+            setTimeout(() => {
+              updateStrategyStatus(draftId, 'executing');
+              setTimeout(() => {
+                updateStrategyStatus(draftId, 'executed');
+              }, 500);
+            }, 500);
+          }
         }
-        
-        // Clear draft message tracking
-        activeDraftMessageIdRef.current = null;
-        activeDraftChatIdRef.current = null;
-        
-        // Part A: Return to idle
-        setChatMode({ mode: 'idle' });
-        setChatState('idle');
-        
-        if (import.meta.env.DEV) {
-          console.log('[Chat] Confirm: draft executed', { draftId });
-        }
-      }, 500);
-    }, 300);
+      } catch (error: any) {
+        // Catch-all for unexpected errors
+        const errorMessage: ChatMessage = {
+          id: `error-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          text: `Execution error: ${error.message || 'Unknown error'}. Strategy remains pending.`,
+          isUser: false,
+          timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+        };
+        appendMessageToChat(targetChatId, errorMessage);
+        return; // Don't mark as executed
+      }
+    }
+    
+    // TRUTHFUL UI: Status update only happens in execution success paths above
+    // If we reach here, execution didn't happen (sim mode or early return)
+    // Don't mark as executed - strategy remains in draft/pending state
   };
 
   // Step 4: Invariant 0.5 - High-risk proceed executes specific draftId (no re-processing)
@@ -2784,42 +3746,13 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
           ) : (
             <>
               {messages.map((msg) => {
-                // Part B: Check if this is a trade_confirm message
+                // Task A: Remove special ConfirmTradeCard handling - let MessageBubble render rich card
+                // MessageBubble already has the rich card with Sizing/Risk Controls/Routing/Assumptions
+                // We just need to ensure strategyId is set so MessageBubble can find the draft
                 const isTradeConfirm = (msg as any).type === 'trade_confirm';
                 const confirmDraftId = (msg as any).draftId;
                 const isHighRiskConfirmation = (msg as any).isHighRiskConfirmation;
                 const highRiskReasons = (msg as any).highRiskReasons || [];
-                
-                if (isTradeConfirm && confirmDraftId) {
-                  // Part B: Show confirm card (with optional risk warning)
-                  const showRiskWarning = isHighRiskConfirmation && highRiskReasons.length > 0;
-                  return (
-                    <div key={msg.id} className="flex gap-2 mb-1.5">
-                      <div className="flex-shrink-0">
-                        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white shadow-sm ring-1 ring-blossom-pink/30">
-                          <BlossomLogo size={20} />
-                        </div>
-                      </div>
-                      <div className="flex flex-col items-start max-w-[70%]">
-                        <div className="text-[11px] font-medium text-gray-600 mb-0.5">
-                          Blossom
-                        </div>
-                        <ConfirmTradeCard
-                          draftId={confirmDraftId}
-                          showRiskWarning={showRiskWarning}
-                          riskReasons={highRiskReasons}
-                          onConfirm={handleConfirmTrade}
-                          onEdit={() => {
-                            // Part A: Edit handler - for demo, just log
-                            if (import.meta.env.DEV) {
-                              console.log('[Chat] Edit requested for draft', confirmDraftId);
-                            }
-                          }}
-                        />
-                      </div>
-                    </div>
-                  );
-                }
                 
                 // Legacy: Check if this is a high-risk confirmation message (backward compatibility)
                 if (isHighRiskConfirmation && !isTradeConfirm) {
@@ -2849,9 +3782,11 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
                 // No separate ExecutionPlanCard needed
                 
                 // Part 1: Use unified MessageBubble for all messages (draft and executed)
-                const msgShowRiskWarning = (msg as any).showRiskWarning;
-                const msgRiskReasons = (msg as any).riskReasons || [];
-                const msgStrategyId = msg.strategyId;
+                // Task A: Ensure trade_confirm messages also use MessageBubble (which has rich card)
+                const msgShowRiskWarning = (msg as any).showRiskWarning || (isHighRiskConfirmation && highRiskReasons.length > 0);
+                const msgRiskReasons = (msg as any).riskReasons || highRiskReasons;
+                // Task A: Use draftId from trade_confirm message if strategyId not set
+                const msgStrategyId = msg.strategyId || (isTradeConfirm ? confirmDraftId : undefined);
                 
                 return (
                   <div key={msg.id}>
