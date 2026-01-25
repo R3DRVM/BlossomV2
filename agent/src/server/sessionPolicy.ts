@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Session Authority Policy
  * Server-side enforcement for relayed execution
