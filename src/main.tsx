@@ -4,6 +4,8 @@ import { BrowserRouter } from 'react-router-dom'
 import { BlossomProvider } from './context/BlossomContext'
 import { ActivityFeedProvider } from './context/ActivityFeedContext'
 import { ExecutionProvider } from './context/ExecutionContext'
+import WalletProviders from './components/wallet/WalletProviders'
+import WalletStateBridge from './components/wallet/WalletStateBridge'
 import AppRouter from './routes/AppRouter.tsx'
 import WebsiteLock from './components/WebsiteLock.tsx'
 import { installConsoleNoiseFilter } from './lib/consoleNoiseFilter'
@@ -18,17 +20,20 @@ initGlobalErrorHandlers();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <WebsiteLock>
-      <BlossomProvider>
-        <ActivityFeedProvider>
-          <ExecutionProvider>
-            <BrowserRouter>
-              <AppRouter />
-            </BrowserRouter>
-          </ExecutionProvider>
-        </ActivityFeedProvider>
-      </BlossomProvider>
-    </WebsiteLock>
+    <WalletProviders>
+      <WalletStateBridge />
+      <WebsiteLock>
+        <BlossomProvider>
+          <ActivityFeedProvider>
+            <ExecutionProvider>
+              <BrowserRouter>
+                <AppRouter />
+              </BrowserRouter>
+            </ExecutionProvider>
+          </ActivityFeedProvider>
+        </BlossomProvider>
+      </WebsiteLock>
+    </WalletProviders>
   </React.StrictMode>,
 )
 

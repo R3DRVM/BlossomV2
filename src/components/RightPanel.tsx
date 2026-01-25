@@ -7,9 +7,13 @@ import PositionEditorCard from './PositionEditorCard';
 import SectionHeader from './ui/SectionHeader';
 import { ChevronDown, Clock, LogOut, RefreshCw, ChevronUp } from 'lucide-react';
 import { executionMode, executionAuthMode, ethTestnetChainId, forceDemoPortfolio } from '../lib/config';
-import { getAddress, getAddressIfExplicit, getChainId, connectWallet, switchToSepolia, getProvider, disconnectWallet, isExplicitlyConnected } from '../lib/walletAdapter';
+import { getAddress, getAddressIfExplicit, getChainId, connectWallet as legacyConnectWallet, switchToSepolia, getProvider, disconnectWallet as legacyDisconnectWallet, isExplicitlyConnected } from '../lib/walletAdapter';
 import { isBackendHealthy, onBackendHealthChange, AGENT_API_BASE_URL } from '../lib/apiClient';
 import OneClickExecution from './OneClickExecution';
+import ConnectWalletButton, { useWalletStatus } from './wallet/ConnectWalletButton';
+import { useAccount, useChainId as useWagmiChainId, useSwitchChain } from 'wagmi';
+import { useWallet } from '@solana/wallet-adapter-react';
+import { sepolia } from 'wagmi/chains';
 
 interface RightPanelProps {
   selectedStrategyId?: string | null;
@@ -47,6 +51,13 @@ export default function RightPanel(_props: RightPanelProps) {
   const [activeTab, setActiveTab] = useState<PositionsTab>('all');
   const [expandedPositionId, setExpandedPositionId] = useState<string | null>(null);
   
+  // New unified wallet hooks (RainbowKit + Solana)
+  const { address: wagmiAddress, isConnected: wagmiConnected } = useAccount();
+  const wagmiChainId = useWagmiChainId();
+  const { switchChain } = useSwitchChain();
+  const { publicKey: solanaPublicKey, connected: solanaConnected } = useWallet();
+  const walletStatus = useWalletStatus();
+
   // Wallet connection state machine (eth_testnet mode only)
   type WalletState = 'DISCONNECTED' | 'CONNECTING' | 'CONNECTED_LOADING' | 'CONNECTED_READY' | 'WRONG_NETWORK' | 'ERROR' | 'BACKEND_OFFLINE' | 'BACKEND_MISCONFIGURED' | 'RPC_UNREACHABLE';
   const [walletState, setWalletState] = useState<WalletState>('DISCONNECTED');
@@ -81,7 +92,38 @@ export default function RightPanel(_props: RightPanelProps) {
   const isEthTestnetMode = executionMode === 'eth_testnet' && !forceDemoPortfolio;
   const isSessionMode = executionAuthMode === 'session';
   const isOnSepolia = chainId === ethTestnetChainId;
-  
+
+  // Sync wagmi state with local wallet state machine
+  useEffect(() => {
+    if (wagmiConnected && wagmiAddress) {
+      setWalletAddress(wagmiAddress);
+      setChainId(wagmiChainId);
+
+      if (wagmiChainId !== sepolia.id) {
+        setWalletState('WRONG_NETWORK');
+        setLastStateTransition('wagmi: Wrong network');
+      } else if (!isBackendHealthy()) {
+        setWalletState('BACKEND_OFFLINE');
+        setLastStateTransition('wagmi: Backend offline');
+      } else if (walletState === 'DISCONNECTED' || walletState === 'WRONG_NETWORK') {
+        setWalletState('CONNECTED_LOADING');
+        setBalanceFetchCompleted(false);
+        setLastStateTransition('wagmi: Connected → CONNECTED_LOADING');
+        // Trigger balance fetch
+        window.dispatchEvent(new CustomEvent('blossom-wallet-connection-change'));
+      }
+    } else if (!wagmiConnected && walletState !== 'DISCONNECTED') {
+      // Handle disconnect from wagmi
+      setWalletState('DISCONNECTED');
+      setWalletAddress(null);
+      setChainId(null);
+      setSessionId(null);
+      setSessionStatus('not_created');
+      setBalanceError(null);
+      setLastStateTransition('wagmi: Disconnected');
+    }
+  }, [wagmiConnected, wagmiAddress, wagmiChainId]);
+
   // Fetch backend execution mode on mount (with instrumentation)
   useEffect(() => {
     const fetchExecutionMode = async () => {
@@ -406,7 +448,7 @@ export default function RightPanel(_props: RightPanelProps) {
     setBalanceFetchCompleted(false);
     setLastStateTransition('User clicked Connect → CONNECTING');
     try {
-      const address = await connectWallet();
+      const address = await legacyConnectWallet();
       setWalletAddress(address);
       const currentChainId = await getChainId();
       setChainId(currentChainId);
@@ -433,7 +475,7 @@ export default function RightPanel(_props: RightPanelProps) {
   };
   
   const handleDisconnect = () => {
-    disconnectWallet();
+    legacyDisconnectWallet();
     setWalletState('DISCONNECTED');
     setWalletAddress(null);
     setChainId(null);
@@ -747,29 +789,23 @@ export default function RightPanel(_props: RightPanelProps) {
           {/* Wallet State Machine UI */}
           {isEthTestnetMode && (
             <>
-              {/* DISCONNECTED or CONNECTING */}
+              {/* DISCONNECTED or CONNECTING - Use new universal wallet button */}
               {(walletState === 'DISCONNECTED' || walletState === 'CONNECTING') && (
                 <div className="space-y-3">
-                  <div className="text-center py-6">
-                    <div className="text-sm text-slate-600 mb-2">Connect your wallet to view balances</div>
-                    <button
-                      onClick={handleConnectWallet}
-                      disabled={walletState === 'CONNECTING'}
-                      className="px-4 py-2 bg-blossom-pink text-white rounded-xl font-medium hover:bg-blossom-pink/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {walletState === 'CONNECTING' ? 'Connecting...' : 'Connect Wallet (Sepolia)'}
-                    </button>
+                  <div className="text-center py-4">
+                    <div className="text-sm text-slate-600 mb-3">Connect your wallet to view balances</div>
+                    <ConnectWalletButton />
                   </div>
                 </div>
               )}
-              
-              {/* WRONG_NETWORK */}
+
+              {/* WRONG_NETWORK - Use wagmi switchChain */}
               {walletState === 'WRONG_NETWORK' && walletAddress && (
                 <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 space-y-2">
                   <div className="text-xs font-medium text-amber-800">Wrong Network</div>
                   <div className="text-xs text-amber-700">Please switch to Sepolia testnet to continue.</div>
                   <button
-                    onClick={handleSwitchNetwork}
+                    onClick={() => switchChain?.({ chainId: sepolia.id })}
                     disabled={isSwitching}
                     className="w-full px-3 py-1.5 bg-amber-500 text-white rounded-lg text-xs font-medium hover:bg-amber-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
@@ -863,6 +899,9 @@ export default function RightPanel(_props: RightPanelProps) {
               {/* CONNECTED_LOADING or CONNECTED_READY */}
               {(walletState === 'CONNECTED_LOADING' || walletState === 'CONNECTED_READY') && walletAddress && isOnSepolia && (
                 <>
+                  {/* Wallet Connection Status - Shows both EVM and Solana */}
+                  <ConnectWalletButton />
+
                   {/* Only show OneClickExecution in session mode */}
                   {isSessionMode && (
                     <OneClickExecution
@@ -871,7 +910,7 @@ export default function RightPanel(_props: RightPanelProps) {
                       onDisabled={handleOneClickDisabled}
                     />
                   )}
-                  
+
                   {/* Total Balance */}
                   <div>
                     <div className="flex items-center justify-between">
@@ -892,13 +931,6 @@ export default function RightPanel(_props: RightPanelProps) {
                             <RefreshCw className="w-3.5 h-3.5" />
                           </button>
                         )}
-                        <button
-                          onClick={handleDisconnect}
-                          className="p-1 text-slate-400 hover:text-slate-600 transition-colors"
-                          title="Disconnect wallet"
-                        >
-                          <LogOut className="w-3.5 h-3.5" />
-                        </button>
                       </div>
                     </div>
                     <div className="mt-1.5 flex items-center gap-2">

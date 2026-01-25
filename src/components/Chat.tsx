@@ -6,7 +6,7 @@ import { parseUserMessage, generateBlossomResponse, ParsedStrategy, ParsedIntent
 import { useBlossomContext, ActiveTab, ChatMessage, Strategy, computePerpFromRisk } from '../context/BlossomContext';
 import { derivePerpPositionsFromStrategies } from '../lib/derivePerpPositions';
 import { USE_AGENT_BACKEND, executionMode as configExecutionMode, executionAuthMode, ethTestnetIntent, fundingRouteMode, enableDemoSwap } from '../lib/config';
-import { callAgent } from '../lib/apiClient';
+import { callAgent, executeIntent, confirmIntent, type IntentExecutionResult } from '../lib/apiClient';
 import { getAddress, connectWallet, sendTransaction, type PreparedTx } from '../lib/walletAdapter';
 import { callBlossomChat } from '../lib/blossomApi';
 import QuickStartPanel from './QuickStartPanel';
@@ -14,9 +14,35 @@ import BlossomHelperOverlay from './BlossomHelperOverlay';
 import { HelpCircle } from 'lucide-react';
 import { detectHighRiskIntent } from '../lib/riskIntent';
 import HighRiskConfirmCard from './HighRiskConfirmCard';
+import { useWalletStatus } from './wallet/ConnectWalletButton';
 // Task A: Removed ConfirmTradeCard import - using MessageBubble rich card instead
 import { BlossomLogo } from './BlossomLogo';
 // ExecutionPlanCard removed - execution details now live inside chat plan card
+
+// Intent patterns that should go through the ledger execution system
+// Includes action intents (produce on-chain proof) and analytics intents (offchain, recorded to ledger)
+const LEDGER_INTENT_PATTERNS = [
+  // Action intents - produce on-chain proof tx
+  /^(?:swap|convert|trade)\s+/i,
+  /^(?:deposit|supply|lend)\s+/i,
+  /^(?:bridge|transfer)\s+/i,
+  /^(?:go\s+)?(?:long|short)\s+\w+/i,
+  /^(?:bet|wager|stake)\s+/i,
+  /^(?:hedge|protect)\s+/i,
+  // Analytics intents - recorded to ledger as offchain (no proof tx)
+  /^(?:show|check|get|view)\s+(?:me\s+)?(?:my\s+)?(?:current\s+)?(?:perp\s+)?exposure/i,
+  /^(?:show|check|get|view)\s+(?:me\s+)?(?:my\s+)?(?:current\s+)?risk/i,
+  /^(?:show|get|find)\s+(?:me\s+)?(?:the\s+)?(?:top|best)\s+(?:\d+\s+)?(?:defi\s+)?(?:protocols?|vaults?)/i,
+  /^(?:show|get|find)\s+(?:me\s+)?(?:the\s+)?(?:top|best)\s+(?:\d+\s+)?prediction\s+markets?/i,
+];
+
+/**
+ * Check if user text matches a ledger intent pattern
+ */
+function isLedgerIntent(text: string): boolean {
+  const normalized = text.toLowerCase().trim();
+  return LEDGER_INTENT_PATTERNS.some(pattern => pattern.test(normalized));
+}
 
 // Re-export Message type for backward compatibility
 export type Message = ChatMessage;
@@ -90,15 +116,16 @@ function getSuggestionChipsForVenue(venue: 'hyperliquid' | 'event_demo'): Array<
 }
 
 export default function Chat({ selectedStrategyId, executionMode = 'auto', onRegisterInsertPrompt }: ChatProps) {
-  const { 
-    addDraftStrategy, 
-    setOnboarding, 
-    activeTab, 
-    venue, 
-    account, 
-    createDefiPlanFromCommand, 
-    updateFromBackendPortfolio, 
-    strategies, 
+  const {
+    addDraftStrategy,
+    setOnboarding,
+    activeTab,
+    venue,
+    account,
+    createDefiPlanFromCommand,
+    updateFromBackendPortfolio,
+    refreshLedgerPositions,
+    strategies,
     updateEventStake,
     updateStrategy,
     getBaseAsset,
@@ -116,7 +143,10 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
     updatePerpSizeById,
     updateStrategyStatus,
   } = useBlossomContext();
-  
+
+  // Wallet connection status for intent execution
+  const walletStatus = useWalletStatus();
+
   // Derive current session and messages from context
   const currentSession = chatSessions.find(s => s.id === activeChatId) || null;
   const messages = currentSession?.messages ?? [];
@@ -137,6 +167,9 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
   
   // Preflight check: run once per page load before first eth_testnet execution
   const preflightDoneRef = useRef<boolean>(false);
+
+  // State for intent confirmation (confirm mode)
+  const [confirmingIntentId, setConfirmingIntentId] = useState<string | null>(null);
   
   // Step 1: DEV-only ring buffer for routing traces (last 20)
   const routingTracesRef = useRef<Array<{
@@ -1008,6 +1041,221 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
         setIsTyping(false);
         return; // Return early - remain in awaiting_market state
       }
+    }
+
+    // =========================================================================
+    // LEDGER INTENT EXECUTION: Route swap/deposit/bridge/perp intents to backend
+    // =========================================================================
+    const ledgerSecretConfigured = Boolean(import.meta.env.VITE_DEV_LEDGER_SECRET);
+    if (ledgerSecretConfigured && isLedgerIntent(userText)) {
+      if (import.meta.env.DEV) {
+        console.log('[Chat] Routing to ledger intent system:', userText.slice(0, 50));
+      }
+
+      // Determine which chain this intent requires
+      const normalizedText = userText.toLowerCase();
+      const isBridgeIntent = normalizedText.includes('bridge') || normalizedText.includes('from eth') || normalizedText.includes('to sol');
+      const isSolanaIntent = normalizedText.includes('solana') || normalizedText.includes('sol ') || normalizedText.includes(' sol');
+      const intentChain = isSolanaIntent ? 'solana' : 'ethereum';
+
+      // Check wallet connection before executing
+      const needsEvm = intentChain === 'ethereum' || isBridgeIntent;
+      const needsSol = intentChain === 'solana' || isBridgeIntent;
+
+      // Clear input early
+      if (textareaRef.current) {
+        textareaRef.current.value = '';
+      }
+      setInputValue('');
+
+      // Check if required wallets are connected
+      if (needsEvm && !walletStatus.evmConnected) {
+        const walletMsgId = `wallet-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        appendMessageToChat(targetChatId, {
+          id: walletMsgId,
+          text: "Connect an Ethereum wallet to execute this request.",
+          isUser: false,
+          timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+          intentExecution: {
+            intentText: userText,
+            result: {
+              ok: false,
+              intentId: '',
+              status: 'failed',
+              error: {
+                stage: 'execute',
+                code: 'WALLET_NOT_CONNECTED',
+                message: 'Connect an Ethereum wallet (Sepolia) to execute this intent.',
+              },
+            },
+            isExecuting: false,
+          },
+        });
+        return;
+      }
+
+      if (needsSol && !walletStatus.solConnected) {
+        const walletMsgId = `wallet-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        appendMessageToChat(targetChatId, {
+          id: walletMsgId,
+          text: "Connect a Solana wallet to execute this request.",
+          isUser: false,
+          timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+          intentExecution: {
+            intentText: userText,
+            result: {
+              ok: false,
+              intentId: '',
+              status: 'failed',
+              error: {
+                stage: 'execute',
+                code: 'WALLET_NOT_CONNECTED',
+                message: 'Connect a Solana wallet (Devnet) to execute this intent.',
+              },
+            },
+            isExecuting: false,
+          },
+        });
+        return;
+      }
+
+      // Check if EVM wallet is on correct network
+      if (needsEvm && !walletStatus.isOnSepolia) {
+        const walletMsgId = `wallet-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        appendMessageToChat(targetChatId, {
+          id: walletMsgId,
+          text: "Please switch to Sepolia testnet to execute this request.",
+          isUser: false,
+          timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+          intentExecution: {
+            intentText: userText,
+            result: {
+              ok: false,
+              intentId: '',
+              status: 'failed',
+              error: {
+                stage: 'execute',
+                code: 'WRONG_NETWORK',
+                message: 'Switch your Ethereum wallet to Sepolia testnet.',
+              },
+            },
+            isExecuting: false,
+          },
+        });
+        return;
+      }
+
+      setIsTyping(true);
+
+      // Create initial response message
+      const intentMsgId = `intent-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const isConfirmMode = executionMode === 'confirm';
+
+      const intentResponse: ChatMessage = {
+        id: intentMsgId,
+        text: isConfirmMode ? "I'm preparing your intent..." : "I'm executing your intent on-chain...",
+        isUser: false,
+        timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+        intentExecution: {
+          intentText: userText,
+          result: null,
+          isExecuting: true,
+        },
+      };
+      appendMessageToChat(targetChatId, intentResponse);
+
+      try {
+        // In confirm mode, get plan first without executing
+        if (isConfirmMode) {
+          const planResult = await executeIntent(userText, { chain: intentChain, planOnly: true });
+
+          if (!planResult.ok) {
+            // Plan failed, show error
+            updateMessageInChat(targetChatId, intentMsgId, {
+              text: `Planning failed: ${planResult.error?.code || 'Unknown error'}`,
+              intentExecution: {
+                intentText: userText,
+                result: planResult,
+                isExecuting: false,
+              },
+            });
+          } else {
+            // Show plan for confirmation - use planned status to indicate awaiting confirm
+            const planMeta = planResult.metadata;
+            const planDesc = planMeta?.parsed
+              ? `${planMeta.parsed.action} ${planMeta.parsed.targetAsset || ''} ${planMeta.parsed.leverage ? `${planMeta.parsed.leverage}x` : ''} with ${planMeta.parsed.amount || 'default'} ${planMeta.parsed.amountUnit || 'USDC'}`
+              : userText;
+
+            updateMessageInChat(targetChatId, intentMsgId, {
+              text: `Ready to execute: ${planDesc}`,
+              intentExecution: {
+                intentText: userText,
+                result: planResult,
+                isExecuting: false,
+              },
+              // Store intentId for confirm action
+              pendingIntentId: planResult.intentId,
+            });
+          }
+        } else {
+          // Auto mode: execute immediately
+          const result = await executeIntent(userText, { chain: intentChain });
+
+          // Update message with result
+          const resultText = result.ok
+            ? `Intent executed successfully! ${result.metadata?.executedKind === 'proof_only' ? '(proof_only)' : ''}`
+            : `Execution failed: ${result.error?.code || 'Unknown error'}`;
+
+          updateMessageInChat(targetChatId, intentMsgId, {
+            text: resultText,
+            intentExecution: {
+              intentText: userText,
+              result: result,
+              isExecuting: false,
+            },
+          });
+
+          if (import.meta.env.DEV) {
+            console.log('[Chat] Intent execution complete:', {
+              ok: result.ok,
+              intentId: result.intentId,
+              txHash: result.txHash?.slice(0, 16),
+              status: result.status,
+            });
+          }
+
+          // Refresh positions to show in RightPanel if execution was successful
+          if (result.ok && result.status === 'confirmed') {
+            setTimeout(() => {
+              refreshLedgerPositions();
+            }, 1000);
+          }
+        }
+      } catch (error: any) {
+        console.error('[Chat] Intent execution error:', error);
+
+        updateMessageInChat(targetChatId, intentMsgId, {
+          text: `Execution failed: ${error.message || 'Network error'}`,
+          intentExecution: {
+            intentText: userText,
+            result: {
+              ok: false,
+              intentId: '',
+              status: 'failed',
+              error: {
+                stage: 'execute',
+                code: 'NETWORK_ERROR',
+                message: error.message || 'Failed to connect to backend',
+              },
+            },
+            isExecuting: false,
+          },
+        });
+      } finally {
+        setIsTyping(false);
+      }
+
+      return; // Intent handled by ledger system
     }
 
     // A) Chat flow hardening: Parse first, handle clarification BEFORE high-risk check
@@ -2962,6 +3210,93 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
     };
   }, [appendMessageToChat]);
 
+  // Handle intent confirmation (confirm mode: plan → confirm → execute)
+  const handleConfirmIntent = async (intentId: string) => {
+    if (!activeChatId) {
+      console.error('[handleConfirmIntent] No active chat');
+      return;
+    }
+
+    // Find the message with this intentId
+    const targetMessage = messages.find(
+      msg => msg.pendingIntentId === intentId || msg.intentExecution?.result?.intentId === intentId
+    );
+
+    if (!targetMessage) {
+      console.error('[handleConfirmIntent] Message not found for intentId:', intentId);
+      return;
+    }
+
+    setConfirmingIntentId(intentId);
+
+    try {
+      // Update message to show executing state
+      updateMessageInChat(activeChatId, targetMessage.id, {
+        intentExecution: {
+          ...targetMessage.intentExecution!,
+          isExecuting: true,
+        },
+      });
+
+      // Execute the confirmed intent
+      const result = await confirmIntent(intentId);
+
+      // Update message with execution result
+      const resultText = result.ok
+        ? `Executed successfully! ${result.txHash ? `Tx: ${result.txHash.slice(0, 10)}...` : ''}`
+        : `Execution failed: ${result.error?.code || 'Unknown error'}`;
+
+      updateMessageInChat(activeChatId, targetMessage.id, {
+        text: resultText,
+        intentExecution: {
+          intentText: targetMessage.intentExecution?.intentText || '',
+          result: result,
+          isExecuting: false,
+        },
+        pendingIntentId: undefined, // Clear pending state
+      });
+
+      if (import.meta.env.DEV) {
+        console.log('[handleConfirmIntent] Execution complete:', {
+          ok: result.ok,
+          intentId: result.intentId,
+          txHash: result.txHash?.slice(0, 16),
+          status: result.status,
+        });
+      }
+
+      // Refresh positions on success
+      if (result.ok && result.status === 'confirmed') {
+        setTimeout(() => {
+          refreshLedgerPositions();
+        }, 1000);
+      }
+    } catch (error: any) {
+      console.error('[handleConfirmIntent] Error:', error);
+
+      updateMessageInChat(activeChatId, targetMessage.id, {
+        text: `Execution failed: ${error.message || 'Network error'}`,
+        intentExecution: {
+          intentText: targetMessage.intentExecution?.intentText || '',
+          result: {
+            ok: false,
+            intentId: intentId,
+            status: 'failed',
+            error: {
+              stage: 'execute',
+              code: 'NETWORK_ERROR',
+              message: error.message || 'Failed to connect to backend',
+            },
+          },
+          isExecuting: false,
+        },
+        pendingIntentId: undefined,
+      });
+    } finally {
+      setConfirmingIntentId(null);
+    }
+  };
+
   // Must be defined before handleProceedHighRisk and ConfirmTradeCard usage
   const handleConfirmTrade = async (draftId: string) => {
     // B3: Use stored targetChatId from draft creation (no fallback createNewChatSession)
@@ -3129,7 +3464,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
           if (!result.ok) {
             const errorMessage: ChatMessage = {
               id: `error-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-              text: result.reason || 'Execution failed. Strategy remains pending.',
+              text: result.error || 'Execution failed. Strategy remains pending.',
               isUser: false,
               timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
             };
@@ -3141,7 +3476,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
           if (result.mode === 'simulated' || result.mode === 'unsupported') {
             const simulatedMessage: ChatMessage = {
               id: `simulated-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-              text: `⚠️ ${result.mode === 'simulated' ? 'Simulated' : 'Not supported'}: ${result.reason || 'Execution not performed on-chain'}`,
+              text: `⚠️ ${result.mode === 'simulated' ? 'Simulated' : 'Not supported'}: ${result.error || 'Execution not performed on-chain'}`,
               isUser: false,
               timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
             };
@@ -3476,7 +3811,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
           if (!result.ok) {
             const errorMessage: ChatMessage = {
               id: `error-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-              text: result.reason || 'Execution failed. Strategy remains pending.',
+              text: result.error || 'Execution failed. Strategy remains pending.',
               isUser: false,
               timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
             };
@@ -3488,7 +3823,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
           if (result.mode === 'simulated' || result.mode === 'unsupported') {
             const simulatedMessage: ChatMessage = {
               id: `simulated-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-              text: `⚠️ ${result.mode === 'simulated' ? 'Simulated' : 'Not supported'}: ${result.reason || 'Execution not performed on-chain'}`,
+              text: `⚠️ ${result.mode === 'simulated' ? 'Simulated' : 'Not supported'}: ${result.error || 'Execution not performed on-chain'}`,
               isUser: false,
               timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
             };
@@ -3801,6 +4136,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
                       executionMode={executionMode}
                   marketsList={msg.marketsList}
                   defiProtocolsList={msg.defiProtocolsList}
+                  intentExecution={msg.intentExecution}
                   onInsertPrompt={(text) => {
                     setInputValue(text);
                     textareaRef.current?.focus();
@@ -3820,6 +4156,9 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
                       onConfirmDraft={msgStrategyId ? handleConfirmTrade : undefined}
                       showRiskWarning={msgShowRiskWarning}
                       riskReasons={msgRiskReasons}
+                      // Intent confirmation (confirm mode)
+                      onConfirmIntent={handleConfirmIntent}
+                      isConfirmingIntent={confirmingIntentId === msg.intentExecution?.result?.intentId}
                 />
                   </div>
                 );

@@ -11,6 +11,8 @@ import { useActivityFeed } from '../context/ActivityFeedContext';
 import { formatLeverage, formatMarginNotional, formatVenueDisplay, getSimulatedRouteDisplay, formatUsdOrDash, formatEventVenueDisplay } from '../lib/formatPlanCard';
 import { getCachedLiveTicker, marketToSpotSymbol, computeIndicativeTpSl, getLiveSpotForMarket } from '../lib/liveSpot';
 import { getCollapsedPreviewFields, type CollapsedPreviewFields } from '../lib/collapsedPreview';
+import IntentExecutionCard from './IntentExecutionCard';
+import type { IntentExecutionResult } from '../lib/apiClient';
 
 interface MessageBubbleProps {
   text: string;
@@ -46,6 +48,15 @@ interface MessageBubbleProps {
     isLive: boolean;
   }> | null;
   onSendMessage?: (text: string) => void; // Auto-send handler for market list buttons
+  // Intent execution (from ledger system)
+  intentExecution?: {
+    intentText: string;
+    result: IntentExecutionResult | null;
+    isExecuting: boolean;
+  } | null;
+  // Confirm intent handler (for confirm mode)
+  onConfirmIntent?: (intentId: string) => void;
+  isConfirmingIntent?: boolean;
 }
 
 function getStrategyReasoning(strategy: ParsedStrategy, instrumentType?: 'perp' | 'event' | 'defi'): string[] {
@@ -99,7 +110,7 @@ function getPortfolioBiasWarning(strategies: any[], newStrategy: ParsedStrategy)
   return null;
 }
 
-export default function MessageBubble({ text, isUser, timestamp, strategy, strategyId, selectedStrategyId, defiProposalId, executionMode, onInsertPrompt, onRegisterStrategyRef, onConfirmDraft, showRiskWarning, riskReasons, marketsList, defiProtocolsList, onSendMessage }: MessageBubbleProps) {
+export default function MessageBubble({ text, isUser, timestamp, strategy, strategyId, selectedStrategyId, defiProposalId, executionMode, onInsertPrompt, onRegisterStrategyRef, onConfirmDraft, showRiskWarning, riskReasons, marketsList, defiProtocolsList, onSendMessage, intentExecution, onConfirmIntent, isConfirmingIntent }: MessageBubbleProps) {
   const { updateStrategyStatus, recomputeAccountFromStrategies, strategies, setActiveTab, setSelectedStrategyId, setOnboarding, closeStrategy, closeEventStrategy, defiPositions, latestDefiProposal, confirmDefiPlan, updateFromBackendPortfolio, account, riskProfile, venue } = useBlossomContext();
   const { addPendingPlan, removePendingPlan, setLastAction } = useExecution();
   const { pushEvent } = useActivityFeed();
@@ -320,12 +331,22 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
             ? 'bg-gradient-to-br from-blossom-pink to-[#FF5A96] shadow-sm' 
             : 'card-glass'
         }`}>
-          <p 
+          <p
             className={`whitespace-pre-wrap m-0 ${isUser ? 'chat-message-text-user' : 'chat-message-text-assistant'}`}
             style={isUser ? { fontWeight: 400 } : { fontWeight: 400 }}
           >
             {text}
           </p>
+          {/* Intent Execution Card (from ledger system) */}
+          {!isUser && intentExecution && (
+            <IntentExecutionCard
+              intentText={intentExecution.intentText}
+              result={intentExecution.result}
+              isExecuting={intentExecution.isExecuting}
+              onConfirm={onConfirmIntent}
+              isConfirming={isConfirmingIntent}
+            />
+          )}
           {/* Markets List (for list_top_event_markets intent) */}
           {!isUser && Array.isArray(marketsList) && marketsList.length > 0 && (() => {
             try {

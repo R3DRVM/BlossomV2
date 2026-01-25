@@ -34,3 +34,12 @@ dist-ssr
 agent/telemetry/telemetry.db
 agent/telemetry/telemetry.db-shm
 agent/telemetry/telemetry.db-wal
+
+# Execution Ledger (dev-only)
+agent/execution-ledger/ledger.db
+agent/execution-ledger/ledger.db-shm
+agent/execution-ledger/ledger.db-wal
+
+# Never commit private keys
+**/solana-*.key
+**/dev-wallet-*.json

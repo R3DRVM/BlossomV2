@@ -166,6 +166,325 @@ export async function checkBackendHealth(): Promise<{ ok: boolean; ts: number }>
  * Start backend health check loop with exponential backoff
  * Returns cleanup function
  */
+// ============================================================================
+// Intent Execution API
+// ============================================================================
+
+/**
+ * Intent execution result from the backend
+ */
+export interface IntentExecutionResult {
+  ok: boolean;
+  intentId: string;
+  status: 'queued' | 'planned' | 'routed' | 'executing' | 'confirmed' | 'failed';
+  executionId?: string;
+  txHash?: string;
+  explorerUrl?: string;
+  error?: {
+    stage: 'plan' | 'route' | 'execute' | 'confirm' | 'quote';
+    code: string;
+    message: string;
+  };
+  metadata?: {
+    executedKind?: 'real' | 'proof_only';
+    parsed?: {
+      kind: string;
+      action: string;
+      amount?: string;
+      amountUnit?: string;
+      targetAsset?: string;
+      leverage?: number;
+    };
+    route?: {
+      chain: string;
+      network: string;
+      venue: string;
+      executionType: string;
+      warnings?: string[];
+    };
+    quoteMetadata?: any;
+    destChainProof?: {
+      txHash: string;
+      explorerUrl: string;
+    };
+    [key: string]: any;
+  };
+}
+
+/**
+ * Execute an intent through the ledger system
+ * This calls the backend intent runner and returns execution result with explorer links
+ *
+ * Options:
+ * - chain: Target chain (ethereum, solana, both)
+ * - planOnly: If true, returns plan without executing (for confirm mode)
+ */
+export async function executeIntent(
+  intentText: string,
+  options: {
+    chain?: 'ethereum' | 'solana' | 'both';
+    planOnly?: boolean;
+  } = {}
+): Promise<IntentExecutionResult> {
+  const ledgerSecret = import.meta.env.VITE_DEV_LEDGER_SECRET;
+
+  if (!ledgerSecret) {
+    return {
+      ok: false,
+      intentId: '',
+      status: 'failed',
+      error: {
+        stage: 'execute',
+        code: 'LEDGER_SECRET_MISSING',
+        message: 'Dev ledger secret not configured. Set VITE_DEV_LEDGER_SECRET.',
+      },
+    };
+  }
+
+  try {
+    const response = await callAgent('/api/ledger/intents/execute', {
+      method: 'POST',
+      headers: {
+        'X-Ledger-Secret': ledgerSecret,
+      },
+      body: JSON.stringify({
+        intentText,
+        chain: options.chain || 'ethereum',
+        planOnly: options.planOnly || false,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+      return {
+        ok: false,
+        intentId: '',
+        status: 'failed',
+        error: {
+          stage: 'execute',
+          code: 'API_ERROR',
+          message: errorData.error || `HTTP ${response.status}`,
+        },
+      };
+    }
+
+    const data = await response.json();
+    return data;
+  } catch (error: any) {
+    return {
+      ok: false,
+      intentId: '',
+      status: 'failed',
+      error: {
+        stage: 'execute',
+        code: 'NETWORK_ERROR',
+        message: error.message || 'Failed to connect to backend',
+      },
+    };
+  }
+}
+
+/**
+ * Confirm and execute a previously planned intent
+ * Used in confirm mode after user reviews the plan
+ */
+export async function confirmIntent(intentId: string): Promise<IntentExecutionResult> {
+  const ledgerSecret = import.meta.env.VITE_DEV_LEDGER_SECRET;
+
+  if (!ledgerSecret) {
+    return {
+      ok: false,
+      intentId,
+      status: 'failed',
+      error: {
+        stage: 'execute',
+        code: 'LEDGER_SECRET_MISSING',
+        message: 'Dev ledger secret not configured. Set VITE_DEV_LEDGER_SECRET.',
+      },
+    };
+  }
+
+  try {
+    const response = await callAgent('/api/ledger/intents/execute', {
+      method: 'POST',
+      headers: {
+        'X-Ledger-Secret': ledgerSecret,
+      },
+      body: JSON.stringify({ intentId }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+      return {
+        ok: false,
+        intentId,
+        status: 'failed',
+        error: {
+          stage: 'execute',
+          code: 'API_ERROR',
+          message: errorData.error || `HTTP ${response.status}`,
+        },
+      };
+    }
+
+    const data = await response.json();
+    return data;
+  } catch (error: any) {
+    return {
+      ok: false,
+      intentId,
+      status: 'failed',
+      error: {
+        stage: 'execute',
+        code: 'NETWORK_ERROR',
+        message: error.message || 'Failed to connect to backend',
+      },
+    };
+  }
+}
+
+/**
+ * Get intent details by ID
+ */
+export async function getIntent(intentId: string): Promise<any> {
+  const ledgerSecret = import.meta.env.VITE_DEV_LEDGER_SECRET;
+
+  if (!ledgerSecret) {
+    throw new Error('Ledger secret not configured');
+  }
+
+  const response = await callAgent(`/api/ledger/intents/${intentId}`, {
+    method: 'GET',
+    headers: {
+      'X-Ledger-Secret': ledgerSecret,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to get intent: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Get recent intents
+ */
+export async function getRecentIntents(limit: number = 10): Promise<any> {
+  const ledgerSecret = import.meta.env.VITE_DEV_LEDGER_SECRET;
+
+  if (!ledgerSecret) {
+    throw new Error('Ledger secret not configured');
+  }
+
+  const response = await callAgent(`/api/ledger/intents/recent?limit=${limit}`, {
+    method: 'GET',
+    headers: {
+      'X-Ledger-Secret': ledgerSecret,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to get intents: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+// ============================================================================
+// Positions API
+// ============================================================================
+
+/**
+ * Position data from the ledger
+ */
+export interface LedgerPosition {
+  id: string;
+  chain: 'ethereum' | 'solana';
+  network: string;
+  venue: string;
+  market: string;
+  side: 'long' | 'short';
+  leverage?: number;
+  margin_units?: string;
+  margin_display?: string;
+  size_units?: string;
+  entry_price?: string;
+  status: 'open' | 'closed' | 'liquidated';
+  opened_at: number;
+  closed_at?: number;
+  open_tx_hash?: string;
+  open_explorer_url?: string;
+  close_tx_hash?: string;
+  close_explorer_url?: string;
+  pnl?: string;
+  user_address: string;
+  on_chain_position_id?: string;
+  intent_id?: string;
+  execution_id?: string;
+}
+
+/**
+ * Get open positions from the ledger
+ */
+export async function getOpenPositions(): Promise<LedgerPosition[]> {
+  const ledgerSecret = import.meta.env.VITE_DEV_LEDGER_SECRET;
+
+  if (!ledgerSecret) {
+    console.warn('[apiClient] Ledger secret not configured, cannot fetch positions');
+    return [];
+  }
+
+  try {
+    const response = await callAgent('/api/ledger/positions?status=open', {
+      method: 'GET',
+      headers: {
+        'X-Ledger-Secret': ledgerSecret,
+      },
+    });
+
+    if (!response.ok) {
+      console.warn('[apiClient] Failed to fetch positions:', response.status);
+      return [];
+    }
+
+    const data = await response.json();
+    return data.positions || [];
+  } catch (error: any) {
+    console.warn('[apiClient] Error fetching positions:', error.message);
+    return [];
+  }
+}
+
+/**
+ * Get recent positions (all statuses)
+ */
+export async function getRecentPositions(limit: number = 20): Promise<LedgerPosition[]> {
+  const ledgerSecret = import.meta.env.VITE_DEV_LEDGER_SECRET;
+
+  if (!ledgerSecret) {
+    return [];
+  }
+
+  try {
+    const response = await callAgent(`/api/ledger/positions/recent?limit=${limit}`, {
+      method: 'GET',
+      headers: {
+        'X-Ledger-Secret': ledgerSecret,
+      },
+    });
+
+    if (!response.ok) {
+      return [];
+    }
+
+    const data = await response.json();
+    return data.positions || [];
+  } catch (error: any) {
+    return [];
+  }
+}
+
 export function startBackendHealthCheckLoop(
   onHealthChange?: (healthy: boolean) => void
 ): () => void {

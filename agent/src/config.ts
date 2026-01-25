@@ -71,12 +71,49 @@ export const ETH_TESTNET_CHAIN_ID = parseInt(
 
 export const ETH_TESTNET_RPC_URL = process.env.ETH_TESTNET_RPC_URL;
 
-// RPC Failover URLs (comma-separated fallback endpoints)
-// Example: ALCHEMY_RPC_URL=https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY
-export const ETH_RPC_FALLBACK_URLS = (process.env.ETH_RPC_FALLBACK_URLS || process.env.ALCHEMY_RPC_URL || '')
-  .split(',')
-  .map(url => url.trim())
-  .filter(Boolean);
+// RPC Failover Configuration
+// Primary: ETH_TESTNET_RPC_URL (recommend Alchemy for reliability)
+// Fallbacks: ETH_RPC_FALLBACK_URLS (comma-separated) OR individual vars
+// Order: Primary -> ETH_RPC_FALLBACK_URLS -> ALCHEMY_RPC_URL -> INFURA_RPC_URL -> public RPC
+const collectFallbackUrls = (): string[] => {
+  const urls: string[] = [];
+
+  // 1. Explicit fallback list (comma-separated)
+  if (process.env.ETH_RPC_FALLBACK_URLS) {
+    urls.push(...process.env.ETH_RPC_FALLBACK_URLS.split(',').map(u => u.trim()).filter(Boolean));
+  }
+
+  // 2. Individual provider URLs (if not already primary)
+  const primary = process.env.ETH_TESTNET_RPC_URL || '';
+
+  if (process.env.ALCHEMY_RPC_URL && !primary.includes('alchemy')) {
+    urls.push(process.env.ALCHEMY_RPC_URL);
+  }
+
+  if (process.env.INFURA_RPC_URL && !primary.includes('infura')) {
+    urls.push(process.env.INFURA_RPC_URL);
+  }
+
+  // 3. Public Sepolia RPCs as last resort (no API key required, multiple for redundancy)
+  const publicRpcs = [
+    'https://ethereum-sepolia-rpc.publicnode.com',
+    'https://1rpc.io/sepolia',
+    'https://rpc.sepolia.org',
+  ];
+
+  for (const rpc of publicRpcs) {
+    try {
+      if (!urls.some(u => u.includes(new URL(rpc).hostname))) {
+        urls.push(rpc);
+      }
+    } catch { /* ignore invalid URLs */ }
+  }
+
+  // Dedupe and filter out primary
+  return [...new Set(urls)].filter(u => u !== primary && u.length > 0);
+};
+
+export const ETH_RPC_FALLBACK_URLS = collectFallbackUrls();
 
 export const EXECUTION_ROUTER_ADDRESS = process.env.EXECUTION_ROUTER_ADDRESS;
 
@@ -98,6 +135,10 @@ export const DEMO_SWAP_ROUTER_ADDRESS = process.env.DEMO_SWAP_ROUTER_ADDRESS;
 // Demo lending venue (deterministic for investor demos)
 export const DEMO_LEND_VAULT_ADDRESS = process.env.DEMO_LEND_VAULT_ADDRESS;
 export const DEMO_LEND_ADAPTER_ADDRESS = process.env.DEMO_LEND_ADAPTER_ADDRESS;
+
+// Demo perps venue (real on-chain perps for testnet)
+export const DEMO_PERP_ENGINE_ADDRESS = process.env.DEMO_PERP_ENGINE_ADDRESS as Address | undefined;
+export const DEMO_PERP_ADAPTER_ADDRESS = process.env.DEMO_PERP_ADAPTER_ADDRESS as Address | undefined;
 
 // Proof-of-execution adapter (for perps/events until real adapters exist)
 export const PROOF_ADAPTER_ADDRESS = process.env.PROOF_ADAPTER_ADDRESS;
