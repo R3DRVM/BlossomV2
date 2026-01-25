@@ -24,7 +24,8 @@ logs
 !.env.example
 
 # Build artifacts (will be regenerated)
-dist
+# Note: Keep agent/dist for serverless function
+/dist
 dist-ssr
 .vercel
 
