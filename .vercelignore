@@ -24,10 +24,11 @@ logs
 !.env.example
 
 # Build artifacts (will be regenerated)
-# Note: Keep agent/dist for serverless function
+# Note: Frontend dist excluded, but we commit agent/dist
 /dist
 dist-ssr
 .vercel
+!agent/dist
 
 # Access codes (never deploy)
 ACCESS_CODES_LOCAL.*
