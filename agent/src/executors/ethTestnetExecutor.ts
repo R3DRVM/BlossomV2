@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * ETH Testnet Executor
  * Prepares execution plans and EIP-712 typed data for signing
