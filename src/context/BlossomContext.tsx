@@ -2,7 +2,7 @@ import { createContext, useContext, useState, useCallback, ReactNode, useEffect,
 import { mapBackendPortfolioToFrontendState } from '../lib/portfolioMapping';
 import { USE_AGENT_BACKEND, executionMode, executionAuthMode, forceDemoPortfolio } from '../lib/config';
 import { derivePerpPositionsFromStrategies } from '../lib/derivePerpPositions';
-import { callAgent } from '../lib/apiClient';
+import { callAgent, type IntentExecutionResult } from '../lib/apiClient';
 import { getAddress, getAddressIfExplicit } from '../lib/walletAdapter';
 import { startBackendHealthCheckLoop, isBackendHealthy, onBackendHealthChange } from '../lib/apiClient';
 
@@ -146,6 +146,15 @@ export interface ChatMessage {
     source: 'defillama' | 'static';
     isLive: boolean;
   }> | null;
+  // Intent execution result (from ledger system)
+  intentExecution?: {
+    intentText: string;
+    result: IntentExecutionResult | null;
+    isExecuting: boolean;
+  } | null;
+  // Intent ID awaiting user confirmation (confirm mode)
+  pendingIntentId?: string;
+  onSendMessage?: (text: string) => void;
 }
 
 // Chat session type
@@ -191,6 +200,7 @@ interface BlossomContextType {
   confirmDefiPlan: (id: string) => void;
   updateDeFiPlanDeposit: (id: string, newDepositUsd: number) => void;
   updateFromBackendPortfolio: (portfolio: any) => void; // For agent mode
+  refreshLedgerPositions: () => Promise<void>; // Sync positions from ledger
   getBaseAsset: (market: string) => string;
   // Chat sessions
   chatSessions: ChatSession[];
@@ -1213,13 +1223,13 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
         } else if (result.mode === 'simulated' || result.mode === 'unsupported') {
           // TRUTHFUL UI: Show simulated/unsupported status, don't mark as active
           if (import.meta.env.DEV) {
-            console.warn('[confirmDefiPlan] ⚠️ DeFi execution:', result.mode, result.reason);
+            console.warn('[confirmDefiPlan] ⚠️ DeFi execution:', result.mode, result.error);
           }
           // Don't mark as active - position remains proposed
           // UI should show "Simulated" or "Not supported" status
         } else if (!result.ok) {
           // Execution failed
-          console.error('[confirmDefiPlan] Execution failed:', result.reason);
+          console.error('[confirmDefiPlan] Execution failed:', result.error);
           // Position remains proposed
         } else {
           // Receipt pending or timeout
@@ -1549,6 +1559,79 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
 
       return merged;
     });
+  }, []);
+
+  // Sync ledger positions to strategies
+  const refreshLedgerPositions = useCallback(async () => {
+    try {
+      const { getOpenPositions } = await import('../lib/apiClient');
+      const positions = await getOpenPositions();
+
+      if (positions.length === 0) {
+        return; // No positions to sync
+      }
+
+      // Convert ledger positions to Strategy format
+      const ledgerStrategies: Strategy[] = positions.map((pos: any) => {
+        // Derive a reasonable entry price (or use placeholder)
+        const entryPriceNum = pos.entry_price
+          ? Number(pos.entry_price) / 1e8 // 8 decimals
+          : pos.market === 'BTC' ? 45000 : pos.market === 'ETH' ? 2500 : 100;
+
+        // Calculate TP/SL based on leverage
+        const leverage = pos.leverage || 10;
+        const spread = entryPriceNum * (leverage / 100); // ~1% per 1x leverage
+        const side = pos.side === 'long' ? 'Long' : 'Short';
+
+        const takeProfit = side === 'Long'
+          ? entryPriceNum + spread
+          : entryPriceNum - spread;
+        const stopLoss = side === 'Long'
+          ? entryPriceNum - spread
+          : entryPriceNum + spread;
+
+        // Calculate margin in USD
+        const marginUsd = pos.margin_units
+          ? Number(pos.margin_units) / 1e6
+          : 100;
+
+        return {
+          id: `ledger-${pos.id}`,
+          createdAt: new Date(pos.opened_at * 1000).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+          side: side as 'Long' | 'Short',
+          market: `${pos.market}-PERP`,
+          riskPercent: 2, // Default risk
+          entry: Math.round(entryPriceNum),
+          takeProfit: Math.round(takeProfit),
+          stopLoss: Math.round(stopLoss),
+          status: 'executed' as StrategyStatus,
+          sourceText: `${pos.side} ${pos.market} @ ${leverage}x`,
+          notionalUsd: marginUsd * leverage,
+          marginUsd,
+          isClosed: pos.status !== 'open',
+          closedAt: pos.closed_at ? new Date(pos.closed_at * 1000).toISOString() : undefined,
+          instrumentType: 'perp' as const,
+          leverage,
+          txHash: pos.open_tx_hash,
+          explorerUrl: pos.open_explorer_url,
+        };
+      });
+
+      // Merge with existing strategies (avoid duplicates by ID prefix)
+      setStrategies(prev => {
+        // Filter out any existing ledger positions (they'll be replaced with fresh data)
+        const nonLedgerStrategies = prev.filter(s => !s.id.startsWith('ledger-'));
+        return [...ledgerStrategies, ...nonLedgerStrategies];
+      });
+
+      if (import.meta.env.DEV) {
+        console.log('[BlossomContext] Synced ledger positions:', ledgerStrategies.length);
+      }
+    } catch (error: any) {
+      if (import.meta.env.DEV) {
+        console.warn('[BlossomContext] Failed to sync ledger positions:', error.message);
+      }
+    }
   }, []);
 
   const resetSim = useCallback(async () => {
@@ -1945,6 +2028,7 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
         confirmDefiPlan,
         updateDeFiPlanDeposit,
         updateFromBackendPortfolio,
+        refreshLedgerPositions,
         getBaseAsset,
         chatSessions,
         activeChatId,

@@ -5361,7 +5361,7 @@ const HOST = process.env.HOST || '0.0.0.0'; // Bind to all interfaces by default
   }
 })();
 
-app.listen(PORT, HOST, () => {
+app.listen(PORT, HOST, async () => {
   const listenUrl = HOST === '0.0.0.0' ? `http://127.0.0.1:${PORT}` : `http://${HOST}:${PORT}`;
   console.log(`🌸 Blossom Agent server listening on ${listenUrl}`);
   console.log(`   Health check: http://127.0.0.1:${PORT}/health`);
@@ -5382,6 +5382,23 @@ app.listen(PORT, HOST, () => {
   console.log(`   - GET  /health`);
   console.log(`   - GET  /api/debug/executions`);
   console.log(`   - POST /api/access/validate`);
+  console.log(`   - GET  /api/ledger/positions`);
+  console.log(`   - GET  /api/ledger/positions/recent`);
+
+  // Start perp indexer if configured
+  try {
+    const { startPerpIndexer } = await import('../indexer/perpIndexer');
+    const rpcUrl = process.env.ETH_TESTNET_RPC_URL;
+    const perpEngineAddress = process.env.DEMO_PERP_ENGINE_ADDRESS;
+
+    if (rpcUrl && perpEngineAddress) {
+      startPerpIndexer(rpcUrl, perpEngineAddress);
+    } else {
+      console.log('   [indexer] Perp indexer disabled (config missing)');
+    }
+  } catch (err: any) {
+    console.log('   [indexer] Failed to start:', err.message);
+  }
   console.log(`   - POST /api/access/check`);
   console.log(`   - GET  /api/access/codes (admin)`);
   console.log(`   - POST /api/access/codes/generate (admin)`);
@@ -5992,6 +6009,481 @@ app.get('/api/debug/session-diagnose', async (req, res) => {
       error: 'Failed to diagnose session transaction',
       message: error.message,
     });
+  }
+});
+
+// ============================================
+// EXECUTION LEDGER API (Dev-only)
+// ============================================
+
+const DEV_LEDGER_SECRET = process.env.DEV_LEDGER_SECRET || '';
+
+/**
+ * Middleware to check ledger secret
+ * BULLETPROOF GATING:
+ * - DEV_LEDGER_SECRET MUST be set, otherwise 403
+ * - Secret MUST be provided via X-Ledger-Secret header (NOT query param - leaks to logs/history)
+ * - No fallbacks, no exceptions
+ */
+function checkLedgerSecret(req: express.Request, res: express.Response, next: express.NextFunction) {
+  // HARD REQUIREMENT: DEV_LEDGER_SECRET must be configured
+  if (!DEV_LEDGER_SECRET) {
+    console.warn('[ledger] DEV_LEDGER_SECRET not configured - blocking all ledger API access');
+    return res.status(403).json({
+      ok: false,
+      error: 'Ledger not configured: DEV_LEDGER_SECRET env var required'
+    });
+  }
+
+  // ONLY accept header-based auth (query params leak to logs/browser history)
+  const providedSecret = req.headers['x-ledger-secret'] as string;
+
+  // Warn if query param was used (deprecated)
+  if (req.query.secret) {
+    console.warn('[ledger] Query param ?secret= is deprecated and ignored. Use X-Ledger-Secret header.');
+  }
+
+  if (!providedSecret || providedSecret !== DEV_LEDGER_SECRET) {
+    return res.status(403).json({ ok: false, error: 'Unauthorized: Invalid or missing X-Ledger-Secret header' });
+  }
+
+  next();
+}
+
+/**
+ * GET /api/ledger/summary
+ * Returns summary of all executions across chains
+ */
+app.get('/api/ledger/summary', checkLedgerSecret, async (req, res) => {
+  try {
+    const { getLedgerSummary } = await import('../../execution-ledger/db');
+    const summary = getLedgerSummary();
+    res.json({ ok: true, data: summary });
+  } catch (error) {
+    res.json({
+      ok: false,
+      error: 'Execution ledger not available',
+      data: {
+        totalExecutions: 0,
+        confirmedExecutions: 0,
+        failedExecutions: 0,
+        successRate: 0,
+        byChain: [],
+        activeSessions: 0,
+        trackedAssets: 0,
+        registeredWallets: 0,
+        recentExecutions: [],
+      },
+    });
+  }
+});
+
+/**
+ * GET /api/ledger/executions
+ * Returns list of executions with optional filters
+ */
+app.get('/api/ledger/executions', checkLedgerSecret, async (req, res) => {
+  try {
+    const { listExecutionsWithMeta } = await import('../../execution-ledger/db');
+    const limit = parseInt(req.query.limit as string) || 50;
+    const offset = parseInt(req.query.offset as string) || 0;
+    const chain = req.query.chain as any;
+    const network = req.query.network as any;
+    const status = req.query.status as any;
+
+    const result = listExecutionsWithMeta({ chain, network, status, limit, offset });
+    res.json({ ok: true, data: result.data, meta: result.meta });
+  } catch (error) {
+    res.json({ ok: false, error: 'Failed to fetch executions', data: [], meta: { totalInDb: 0, limit: 50, offset: 0 } });
+  }
+});
+
+/**
+ * GET /api/ledger/sessions
+ * Returns list of sessions across chains
+ */
+app.get('/api/ledger/sessions', checkLedgerSecret, async (req, res) => {
+  try {
+    const { listSessionsWithMeta } = await import('../../execution-ledger/db');
+    const limit = parseInt(req.query.limit as string) || 50;
+    const chain = req.query.chain as any;
+    const network = req.query.network as any;
+    const status = req.query.status as any;
+
+    const result = listSessionsWithMeta({ chain, network, status, limit });
+    res.json({ ok: true, data: result.data, meta: result.meta });
+  } catch (error) {
+    res.json({ ok: false, error: 'Failed to fetch sessions', data: [], meta: { totalInDb: 0, limit: 50, offset: 0 } });
+  }
+});
+
+/**
+ * GET /api/ledger/assets
+ * Returns list of tracked assets
+ */
+app.get('/api/ledger/assets', checkLedgerSecret, async (req, res) => {
+  try {
+    const { listAssetsWithMeta } = await import('../../execution-ledger/db');
+    const limit = parseInt(req.query.limit as string) || 100;
+    const chain = req.query.chain as any;
+    const network = req.query.network as any;
+    const walletAddress = req.query.wallet as string;
+
+    const result = listAssetsWithMeta({ chain, network, walletAddress, limit });
+    res.json({ ok: true, data: result.data, meta: result.meta });
+  } catch (error) {
+    res.json({ ok: false, error: 'Failed to fetch assets', data: [], meta: { totalInDb: 0, limit: 100, offset: 0 } });
+  }
+});
+
+/**
+ * GET /api/ledger/proofs
+ * Returns proof bundle for all confirmed executions
+ */
+app.get('/api/ledger/proofs', checkLedgerSecret, async (req, res) => {
+  try {
+    const { getProofBundle } = await import('../../execution-ledger/db');
+    const proofs = getProofBundle();
+    res.json({ ok: true, data: proofs });
+  } catch (error) {
+    res.json({
+      ok: false,
+      error: 'Failed to fetch proof bundle',
+      data: { ethereum: [], solana: [] },
+    });
+  }
+});
+
+/**
+ * GET /api/ledger/wallets
+ * Returns list of registered dev wallets
+ */
+app.get('/api/ledger/wallets', checkLedgerSecret, async (req, res) => {
+  try {
+    const { listWallets } = await import('../../execution-ledger/db');
+    const chain = req.query.chain as any;
+    const network = req.query.network as any;
+
+    const wallets = listWallets({ chain, network });
+    res.json({ ok: true, data: wallets });
+  } catch (error) {
+    res.json({ ok: false, error: 'Failed to fetch wallets', data: [] });
+  }
+});
+
+/**
+ * GET /api/ledger/stats/summary
+ * Returns comprehensive execution statistics for the dashboard
+ */
+app.get('/api/ledger/stats/summary', checkLedgerSecret, async (req, res) => {
+  try {
+    const { getSummaryStats } = await import('../../execution-ledger/db');
+    const stats = getSummaryStats();
+    res.json({ ok: true, data: stats });
+  } catch (error) {
+    console.error('[ledger] Failed to fetch stats summary:', error);
+    res.json({
+      ok: false,
+      error: 'Failed to fetch stats summary',
+      data: null,
+    });
+  }
+});
+
+/**
+ * GET /api/ledger/stats/recent
+ * Returns recent executions for the activity feed
+ */
+app.get('/api/ledger/stats/recent', checkLedgerSecret, async (req, res) => {
+  try {
+    const { getRecentExecutions } = await import('../../execution-ledger/db');
+    const limit = parseInt(req.query.limit as string) || 20;
+    const executions = getRecentExecutions(Math.min(limit, 100)); // Cap at 100
+    res.json({ ok: true, data: executions });
+  } catch (error) {
+    console.error('[ledger] Failed to fetch recent executions:', error);
+    res.json({ ok: false, error: 'Failed to fetch recent executions', data: [] });
+  }
+});
+
+/**
+ * GET /api/ledger/executions/:id
+ * Returns a single execution by ID
+ */
+app.get('/api/ledger/executions/:id', checkLedgerSecret, async (req, res) => {
+  try {
+    const { getExecution } = await import('../../execution-ledger/db');
+    const execution = getExecution(req.params.id);
+    if (!execution) {
+      return res.status(404).json({ ok: false, error: 'Execution not found', data: null });
+    }
+    res.json({ ok: true, data: execution });
+  } catch (error) {
+    console.error('[ledger] Failed to fetch execution:', error);
+    res.json({ ok: false, error: 'Failed to fetch execution', data: null });
+  }
+});
+
+/**
+ * GET /api/ledger/executions/:id/steps
+ * Returns steps for a specific execution
+ */
+app.get('/api/ledger/executions/:id/steps', checkLedgerSecret, async (req, res) => {
+  try {
+    const { getExecutionSteps, getExecution } = await import('../../execution-ledger/db');
+
+    // Verify execution exists
+    const execution = getExecution(req.params.id);
+    if (!execution) {
+      return res.status(404).json({ ok: false, error: 'Execution not found', data: [] });
+    }
+
+    const steps = getExecutionSteps(req.params.id);
+    res.json({ ok: true, data: steps });
+  } catch (error) {
+    console.error('[ledger] Failed to fetch execution steps:', error);
+    res.json({ ok: false, error: 'Failed to fetch execution steps', data: [] });
+  }
+});
+
+// ============================================
+// INTENT TRACKING ENDPOINTS
+// ============================================
+
+/**
+ * GET /api/ledger/intents/recent
+ * Returns recent intents for the activity feed
+ */
+app.get('/api/ledger/intents/recent', checkLedgerSecret, async (req, res) => {
+  try {
+    const { getRecentIntents } = await import('../../execution-ledger/db');
+    const limit = parseInt(req.query.limit as string) || 50;
+    const intents = getRecentIntents(Math.min(limit, 100));
+    res.json({ ok: true, data: intents });
+  } catch (error) {
+    console.error('[ledger] Failed to fetch recent intents:', error);
+    res.json({ ok: false, error: 'Failed to fetch intents', data: [] });
+  }
+});
+
+/**
+ * GET /api/ledger/intents/:id
+ * Returns a single intent by ID
+ */
+app.get('/api/ledger/intents/:id', checkLedgerSecret, async (req, res) => {
+  try {
+    const { getIntent, getExecutionsForIntent } = await import('../../execution-ledger/db');
+    const intent = getIntent(req.params.id);
+
+    if (!intent) {
+      return res.status(404).json({ ok: false, error: 'Intent not found', data: null });
+    }
+
+    // Include linked executions
+    const executions = getExecutionsForIntent(req.params.id);
+
+    res.json({
+      ok: true,
+      data: {
+        ...intent,
+        executions,
+      },
+    });
+  } catch (error) {
+    console.error('[ledger] Failed to fetch intent:', error);
+    res.json({ ok: false, error: 'Failed to fetch intent', data: null });
+  }
+});
+
+/**
+ * GET /api/ledger/stats/intents
+ * Returns comprehensive intent statistics for the dashboard
+ */
+app.get('/api/ledger/stats/intents', checkLedgerSecret, async (req, res) => {
+  try {
+    const { getIntentStatsSummary } = await import('../../execution-ledger/db');
+    const stats = getIntentStatsSummary();
+    res.json({ ok: true, data: stats });
+  } catch (error) {
+    console.error('[ledger] Failed to fetch intent stats:', error);
+    res.json({
+      ok: false,
+      error: 'Failed to fetch intent stats',
+      data: {
+        totalIntents: 0,
+        confirmedIntents: 0,
+        failedIntents: 0,
+        intentSuccessRate: 0,
+        byKind: [],
+        byStatus: [],
+        failuresByStage: [],
+        failuresByCode: [],
+        recentIntents: [],
+      },
+    });
+  }
+});
+
+/**
+ * GET /api/ledger/intents/:id/executions
+ * Returns executions linked to a specific intent
+ */
+app.get('/api/ledger/intents/:id/executions', checkLedgerSecret, async (req, res) => {
+  try {
+    const { getIntent, getExecutionsForIntent } = await import('../../execution-ledger/db');
+
+    // Verify intent exists
+    const intent = getIntent(req.params.id);
+    if (!intent) {
+      return res.status(404).json({ ok: false, error: 'Intent not found', data: [] });
+    }
+
+    const executions = getExecutionsForIntent(req.params.id);
+    res.json({ ok: true, data: executions });
+  } catch (error) {
+    console.error('[ledger] Failed to fetch intent executions:', error);
+    res.json({ ok: false, error: 'Failed to fetch intent executions', data: [] });
+  }
+});
+
+/**
+ * POST /api/ledger/intents/execute
+ * Execute an intent through the full pipeline (parse → route → execute → confirm)
+ *
+ * Options:
+ * - planOnly: true → Returns plan without executing (for confirm mode)
+ * - intentId: string → Execute a previously planned intent (skip parse/route)
+ *
+ * Returns execution result with explorer links
+ */
+app.post('/api/ledger/intents/execute', checkLedgerSecret, async (req, res) => {
+  try {
+    const { intentText, chain = 'ethereum', planOnly = false, intentId } = req.body;
+
+    // Import the intent runner functions
+    const { runIntent, executeIntentById } = await import('../intent/intentRunner');
+
+    // If intentId is provided, execute the existing planned intent
+    if (intentId && typeof intentId === 'string') {
+      const result = await executeIntentById(intentId);
+      return res.json(result);
+    }
+
+    // Otherwise, require intentText for new intent
+    if (!intentText || typeof intentText !== 'string') {
+      return res.status(400).json({
+        ok: false,
+        intentId: '',
+        status: 'failed',
+        error: {
+          stage: 'plan',
+          code: 'INVALID_REQUEST',
+          message: 'intentText is required (or intentId to execute planned intent)',
+        },
+      });
+    }
+
+    // Run the intent through the pipeline
+    const result = await runIntent(intentText, {
+      chain: chain as 'ethereum' | 'solana' | 'both',
+      planOnly: Boolean(planOnly),
+    });
+
+    // Return the result (already in the expected format)
+    res.json(result);
+  } catch (error: any) {
+    console.error('[ledger] Intent execution error:', error);
+    res.status(500).json({
+      ok: false,
+      intentId: '',
+      status: 'failed',
+      error: {
+        stage: 'execute',
+        code: 'INTERNAL_ERROR',
+        message: error.message || 'Internal server error',
+      },
+    });
+  }
+});
+
+// ============================================
+// POSITIONS API ENDPOINTS
+// ============================================
+
+/**
+ * GET /api/ledger/positions/recent
+ * Get recent positions (all statuses)
+ */
+app.get('/api/ledger/positions/recent', checkLedgerSecret, async (req, res) => {
+  try {
+    const { getRecentPositions } = await import('../../execution-ledger/db');
+    const limit = parseInt(req.query.limit as string) || 20;
+    const positions = getRecentPositions(Math.min(limit, 100));
+    res.json({ ok: true, positions });
+  } catch (error: any) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+/**
+ * GET /api/ledger/positions
+ * Get positions with optional filters
+ */
+app.get('/api/ledger/positions', checkLedgerSecret, async (req, res) => {
+  try {
+    const { getOpenPositions, getPositionsByStatus } = await import('../../execution-ledger/db');
+    const status = req.query.status as string;
+    const chain = req.query.chain as string;
+    const network = req.query.network as string;
+    const venue = req.query.venue as string;
+    const limit = parseInt(req.query.limit as string) || 50;
+
+    let positions;
+    if (status === 'open') {
+      positions = getOpenPositions({ chain, network, venue });
+    } else if (status === 'closed' || status === 'liquidated') {
+      positions = getPositionsByStatus(status as any, limit);
+    } else {
+      // Default to open positions
+      positions = getOpenPositions({ chain, network, venue });
+    }
+
+    res.json({ ok: true, positions });
+  } catch (error: any) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+/**
+ * GET /api/ledger/positions/:id
+ * Get a specific position by ID
+ */
+app.get('/api/ledger/positions/:id', checkLedgerSecret, async (req, res) => {
+  try {
+    const { getPosition } = await import('../../execution-ledger/db');
+    const position = getPosition(req.params.id);
+
+    if (!position) {
+      return res.status(404).json({ ok: false, error: 'Position not found' });
+    }
+
+    res.json({ ok: true, position });
+  } catch (error: any) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+/**
+ * GET /api/ledger/positions/stats
+ * Get position statistics
+ */
+app.get('/api/ledger/positions/stats', checkLedgerSecret, async (req, res) => {
+  try {
+    const { getPositionStats } = await import('../../execution-ledger/db');
+    const stats = getPositionStats();
+    res.json({ ok: true, stats });
+  } catch (error: any) {
+    res.status(500).json({ ok: false, error: error.message });
   }
 });
 

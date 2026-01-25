@@ -7,7 +7,7 @@ let suppressedCount = 0;
 let hasLoggedSummary = false;
 
 /**
- * Check if a message should be suppressed (extension errors only)
+ * Check if a message should be suppressed (extension errors + WalletConnect noise)
  * Checks all args and stack traces safely
  */
 function shouldSuppress(...args: any[]): boolean {
@@ -25,17 +25,31 @@ function shouldSuppress(...args: any[]): boolean {
       }
     })
     .join(' ');
-  
+
+  // Suppress WalletConnect/Reown API noise (400/403 when no project ID)
+  const hasWalletConnectNoise =
+    allText.includes('api.web3modal.org') ||
+    allText.includes('api.web3modal.com') ||
+    allText.includes('pulse.walletconnect') ||
+    allText.includes('relay.walletconnect') ||
+    allText.includes('verify.walletconnect') ||
+    (allText.includes('walletconnect') && (allText.includes('400') || allText.includes('403'))) ||
+    (allText.includes('reown') && (allText.includes('400') || allText.includes('403')));
+
+  if (hasWalletConnectNoise) {
+    return true;
+  }
+
   // Must contain one of these extension error patterns
-  const hasExtensionError = 
+  const hasExtensionError =
     allText.includes('Could not establish connection. Receiving end does not exist.') ||
     allText.includes('Unchecked runtime.lastError') ||
     allText.includes('Receiving end does not exist');
-  
+
   if (!hasExtensionError) {
     return false;
   }
-  
+
   // AND must appear to come from an extension (check message and stack)
   const hasExtensionContext =
     allText.includes('contentScript') ||
@@ -43,7 +57,7 @@ function shouldSuppress(...args: any[]): boolean {
     allText.includes('moz-extension://') ||
     allText.includes('extension://') ||
     allText.includes('Extension context invalidated');
-  
+
   return hasExtensionContext;
 }
 

@@ -194,3 +194,77 @@ body {
   }
 }
 
+
+/* ============================================
+ * Solana Wallet Adapter - Light Theme Override
+ * ============================================ */
+
+/* Modal backdrop */
+.wallet-adapter-modal-wrapper {
+  background-color: rgba(0, 0, 0, 0.3) !important;
+}
+
+/* Modal content */
+.wallet-adapter-modal-container {
+  background-color: #ffffff !important;
+  border: 1px solid #e2e8f0 !important;
+  border-radius: 12px !important;
+}
+
+/* Modal title */
+.wallet-adapter-modal-title {
+  color: #0f172a !important;
+}
+
+/* Wallet list items */
+.wallet-adapter-modal-list li {
+  background-color: #f8fafc !important;
+  border: 1px solid #e2e8f0 !important;
+}
+
+.wallet-adapter-modal-list li:hover {
+  background-color: #f1f5f9 !important;
+  border-color: #cbd5e1 !important;
+}
+
+/* Wallet name */
+.wallet-adapter-modal-list .wallet-adapter-button {
+  color: #0f172a !important;
+  background-color: transparent !important;
+}
+
+/* Wallet button text */
+.wallet-adapter-button-trigger {
+  background-color: #f8fafc !important;
+  color: #0f172a !important;
+  border: 1px solid #e2e8f0 !important;
+}
+
+.wallet-adapter-button-trigger:hover {
+  background-color: #f1f5f9 !important;
+}
+
+/* Close button */
+.wallet-adapter-modal-button-close {
+  background-color: #f1f5f9 !important;
+  color: #64748b !important;
+}
+
+.wallet-adapter-modal-button-close:hover {
+  background-color: #e2e8f0 !important;
+  color: #0f172a !important;
+}
+
+/* Collapse button */
+.wallet-adapter-collapse-button {
+  color: #64748b !important;
+}
+
+/* "More options" text */
+.wallet-adapter-modal-list-more {
+  color: #64748b !important;
+}
+
+.wallet-adapter-modal-list-more svg {
+  fill: #64748b !important;
+}
