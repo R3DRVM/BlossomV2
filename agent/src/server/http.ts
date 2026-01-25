@@ -8,6 +8,7 @@
 import { config } from 'dotenv';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { createHash } from 'crypto';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -4964,11 +4965,10 @@ app.get('/api/health', (req, res) => {
 
   // Safe debug info (only when AUTH_DEBUG=1)
   if (process.env.AUTH_DEBUG === '1') {
-    const crypto = require('crypto');
     const ledgerSecret = process.env.DEV_LEDGER_SECRET || '';
     response.authDebug = {
       hasLedgerSecret: !!ledgerSecret,
-      ledgerSecretHash: ledgerSecret ? crypto.createHash('sha256').update(ledgerSecret).digest('hex').slice(0, 6) : 'empty'
+      ledgerSecretHash: ledgerSecret ? createHash('sha256').update(ledgerSecret).digest('hex').slice(0, 6) : 'empty'
     };
   }
 
@@ -6084,8 +6084,7 @@ const DEV_LEDGER_SECRET = process.env.DEV_LEDGER_SECRET || '';
 // Safe hash helper for debug logging (never logs raw secrets)
 function safeHash(value: string): string {
   if (!value) return 'empty';
-  const crypto = require('crypto');
-  return crypto.createHash('sha256').update(value).digest('hex').slice(0, 6);
+  return createHash('sha256').update(value).digest('hex').slice(0, 6);
 }
 
 /**

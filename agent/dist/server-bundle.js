@@ -1,11 +1,5 @@
 var __defProp = Object.defineProperty;
 var __getOwnPropNames = Object.getOwnPropertyNames;
-var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
-  get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
-}) : x)(function(x) {
-  if (typeof require !== "undefined") return require.apply(this, arguments);
-  throw Error('Dynamic require of "' + x + '" is not supported');
-});
 var __esm = (fn, res) => function __init() {
   return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
 };
@@ -9692,6 +9686,7 @@ init_actionParser();
 import { config as config2 } from "dotenv";
 import { resolve as resolve2, dirname as dirname7 } from "path";
 import { fileURLToPath as fileURLToPath5 } from "url";
+import { createHash as createHash2 } from "crypto";
 import express from "express";
 import cors from "cors";
 
@@ -14726,11 +14721,10 @@ app.get("/api/health", (req, res) => {
     // Non-sensitive: just the provider name
   };
   if (process.env.AUTH_DEBUG === "1") {
-    const crypto2 = __require("crypto");
     const ledgerSecret = process.env.DEV_LEDGER_SECRET || "";
     response.authDebug = {
       hasLedgerSecret: !!ledgerSecret,
-      ledgerSecretHash: ledgerSecret ? crypto2.createHash("sha256").update(ledgerSecret).digest("hex").slice(0, 6) : "empty"
+      ledgerSecretHash: ledgerSecret ? createHash2("sha256").update(ledgerSecret).digest("hex").slice(0, 6) : "empty"
     };
   }
   res.json(response);
@@ -15599,8 +15593,7 @@ app.get("/api/debug/session-diagnose", async (req, res) => {
 var DEV_LEDGER_SECRET = process.env.DEV_LEDGER_SECRET || "";
 function safeHash(value) {
   if (!value) return "empty";
-  const crypto2 = __require("crypto");
-  return crypto2.createHash("sha256").update(value).digest("hex").slice(0, 6);
+  return createHash2("sha256").update(value).digest("hex").slice(0, 6);
 }
 function checkLedgerSecret(req, res, next) {
   const authDebug = process.env.AUTH_DEBUG === "1";
