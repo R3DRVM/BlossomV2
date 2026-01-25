@@ -4944,7 +4944,7 @@ app.get('/api/health', (req, res) => {
   const hasGeminiKey = !!process.env.BLOSSOM_GEMINI_API_KEY;
   const hasOpenAIKey = !!process.env.BLOSSOM_OPENAI_API_KEY;
   const hasAnthropicKey = !!process.env.BLOSSOM_ANTHROPIC_API_KEY;
-  
+
   // Determine effective provider (fallback to stub if key missing)
   let effectiveProvider = provider;
   if (provider === 'gemini' && !hasGeminiKey) {
@@ -4954,13 +4954,25 @@ app.get('/api/health', (req, res) => {
   } else if (provider === 'anthropic' && !hasAnthropicKey) {
     effectiveProvider = 'stub';
   }
-  
-  res.json({
+
+  const response: any = {
     ok: true,
     ts: Date.now(),
     service: 'blossom-agent',
     llmProvider: effectiveProvider, // Non-sensitive: just the provider name
-  });
+  };
+
+  // Safe debug info (only when AUTH_DEBUG=1)
+  if (process.env.AUTH_DEBUG === '1') {
+    const crypto = require('crypto');
+    const ledgerSecret = process.env.DEV_LEDGER_SECRET || '';
+    response.authDebug = {
+      hasLedgerSecret: !!ledgerSecret,
+      ledgerSecretHash: ledgerSecret ? crypto.createHash('sha256').update(ledgerSecret).digest('hex').slice(0, 6) : 'empty'
+    };
+  }
+
+  res.json(response);
 });
 
 /**
