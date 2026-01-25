@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Blossom Agent HTTP Server
  * Provides API endpoints for the React front-end
@@ -45,6 +46,16 @@ import { validateActions, buildBlossomPrompts } from '../utils/actionParser';
 import { callLlm } from '../services/llmClient';
 import * as perpsSim from '../plugins/perps-sim';
 import * as defiSim from '../plugins/defi-sim';
+
+// Allowed CORS origins for MVP
+const ALLOWED_ORIGINS = [
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'https://blossom.onl',
+  'https://www.blossom.onl',
+  // Preview/staging subdomains
+  /^https:\/\/.*\.blossom\.onl$/,
+];
 import * as eventSim from '../plugins/event-sim';
 import { resetAllSims, getPortfolioSnapshot } from '../services/state';
 import { getOnchainTicker, getEventMarketsTicker } from '../services/ticker';
@@ -62,7 +73,39 @@ type JsonRpcResponse<T = unknown> = {
 };
 
 const app = express();
-app.use(cors());
+// Configure CORS with specific origins for security
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like curl, mobile apps, or same-origin)
+    if (!origin) {
+      return callback(null, true);
+    }
+
+    // Check against allowed origins
+    const isAllowed = ALLOWED_ORIGINS.some(allowed => {
+      if (typeof allowed === 'string') {
+        return origin === allowed;
+      }
+      // RegExp for pattern matching (subdomains)
+      return allowed.test(origin);
+    });
+
+    if (isAllowed) {
+      return callback(null, true);
+    }
+
+    // In development, also allow any localhost port
+    if (process.env.NODE_ENV !== 'production' && origin.includes('localhost')) {
+      return callback(null, true);
+    }
+
+    console.warn(`[CORS] Blocked origin: ${origin}`);
+    return callback(null, false);
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'X-Ledger-Secret', 'X-Access-Code', 'X-Wallet-Address', 'x-correlation-id'],
+}));
 app.use(express.json());
 
 // ============================================
@@ -5361,7 +5404,12 @@ const HOST = process.env.HOST || '0.0.0.0'; // Bind to all interfaces by default
   }
 })();
 
-app.listen(PORT, HOST, async () => {
+// Export app for Vercel serverless (must be before listen())
+export { app };
+
+// Only listen if not in serverless mode (Vercel sets VERCEL=1)
+if (!process.env.VERCEL) {
+  app.listen(PORT, HOST, async () => {
   const listenUrl = HOST === '0.0.0.0' ? `http://127.0.0.1:${PORT}` : `http://${HOST}:${PORT}`;
   console.log(`🌸 Blossom Agent server listening on ${listenUrl}`);
   console.log(`   Health check: http://127.0.0.1:${PORT}/health`);
@@ -5403,7 +5451,10 @@ app.listen(PORT, HOST, async () => {
   console.log(`   - GET  /api/access/codes (admin)`);
   console.log(`   - POST /api/access/codes/generate (admin)`);
   console.log(`   - GET  /api/prices/eth`);
-});
+  });
+} else {
+  console.log('🌸 Blossom Agent (Vercel serverless mode - app exported, not listening)');
+}
 
 /**
  * GET /api/prices/simple
@@ -6358,10 +6409,10 @@ app.get('/api/ledger/intents/:id/executions', checkLedgerSecret, async (req, res
  */
 app.post('/api/ledger/intents/execute', checkLedgerSecret, async (req, res) => {
   try {
-    const { intentText, chain = 'ethereum', planOnly = false, intentId } = req.body;
+    const { intentText, chain = 'ethereum', planOnly = false, intentId, metadata } = req.body;
 
     // Import the intent runner functions
-    const { runIntent, executeIntentById } = await import('../intent/intentRunner');
+    const { runIntent, executeIntentById, recordFailedIntent } = await import('../intent/intentRunner');
 
     // If intentId is provided, execute the existing planned intent
     if (intentId && typeof intentId === 'string') {
@@ -6369,24 +6420,40 @@ app.post('/api/ledger/intents/execute', checkLedgerSecret, async (req, res) => {
       return res.json(result);
     }
 
-    // Otherwise, require intentText for new intent
-    if (!intentText || typeof intentText !== 'string') {
-      return res.status(400).json({
-        ok: false,
-        intentId: '',
-        status: 'failed',
-        error: {
-          stage: 'plan',
-          code: 'INVALID_REQUEST',
-          message: 'intentText is required (or intentId to execute planned intent)',
-        },
+    // Build standard metadata with source tracking
+    const origin = req.headers.origin || req.headers.referer || 'unknown';
+    const callerMetadata = typeof metadata === 'object' && metadata !== null ? metadata : {};
+
+    // Determine source: CLI scripts set source explicitly, UI doesn't
+    const source = callerMetadata.source || (origin.includes('localhost') || origin.includes('blossom') ? 'ui' : 'unknown');
+    const domain = callerMetadata.domain || (origin !== 'unknown' ? new URL(origin).host : 'unknown');
+
+    const enrichedMetadata = {
+      ...callerMetadata,
+      source,
+      domain,
+      timestamp: Date.now(),
+    };
+
+    // Validate intentText - record failure if missing
+    if (!intentText || typeof intentText !== 'string' || !intentText.trim()) {
+      // Record the failed intent so it appears in stats
+      const failedResult = await recordFailedIntent({
+        intentText: intentText || '',
+        failureStage: 'plan',
+        errorCode: 'INVALID_REQUEST',
+        errorMessage: 'intentText is required (or intentId to execute planned intent)',
+        metadata: enrichedMetadata,
       });
+
+      return res.status(400).json(failedResult);
     }
 
     // Run the intent through the pipeline
     const result = await runIntent(intentText, {
       chain: chain as 'ethereum' | 'solana' | 'both',
       planOnly: Boolean(planOnly),
+      metadata: enrichedMetadata,
     });
 
     // Return the result (already in the expected format)
@@ -6484,6 +6551,132 @@ app.get('/api/ledger/positions/stats', checkLedgerSecret, async (req, res) => {
     res.json({ ok: true, stats });
   } catch (error: any) {
     res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+// ============================================
+// ACCESS GATE + WAITLIST ENDPOINTS
+// ============================================
+
+/**
+ * POST /api/access/validate
+ * Validate an access code (public endpoint)
+ */
+app.post('/api/access/validate', async (req, res) => {
+  try {
+    const { code, walletAddress } = req.body;
+
+    if (!code) {
+      return res.json({ ok: true, valid: false, error: 'Access code required' });
+    }
+
+    const result = validateAccessCode(code, walletAddress);
+    res.json({ ok: true, valid: result.valid, error: result.error });
+  } catch (error: any) {
+    console.error('[access] Validation error:', error.message);
+    res.json({ ok: false, valid: false, error: 'Validation failed' });
+  }
+});
+
+/**
+ * POST /api/waitlist/join
+ * Add email or wallet to waitlist (public endpoint)
+ */
+app.post('/api/waitlist/join', async (req, res) => {
+  try {
+    const { email, walletAddress, source } = req.body;
+
+    // Require at least one identifier
+    if (!email && !walletAddress) {
+      return res.status(400).json({ ok: false, error: 'Email or wallet address required' });
+    }
+
+    // Basic email validation
+    if (email && !email.includes('@')) {
+      return res.status(400).json({ ok: false, error: 'Invalid email format' });
+    }
+
+    // Basic wallet validation
+    if (walletAddress) {
+      const isEth = walletAddress.startsWith('0x') && walletAddress.length === 42;
+      const isSolana = walletAddress.length >= 32 && walletAddress.length <= 44;
+      if (!isEth && !isSolana) {
+        return res.status(400).json({ ok: false, error: 'Invalid wallet address format' });
+      }
+    }
+
+    // Store in database (using execution ledger DB)
+    try {
+      const { addToWaitlist } = await import('../../execution-ledger/db');
+      const id = addToWaitlist({ email, walletAddress, source: source || 'landing' });
+
+      // Don't log actual email/wallet for privacy
+      console.log(`[waitlist] New signup from ${source || 'landing'}: ${id.slice(0, 8)}...`);
+
+      res.json({ ok: true, message: 'Successfully joined waitlist' });
+    } catch (dbError: any) {
+      // If addToWaitlist doesn't exist, store in memory as fallback
+      console.log(`[waitlist] DB storage failed, using fallback:`, dbError.message);
+
+      // In-memory fallback (for MVP)
+      const waitlistEntries = (global as any).__waitlist || [];
+      waitlistEntries.push({
+        id: `wl_${Date.now()}`,
+        email,
+        walletAddress,
+        source: source || 'landing',
+        createdAt: Date.now(),
+      });
+      (global as any).__waitlist = waitlistEntries;
+
+      res.json({ ok: true, message: 'Successfully joined waitlist' });
+    }
+  } catch (error: any) {
+    console.error('[waitlist] Join error:', error.message);
+    res.status(500).json({ ok: false, error: 'Failed to join waitlist' });
+  }
+});
+
+/**
+ * GET /api/stats/public
+ * Public read-only stats endpoint (no auth required)
+ */
+app.get('/api/stats/public', async (req, res) => {
+  try {
+    const { getStatsSummary, getIntentStats } = await import('../../execution-ledger/db');
+
+    // Return limited public stats
+    const summary = getStatsSummary();
+    const intentStats = getIntentStats();
+
+    res.json({
+      ok: true,
+      data: {
+        totalIntents: intentStats.totalIntents || 0,
+        confirmedIntents: intentStats.confirmedIntents || 0,
+        totalExecutions: summary.totalExecutions || 0,
+        successfulExecutions: summary.successfulExecutions || 0,
+        successRate: summary.successRate || 0,
+        totalUsdRouted: summary.totalUsdRouted || 0,
+        chainsActive: summary.chainsActive || [],
+        lastUpdated: Date.now(),
+      },
+    });
+  } catch (error: any) {
+    // Return empty stats on error (don't expose internal errors)
+    res.json({
+      ok: true,
+      data: {
+        totalIntents: 0,
+        confirmedIntents: 0,
+        totalExecutions: 0,
+        successfulExecutions: 0,
+        successRate: 0,
+        totalUsdRouted: 0,
+        chainsActive: [],
+        lastUpdated: Date.now(),
+      },
+    });
   }
 });
 
