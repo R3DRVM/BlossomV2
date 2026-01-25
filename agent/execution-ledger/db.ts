@@ -1,6 +1,14 @@
 /**
  * Bloom Execution Ledger Database
- * Private dev-only SQLite for tracking REAL executions across chains
+ * Supports both SQLite (local dev) and Postgres (production)
+ *
+ * Mode selection:
+ * - Local: Uses SQLite (default) when DATABASE_URL is not set
+ * - Production: Uses Postgres when DATABASE_URL is set
+ *
+ * Note: The synchronous functions below work with SQLite.
+ * For Postgres support in production, use the async helpers or
+ * run setup-neon-db.ts to initialize the Postgres schema.
  */
 
 import Database from 'better-sqlite3';
@@ -9,6 +17,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
+import { detectDatabaseType, logDatabaseInfo } from './db-factory.js';
 
 // ESM-safe __dirname
 const __filename = fileURLToPath(import.meta.url);
@@ -18,12 +27,24 @@ const __dirname = dirname(__filename);
 const DB_PATH = process.env.EXECUTION_LEDGER_DB_PATH || path.join(__dirname, 'ledger.db');
 
 let db: Database.Database | null = null;
+const dbType = detectDatabaseType();
+
+// Log database info on module load
+logDatabaseInfo();
 
 /**
  * Initialize the database connection and run migrations
  */
 export function initDatabase(): Database.Database {
   if (db) return db;
+
+  // Postgres mode check
+  if (dbType === 'postgres') {
+    console.warn('⚠️  Postgres mode detected (DATABASE_URL is set)');
+    console.warn('   Local SQLite will be used for backward compatibility.');
+    console.warn('   Production deployments should use Postgres via API endpoints.');
+    console.warn('   Run: npx tsx agent/scripts/setup-neon-db.ts --apply-schema');
+  }
 
   // Ensure directory exists
   const dbDir = path.dirname(DB_PATH);
@@ -1098,7 +1119,10 @@ export interface StatsSummary {
   totalExecutions: number;
   successfulExecutions: number;
   failedExecutions: number;
-  successRate: number;
+  successRate: number; // Legacy field (same as successRateRaw)
+  successRateRaw: number; // Raw success rate (includes infra failures)
+  successRateAdjusted: number; // Success rate excluding RPC/infra failures
+  uniqueWallets: number; // Unique wallet addresses
   totalUsdRouted: number;
   relayedTxCount: number;
   chainsActive: string[];
@@ -1184,11 +1208,37 @@ export function getSummaryStats(): StatsSummary {
     SELECT MAX(created_at) as lastAt FROM executions
   `).get() as { lastAt: number | null };
 
+  // Unique wallets
+  const uniqueWalletsResult = db.prepare(`
+    SELECT COUNT(DISTINCT from_address) as count FROM executions WHERE from_address IS NOT NULL
+  `).get() as { count: number };
+  const uniqueWallets = uniqueWalletsResult.count;
+
+  // Calculate raw success rate (includes all failures)
+  const successRateRaw = totalExec > 0 ? (successExec / totalExec) * 100 : 0;
+
+  // Calculate adjusted success rate (excludes RPC/infra failures)
+  // Count failures that are NOT due to RPC/infra issues
+  const nonInfraFailedExec = (db.prepare(`
+    SELECT COUNT(*) as count FROM executions
+    WHERE status = 'failed'
+    AND error_code NOT IN ('RPC_RATE_LIMITED', 'RPC_UNAVAILABLE', 'RPC_ERROR')
+    AND error_code IS NOT NULL
+  `).get() as any).count;
+
+  // Total executions minus RPC/infra failures
+  const rpcInfraFailed = failedExec - nonInfraFailedExec;
+  const adjustedTotal = totalExec - rpcInfraFailed;
+  const successRateAdjusted = adjustedTotal > 0 ? (successExec / adjustedTotal) * 100 : successRateRaw;
+
   return {
     totalExecutions: totalExec,
     successfulExecutions: successExec,
     failedExecutions: failedExec,
-    successRate: totalExec > 0 ? (successExec / totalExec) * 100 : 0,
+    successRate: successRateRaw, // Legacy field (same as successRateRaw)
+    successRateRaw,
+    successRateAdjusted,
+    uniqueWallets,
     totalUsdRouted,
     relayedTxCount: relayedCount,
     chainsActive,
@@ -1746,3 +1796,77 @@ export function upsertIndexerState(chain: string, network: string, contractAddre
     DO UPDATE SET last_indexed_block = ?, updated_at = ?
   `).run(id, chain, network, contractAddress, lastIndexedBlock, now, lastIndexedBlock, now);
 }
+
+// ============================================
+// Waitlist operations
+// ============================================
+
+export interface WaitlistEntry {
+  id: string;
+  email?: string;
+  wallet_address?: string;
+  created_at: number;
+  source?: string;
+  metadata_json?: string;
+}
+
+export function addToWaitlist(params: {
+  email?: string;
+  walletAddress?: string;
+  source?: string;
+  metadata?: Record<string, any>;
+}): string {
+  const db = getDatabase();
+  const id = `wl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const now = Math.floor(Date.now() / 1000);
+
+  // Create waitlist table if it doesn't exist (migration safety)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS waitlist (
+      id TEXT PRIMARY KEY,
+      email TEXT,
+      wallet_address TEXT,
+      created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+      source TEXT DEFAULT 'landing',
+      metadata_json TEXT,
+      CONSTRAINT email_or_wallet CHECK (email IS NOT NULL OR wallet_address IS NOT NULL)
+    )
+  `);
+
+  db.prepare(`
+    INSERT INTO waitlist (id, email, wallet_address, created_at, source, metadata_json)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    params.email || null,
+    params.walletAddress || null,
+    now,
+    params.source || 'landing',
+    params.metadata ? JSON.stringify(params.metadata) : null
+  );
+
+  return id;
+}
+
+export function getWaitlistEntries(limit: number = 100): WaitlistEntry[] {
+  const db = getDatabase();
+  return db.prepare(`
+    SELECT * FROM waitlist ORDER BY created_at DESC LIMIT ?
+  `).all(limit) as WaitlistEntry[];
+}
+
+export function getWaitlistCount(): number {
+  const db = getDatabase();
+  const row = db.prepare('SELECT COUNT(*) as count FROM waitlist').get() as { count: number };
+  return row?.count || 0;
+}
+
+// ============================================
+// Aliases for API compatibility
+// ============================================
+
+// Alias for getSummaryStats
+export const getStatsSummary = getSummaryStats;
+
+// Alias for getIntentStatsSummary
+export const getIntentStats = getIntentStatsSummary;
