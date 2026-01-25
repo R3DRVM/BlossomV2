@@ -18,6 +18,7 @@ import * as fs from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { detectDatabaseType, logDatabaseInfo } from './db-factory.js';
+import { SCHEMA_SQL } from './schema-const.js';
 
 // ESM-safe __dirname
 const __filename = fileURLToPath(import.meta.url);
@@ -89,9 +90,8 @@ export function closeDatabase(): void {
  * Run schema migrations
  */
 function runMigrations(database: Database.Database): void {
-  const schemaPath = path.join(__dirname, 'schema.sql');
-  const schema = fs.readFileSync(schemaPath, 'utf-8');
-  database.exec(schema);
+  // Use inlined schema constant (works in bundled serverless environments)
+  database.exec(SCHEMA_SQL);
 
   // Run column migrations for existing databases
   runColumnMigrations(database);
