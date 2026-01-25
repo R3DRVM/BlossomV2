@@ -1,9 +1,11 @@
 /**
- * Dev Execution Statistics Dashboard
- * Private dev-only page showing comprehensive execution metrics from the ledger.
+ * Execution Statistics Dashboard
  *
- * GATED: Requires VITE_DEV_LEDGER_SECRET env var
- * Route: /dev/stats
+ * Two modes:
+ * - Dev mode (default): Requires VITE_DEV_LEDGER_SECRET, shows verification panel
+ * - Public mode (isPublic=true): Read-only, no auth required, no verification panel
+ *
+ * Route: /dev/stats (dev) or /stats (public) or stats.blossom.onl (public)
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -25,19 +27,29 @@ import {
   Activity,
   Copy,
   AlertOctagon,
+  Globe,
+  Users,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { executeIntent, type IntentExecutionResult } from '../lib/apiClient';
 
-// The secret MUST be configured in env.
+// The secret MUST be configured in env for dev mode
 const LEDGER_SECRET = import.meta.env.VITE_DEV_LEDGER_SECRET || '';
 const IS_SECRET_CONFIGURED = Boolean(import.meta.env.VITE_DEV_LEDGER_SECRET);
+
+interface DevStatsPageProps {
+  /** When true, shows public read-only view without auth */
+  isPublic?: boolean;
+}
 
 interface StatsSummary {
   totalExecutions: number;
   successfulExecutions: number;
   failedExecutions: number;
-  successRate: number;
+  successRate: number; // Legacy field (same as successRateRaw)
+  successRateRaw?: number; // Raw success rate (includes infra failures)
+  successRateAdjusted?: number; // Success rate excluding RPC/infra failures
+  uniqueWallets?: number; // Unique wallet addresses
   totalUsdRouted: number;
   relayedTxCount: number;
   chainsActive: string[];
@@ -117,11 +129,12 @@ interface ExecutionStep {
   created_at: number;
 }
 
-const API_BASE = import.meta.env.VITE_AGENT_API_BASE_URL || 'http://localhost:3001';
+const API_BASE = import.meta.env.VITE_AGENT_API_BASE_URL || import.meta.env.VITE_AGENT_BASE_URL || 'http://localhost:3001';
 const REFRESH_INTERVAL_MS = 30000;
 
-export default function DevStatsPage() {
-  const [isAuthorized, setIsAuthorized] = useState(false);
+export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
+  // In public mode, always authorized (read-only). In dev mode, require secret.
+  const [isAuthorized, setIsAuthorized] = useState(isPublic);
   const [stats, setStats] = useState<StatsSummary | null>(null);
   const [intentStats, setIntentStats] = useState<IntentStats | null>(null);
   const [intents, setIntents] = useState<Intent[]>([]);
@@ -140,15 +153,24 @@ export default function DevStatsPage() {
   const [verifyRunning, setVerifyRunning] = useState(false);
   const [verifyResult, setVerifyResult] = useState<IntentExecutionResult | null>(null);
 
+  // Torture run filter state
+  const [showTortureRuns, setShowTortureRuns] = useState(false);
+
   // Check authorization
   useEffect(() => {
+    // Public mode is always authorized (read-only)
+    if (isPublic) {
+      setIsAuthorized(true);
+      return;
+    }
+    // Dev mode requires secret
     if (!IS_SECRET_CONFIGURED) {
       setIsAuthorized(false);
       setLoading(false);
       return;
     }
     setIsAuthorized(true);
-  }, []);
+  }, [isPublic]);
 
   const fetchData = useCallback(async () => {
     if (!isAuthorized) return;
@@ -156,14 +178,21 @@ export default function DevStatsPage() {
     setLoading(true);
     setError(null);
 
-    const headers = { 'X-Ledger-Secret': LEDGER_SECRET };
+    // In public mode, use read-only endpoints without secret (or minimal secret)
+    // In dev mode, use full secret for all operations
+    const headers: Record<string, string> = isPublic
+      ? { 'Content-Type': 'application/json' }
+      : { 'X-Ledger-Secret': LEDGER_SECRET };
+
+    // Cache-busting param to ensure fresh data on manual refresh
+    const cacheBust = `_t=${Date.now()}`;
 
     try {
       const [statsRes, recentRes, intentStatsRes, intentsRes] = await Promise.all([
-        fetch(`${API_BASE}/api/ledger/stats/summary`, { headers }),
-        fetch(`${API_BASE}/api/ledger/stats/recent?limit=20`, { headers }),
-        fetch(`${API_BASE}/api/ledger/stats/intents`, { headers }),
-        fetch(`${API_BASE}/api/ledger/intents/recent?limit=20`, { headers }),
+        fetch(`${API_BASE}/api/ledger/stats/summary?${cacheBust}`, { headers, cache: 'no-store' }),
+        fetch(`${API_BASE}/api/ledger/stats/recent?limit=20&${cacheBust}`, { headers, cache: 'no-store' }),
+        fetch(`${API_BASE}/api/ledger/stats/intents?${cacheBust}`, { headers, cache: 'no-store' }),
+        fetch(`${API_BASE}/api/ledger/intents/recent?limit=50&${cacheBust}`, { headers, cache: 'no-store' }),
       ]);
 
       if (!statsRes.ok || !recentRes.ok) {
@@ -366,9 +395,19 @@ export default function DevStatsPage() {
               </Link>
               <div className="h-6 w-px bg-[#333]" />
               <div className="flex items-center gap-2">
-                <BarChart3 className="w-5 h-5 text-[#F25AA2]" />
-                <h1 className="text-lg font-bold text-white">Execution Statistics</h1>
-                <span className="px-2 py-0.5 text-xs bg-[#F25AA2]/20 text-[#F25AA2] rounded-full">DEV</span>
+                {isPublic ? (
+                  <Globe className="w-5 h-5 text-[#F25AA2]" />
+                ) : (
+                  <BarChart3 className="w-5 h-5 text-[#F25AA2]" />
+                )}
+                <h1 className="text-lg font-bold text-white">
+                  {isPublic ? 'Blossom Statistics' : 'Execution Statistics'}
+                </h1>
+                {isPublic ? (
+                  <span className="px-2 py-0.5 text-xs bg-green-900/50 text-green-400 rounded-full">LIVE</span>
+                ) : (
+                  <span className="px-2 py-0.5 text-xs bg-[#F25AA2]/20 text-[#F25AA2] rounded-full">DEV</span>
+                )}
               </div>
             </div>
             <div className="flex items-center gap-4">
@@ -386,6 +425,18 @@ export default function DevStatsPage() {
                    apiHealth === 'error' ? 'API Error' : 'Checking...'}
                 </span>
               </div>
+              {/* CLI Runs Toggle (torture/burnin/verify) */}
+              <label className="flex items-center gap-2 text-xs cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showTortureRuns}
+                  onChange={(e) => setShowTortureRuns(e.target.checked)}
+                  className="w-3 h-3 rounded bg-[#333] border-[#555] text-[#F25AA2] focus:ring-[#F25AA2]"
+                />
+                <span className={showTortureRuns ? 'text-[#F25AA2]' : 'text-[#666]'}>
+                  Show CLI runs
+                </span>
+              </label>
               <span className="text-xs text-[#666]">
                 {lastUpdated ? `Updated ${lastUpdated.toLocaleTimeString()}` : ''}
               </span>
@@ -448,11 +499,17 @@ export default function DevStatsPage() {
                 <span className="text-xs text-[#888] uppercase tracking-wide">Success Rate</span>
               </div>
               <div className={`text-2xl font-mono font-bold ${
-                (stats?.successRate ?? 0) >= 90 ? 'text-green-400' :
-                (stats?.successRate ?? 0) >= 70 ? 'text-yellow-400' : 'text-red-400'
+                (stats?.successRateAdjusted ?? stats?.successRate ?? 0) >= 90 ? 'text-green-400' :
+                (stats?.successRateAdjusted ?? stats?.successRate ?? 0) >= 70 ? 'text-yellow-400' : 'text-red-400'
               }`}>
-                {stats?.successRate?.toFixed(1) ?? '0.0'}%
+                {(stats?.successRateAdjusted ?? stats?.successRate)?.toFixed(1) ?? '0.0'}%
               </div>
+              {stats?.successRateAdjusted !== undefined && stats?.successRateRaw !== undefined &&
+               Math.abs((stats?.successRateAdjusted ?? 0) - (stats?.successRateRaw ?? 0)) > 1 && (
+                <div className="text-xs text-[#666] mt-1">
+                  {stats?.successRateRaw?.toFixed(1)}% raw
+                </div>
+              )}
             </div>
 
             {/* Relayed TX */}
@@ -491,6 +548,20 @@ export default function DevStatsPage() {
               </div>
               <div className="text-xs text-[#666] mt-1">
                 {stats?.chainsActive?.join(', ') || 'none'}
+              </div>
+            </div>
+
+            {/* Unique Wallets */}
+            <div className="bg-[#1a1a2e] rounded-xl border border-[#333] p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <Users className="w-4 h-4 text-blue-400" />
+                <span className="text-xs text-[#888] uppercase tracking-wide">Unique Wallets</span>
+              </div>
+              <div className="text-2xl font-mono font-bold text-blue-400">
+                {stats?.uniqueWallets ?? 0}
+              </div>
+              <div className="text-xs text-[#666] mt-1">
+                distinct addresses
               </div>
             </div>
           </div>
@@ -633,9 +704,34 @@ export default function DevStatsPage() {
         )}
 
         {/* Recent Intents Table */}
-        {intents.length > 0 && (
+        {intents.length > 0 && (() => {
+          // Filter intents based on CLI run toggle
+          const filteredIntents = intents.filter((intent) => {
+            const metadata = parseMetadataJson(intent.metadata_json);
+            const isCliRun = metadata?.source === 'cli' || metadata?.source === 'torture_suite';
+            // Show CLI runs only if toggle is ON, hide them if toggle is OFF
+            return showTortureRuns ? true : !isCliRun;
+          });
+
+          const cliCount = intents.filter((intent) => {
+            const metadata = parseMetadataJson(intent.metadata_json);
+            return metadata?.source === 'cli' || metadata?.source === 'torture_suite';
+          }).length;
+
+          return (
           <section>
-            <h2 className="text-lg font-semibold text-white mb-4">Recent Intents</h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-white">Recent Intents</h2>
+              {cliCount > 0 && (
+                <span className="text-xs text-[#666]">
+                  {showTortureRuns ? (
+                    <span className="text-[#F25AA2]">{cliCount} CLI intents shown</span>
+                  ) : (
+                    <span>{cliCount} CLI intents hidden</span>
+                  )}
+                </span>
+              )}
+            </div>
             <div className="bg-[#1a1a2e] rounded-xl border border-[#333] overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
@@ -652,7 +748,7 @@ export default function DevStatsPage() {
                     </tr>
                   </thead>
                   <tbody className="font-mono">
-                    {intents.map((intent) => (
+                    {filteredIntents.map((intent) => (
                       <React.Fragment key={intent.id}>
                         <tr
                           className={`border-b border-[#333] hover:bg-[#0f0f23] cursor-pointer ${
@@ -671,9 +767,37 @@ export default function DevStatsPage() {
                             {intent.intent_text}
                           </td>
                           <td className="px-4 py-3">
-                            <span className={`px-2 py-0.5 rounded text-xs ${getKindColor(intent.intent_kind)}`}>
-                              {intent.intent_kind || 'unknown'}
-                            </span>
+                            <div className="flex items-center gap-1">
+                              <span className={`px-2 py-0.5 rounded text-xs ${getKindColor(intent.intent_kind)}`}>
+                                {intent.intent_kind || 'unknown'}
+                              </span>
+                              {(() => {
+                                const meta = parseMetadataJson(intent.metadata_json);
+                                const source = meta?.source;
+                                if (source === 'cli') {
+                                  return (
+                                    <span className="px-1.5 py-0.5 rounded text-[9px] bg-blue-900/50 text-blue-400" title={`CLI: ${meta?.category || 'unknown'}`}>
+                                      CLI
+                                    </span>
+                                  );
+                                }
+                                if (source === 'torture_suite') {
+                                  return (
+                                    <span className="px-1.5 py-0.5 rounded text-[9px] bg-orange-900/50 text-orange-400" title="Torture Suite">
+                                      TS
+                                    </span>
+                                  );
+                                }
+                                if (source === 'ui') {
+                                  return (
+                                    <span className="px-1.5 py-0.5 rounded text-[9px] bg-green-900/50 text-green-400" title={`UI: ${meta?.domain || 'unknown'}`}>
+                                      UI
+                                    </span>
+                                  );
+                                }
+                                return null;
+                              })()}
+                            </div>
                           </td>
                           <td className="px-4 py-3">
                             <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs ${getIntentStatusColor(intent.status)}`}>
@@ -770,7 +894,8 @@ export default function DevStatsPage() {
               </div>
             </div>
           </section>
-        )}
+          );
+        })()}
 
         {/* Recent Executions Table */}
         <section>
@@ -1033,7 +1158,8 @@ export default function DevStatsPage() {
           </div>
         </section>
 
-        {/* Internal Verification Panel */}
+        {/* Internal Verification Panel - Hidden in public mode */}
+        {!isPublic && (
         <section className="bg-[#1a1a2e] rounded-xl border border-[#333] p-4">
           <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
             <Zap className="w-5 h-5 text-yellow-400" />
@@ -1192,6 +1318,7 @@ export default function DevStatsPage() {
             )}
           </div>
         </section>
+        )}
 
         {/* Last Execution Timestamp */}
         {stats?.lastExecutionAt && (

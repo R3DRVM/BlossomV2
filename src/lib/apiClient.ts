@@ -241,6 +241,14 @@ export async function executeIntent(
     };
   }
 
+  // Build metadata for source tracking
+  const metadata = {
+    source: 'ui',
+    domain: typeof window !== 'undefined' ? window.location.host : 'unknown',
+    userAgent: typeof navigator !== 'undefined' ? navigator.userAgent.slice(0, 100) : 'unknown',
+    timestamp: Date.now(),
+  };
+
   try {
     const response = await callAgent('/api/ledger/intents/execute', {
       method: 'POST',
@@ -251,6 +259,7 @@ export async function executeIntent(
         intentText,
         chain: options.chain || 'ethereum',
         planOnly: options.planOnly || false,
+        metadata,
       }),
     });
 
@@ -304,13 +313,20 @@ export async function confirmIntent(intentId: string): Promise<IntentExecutionRe
     };
   }
 
+  // Include source metadata for confirm as well
+  const metadata = {
+    source: 'ui',
+    domain: typeof window !== 'undefined' ? window.location.host : 'unknown',
+    confirmedAt: Date.now(),
+  };
+
   try {
     const response = await callAgent('/api/ledger/intents/execute', {
       method: 'POST',
       headers: {
         'X-Ledger-Secret': ledgerSecret,
       },
-      body: JSON.stringify({ intentId }),
+      body: JSON.stringify({ intentId, metadata }),
     });
 
     if (!response.ok) {

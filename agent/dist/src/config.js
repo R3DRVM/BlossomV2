@@ -1,3 +1,4 @@
+"use strict";
 /**
  * Backend Configuration
  * Centralized config for execution mode and ETH testnet settings
@@ -5,26 +6,31 @@
  * V1/V1.1 Default: eth_testnet (testnet-only by default)
  * SIM mode: Internal dev-only, requires ALLOW_SIM_MODE=true
  */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.AAVE_POOL_ADDRESS_SEPOLIA = exports.BLOSSOM_FEE_BPS = exports.EXECUTION_DISABLED = exports.V1_DEMO = exports.RELAYER_PRIVATE_KEY = exports.EXECUTION_AUTH_MODE = exports.ROUTING_REQUIRE_LIVE_QUOTE = exports.UNISWAP_V3_ROUTER_ADDRESS = exports.EXECUTION_SWAP_MODE = exports.ROUTING_MODE = exports.ONEINCH_BASE_URL = exports.ONEINCH_API_KEY = exports.DEFAULT_SWAP_SLIPPAGE_BPS = exports.UNISWAP_ADAPTER_ADDRESS = exports.ERC20_PULL_ADAPTER_ADDRESS = exports.AAVE_WETH_ADDRESS = exports.AAVE_USDC_ADDRESS = exports.AAVE_ADAPTER_ADDRESS = exports.AAVE_SEPOLIA_POOL_ADDRESS = exports.LENDING_RATE_SOURCE = exports.AAVE_POOL_ADDRESS = exports.LENDING_EXECUTION_MODE = exports.DFLOW_REQUIRE = exports.DFLOW_SWAPS_QUOTE_PATH = exports.DFLOW_EVENTS_QUOTE_PATH = exports.DFLOW_EVENTS_MARKETS_PATH = exports.DFLOW_PREDICTION_API_URL = exports.DFLOW_QUOTE_API_URL = exports.DFLOW_BASE_URL = exports.DFLOW_API_KEY = exports.DFLOW_ENABLED = exports.PROOF_ADAPTER_ADDRESS = exports.DEMO_PERP_ADAPTER_ADDRESS = exports.DEMO_PERP_ENGINE_ADDRESS = exports.DEMO_LEND_ADAPTER_ADDRESS = exports.DEMO_LEND_VAULT_ADDRESS = exports.DEMO_SWAP_ROUTER_ADDRESS = exports.DEMO_WETH_ADDRESS = exports.DEMO_USDC_ADDRESS = exports.WETH_ADDRESS_SEPOLIA = exports.USDC_ADDRESS_SEPOLIA = exports.WETH_WRAP_ADAPTER_ADDRESS = exports.UNISWAP_V3_ADAPTER_ADDRESS = exports.MOCK_SWAP_ADAPTER_ADDRESS = exports.EXECUTION_ROUTER_ADDRESS = exports.ETH_RPC_FALLBACK_URLS = exports.ETH_TESTNET_RPC_URL = exports.ETH_TESTNET_CHAIN_ID = exports.EXECUTION_MODE = void 0;
+exports.requireEthTestnetConfig = requireEthTestnetConfig;
+exports.requireRelayerConfig = requireRelayerConfig;
+exports.validateEthTestnetConfig = validateEthTestnetConfig;
 // Load environment variables FIRST (before reading process.env)
 // This ensures .env.local is loaded before config values are evaluated
-import { config } from 'dotenv';
-import { resolve, dirname } from 'path';
-import { fileURLToPath } from 'url';
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const agentDir = resolve(__dirname, '..');
-const rootDir = resolve(agentDir, '..');
+const dotenv_1 = require("dotenv");
+const path_1 = require("path");
+const url_1 = require("url");
+const __filename = (0, url_1.fileURLToPath)(import.meta.url);
+const __dirname = (0, path_1.dirname)(__filename);
+const agentDir = (0, path_1.resolve)(__dirname, '..');
+const rootDir = (0, path_1.resolve)(agentDir, '..');
 // Load .env files with precedence (most specific first)
 // Precedence: agent/.env.local → agent/.env → root/.env.local → root/.env
 const envFiles = [
-    resolve(agentDir, '.env.local'),
-    resolve(agentDir, '.env'),
-    resolve(rootDir, '.env.local'),
-    resolve(rootDir, '.env'),
+    (0, path_1.resolve)(agentDir, '.env.local'),
+    (0, path_1.resolve)(agentDir, '.env'),
+    (0, path_1.resolve)(rootDir, '.env.local'),
+    (0, path_1.resolve)(rootDir, '.env'),
 ];
 let loadedEnvFile = null;
 for (const envFile of envFiles) {
-    const result = config({ path: envFile });
+    const result = (0, dotenv_1.config)({ path: envFile });
     if (!result.error) {
         loadedEnvFile = envFile;
         break; // First successful load wins
@@ -43,21 +49,20 @@ const requestedMode = process.env.EXECUTION_MODE;
 let EXECUTION_MODE;
 if (requestedMode === 'sim') {
     if (ALLOW_SIM_MODE) {
-        EXECUTION_MODE = 'sim';
+        exports.EXECUTION_MODE = EXECUTION_MODE = 'sim';
     }
     else {
         // Auto-switch to eth_testnet if SIM requested but not allowed
-        EXECUTION_MODE = 'eth_testnet';
+        exports.EXECUTION_MODE = EXECUTION_MODE = 'eth_testnet';
         console.log('⚠️  EXECUTION_MODE=sim ignored (ALLOW_SIM_MODE not set). Using eth_testnet.');
     }
 }
 else {
     // Default to eth_testnet (V1/V1.1 behavior)
-    EXECUTION_MODE = requestedMode || 'eth_testnet';
+    exports.EXECUTION_MODE = EXECUTION_MODE = requestedMode || 'eth_testnet';
 }
-export { EXECUTION_MODE };
-export const ETH_TESTNET_CHAIN_ID = parseInt(process.env.ETH_TESTNET_CHAIN_ID || '11155111', 10); // Sepolia default
-export const ETH_TESTNET_RPC_URL = process.env.ETH_TESTNET_RPC_URL;
+exports.ETH_TESTNET_CHAIN_ID = parseInt(process.env.ETH_TESTNET_CHAIN_ID || '11155111', 10); // Sepolia default
+exports.ETH_TESTNET_RPC_URL = process.env.ETH_TESTNET_RPC_URL;
 // RPC Failover Configuration
 // Primary: ETH_TESTNET_RPC_URL (recommend Alchemy for reliability)
 // Fallbacks: ETH_RPC_FALLBACK_URLS (comma-separated) OR individual vars
@@ -93,93 +98,93 @@ const collectFallbackUrls = () => {
     // Dedupe and filter out primary
     return [...new Set(urls)].filter(u => u !== primary && u.length > 0);
 };
-export const ETH_RPC_FALLBACK_URLS = collectFallbackUrls();
-export const EXECUTION_ROUTER_ADDRESS = process.env.EXECUTION_ROUTER_ADDRESS;
-export const MOCK_SWAP_ADAPTER_ADDRESS = process.env.MOCK_SWAP_ADAPTER_ADDRESS;
-export const UNISWAP_V3_ADAPTER_ADDRESS = process.env.UNISWAP_V3_ADAPTER_ADDRESS;
-export const WETH_WRAP_ADAPTER_ADDRESS = process.env.WETH_WRAP_ADAPTER_ADDRESS;
-export const USDC_ADDRESS_SEPOLIA = process.env.USDC_ADDRESS_SEPOLIA;
-export const WETH_ADDRESS_SEPOLIA = process.env.WETH_ADDRESS_SEPOLIA;
+exports.ETH_RPC_FALLBACK_URLS = collectFallbackUrls();
+exports.EXECUTION_ROUTER_ADDRESS = process.env.EXECUTION_ROUTER_ADDRESS;
+exports.MOCK_SWAP_ADAPTER_ADDRESS = process.env.MOCK_SWAP_ADAPTER_ADDRESS;
+exports.UNISWAP_V3_ADAPTER_ADDRESS = process.env.UNISWAP_V3_ADAPTER_ADDRESS;
+exports.WETH_WRAP_ADAPTER_ADDRESS = process.env.WETH_WRAP_ADAPTER_ADDRESS;
+exports.USDC_ADDRESS_SEPOLIA = process.env.USDC_ADDRESS_SEPOLIA;
+exports.WETH_ADDRESS_SEPOLIA = process.env.WETH_ADDRESS_SEPOLIA;
 // Demo swap venue (deterministic for investor demos)
-export const DEMO_USDC_ADDRESS = process.env.DEMO_USDC_ADDRESS;
-export const DEMO_WETH_ADDRESS = process.env.DEMO_WETH_ADDRESS;
-export const DEMO_SWAP_ROUTER_ADDRESS = process.env.DEMO_SWAP_ROUTER_ADDRESS;
+exports.DEMO_USDC_ADDRESS = process.env.DEMO_USDC_ADDRESS;
+exports.DEMO_WETH_ADDRESS = process.env.DEMO_WETH_ADDRESS;
+exports.DEMO_SWAP_ROUTER_ADDRESS = process.env.DEMO_SWAP_ROUTER_ADDRESS;
 // Demo lending venue (deterministic for investor demos)
-export const DEMO_LEND_VAULT_ADDRESS = process.env.DEMO_LEND_VAULT_ADDRESS;
-export const DEMO_LEND_ADAPTER_ADDRESS = process.env.DEMO_LEND_ADAPTER_ADDRESS;
+exports.DEMO_LEND_VAULT_ADDRESS = process.env.DEMO_LEND_VAULT_ADDRESS;
+exports.DEMO_LEND_ADAPTER_ADDRESS = process.env.DEMO_LEND_ADAPTER_ADDRESS;
 // Demo perps venue (real on-chain perps for testnet)
-export const DEMO_PERP_ENGINE_ADDRESS = process.env.DEMO_PERP_ENGINE_ADDRESS;
-export const DEMO_PERP_ADAPTER_ADDRESS = process.env.DEMO_PERP_ADAPTER_ADDRESS;
+exports.DEMO_PERP_ENGINE_ADDRESS = process.env.DEMO_PERP_ENGINE_ADDRESS;
+exports.DEMO_PERP_ADAPTER_ADDRESS = process.env.DEMO_PERP_ADAPTER_ADDRESS;
 // Proof-of-execution adapter (for perps/events until real adapters exist)
-export const PROOF_ADAPTER_ADDRESS = process.env.PROOF_ADAPTER_ADDRESS;
+exports.PROOF_ADAPTER_ADDRESS = process.env.PROOF_ADAPTER_ADDRESS;
 // dFlow Integration
-export const DFLOW_ENABLED = process.env.DFLOW_ENABLED === 'true';
-export const DFLOW_API_KEY = process.env.DFLOW_API_KEY;
+exports.DFLOW_ENABLED = process.env.DFLOW_ENABLED === 'true';
+exports.DFLOW_API_KEY = process.env.DFLOW_API_KEY;
 // Legacy single URL (deprecated, kept for backwards compatibility)
-export const DFLOW_BASE_URL = process.env.DFLOW_BASE_URL;
+exports.DFLOW_BASE_URL = process.env.DFLOW_BASE_URL;
 // dFlow has TWO separate API endpoints:
-export const DFLOW_QUOTE_API_URL = process.env.DFLOW_QUOTE_API_URL || 'https://a.quote-api.dflow.net';
-export const DFLOW_PREDICTION_API_URL = process.env.DFLOW_PREDICTION_API_URL || 'https://prediction-markets-api.dflow.net';
-export const DFLOW_EVENTS_MARKETS_PATH = process.env.DFLOW_EVENTS_MARKETS_PATH;
-export const DFLOW_EVENTS_QUOTE_PATH = process.env.DFLOW_EVENTS_QUOTE_PATH;
-export const DFLOW_SWAPS_QUOTE_PATH = process.env.DFLOW_SWAPS_QUOTE_PATH;
-export const DFLOW_REQUIRE = process.env.DFLOW_REQUIRE === 'true';
+exports.DFLOW_QUOTE_API_URL = process.env.DFLOW_QUOTE_API_URL || 'https://a.quote-api.dflow.net';
+exports.DFLOW_PREDICTION_API_URL = process.env.DFLOW_PREDICTION_API_URL || 'https://prediction-markets-api.dflow.net';
+exports.DFLOW_EVENTS_MARKETS_PATH = process.env.DFLOW_EVENTS_MARKETS_PATH;
+exports.DFLOW_EVENTS_QUOTE_PATH = process.env.DFLOW_EVENTS_QUOTE_PATH;
+exports.DFLOW_SWAPS_QUOTE_PATH = process.env.DFLOW_SWAPS_QUOTE_PATH;
+exports.DFLOW_REQUIRE = process.env.DFLOW_REQUIRE === 'true';
 // Lending configuration
-export const LENDING_EXECUTION_MODE = process.env.LENDING_EXECUTION_MODE || 'demo';
-export const AAVE_POOL_ADDRESS = process.env.AAVE_POOL_ADDRESS; // Optional, for real mode later
-export const LENDING_RATE_SOURCE = process.env.LENDING_RATE_SOURCE || 'defillama';
+exports.LENDING_EXECUTION_MODE = process.env.LENDING_EXECUTION_MODE || 'demo';
+exports.AAVE_POOL_ADDRESS = process.env.AAVE_POOL_ADDRESS; // Optional, for real mode later
+exports.LENDING_RATE_SOURCE = process.env.LENDING_RATE_SOURCE || 'defillama';
 // Aave Sepolia integration (testnet V1)
-export const AAVE_SEPOLIA_POOL_ADDRESS = process.env.AAVE_SEPOLIA_POOL_ADDRESS;
-export const AAVE_ADAPTER_ADDRESS = process.env.AAVE_ADAPTER_ADDRESS;
-export const AAVE_USDC_ADDRESS = process.env.AAVE_USDC_ADDRESS || DEMO_USDC_ADDRESS; // Use demo USDC if not set
-export const AAVE_WETH_ADDRESS = process.env.AAVE_WETH_ADDRESS; // Aave-supported WETH on Sepolia
+exports.AAVE_SEPOLIA_POOL_ADDRESS = process.env.AAVE_SEPOLIA_POOL_ADDRESS;
+exports.AAVE_ADAPTER_ADDRESS = process.env.AAVE_ADAPTER_ADDRESS;
+exports.AAVE_USDC_ADDRESS = process.env.AAVE_USDC_ADDRESS || exports.DEMO_USDC_ADDRESS; // Use demo USDC if not set
+exports.AAVE_WETH_ADDRESS = process.env.AAVE_WETH_ADDRESS; // Aave-supported WETH on Sepolia
 // Adapter addresses
-export const ERC20_PULL_ADAPTER_ADDRESS = process.env.ERC20_PULL_ADAPTER_ADDRESS;
-export const UNISWAP_ADAPTER_ADDRESS = process.env.UNISWAP_ADAPTER_ADDRESS || UNISWAP_V3_ADAPTER_ADDRESS;
+exports.ERC20_PULL_ADAPTER_ADDRESS = process.env.ERC20_PULL_ADAPTER_ADDRESS;
+exports.UNISWAP_ADAPTER_ADDRESS = process.env.UNISWAP_ADAPTER_ADDRESS || exports.UNISWAP_V3_ADAPTER_ADDRESS;
 // Swap configuration
-export const DEFAULT_SWAP_SLIPPAGE_BPS = parseInt(process.env.DEFAULT_SWAP_SLIPPAGE_BPS || '50', 10); // 0.50% default
+exports.DEFAULT_SWAP_SLIPPAGE_BPS = parseInt(process.env.DEFAULT_SWAP_SLIPPAGE_BPS || '50', 10); // 0.50% default
 // 1inch Routing Configuration (hybrid model)
-export const ONEINCH_API_KEY = process.env.ONEINCH_API_KEY;
-export const ONEINCH_BASE_URL = process.env.ONEINCH_BASE_URL || 'https://api.1inch.dev';
+exports.ONEINCH_API_KEY = process.env.ONEINCH_API_KEY;
+exports.ONEINCH_BASE_URL = process.env.ONEINCH_BASE_URL || 'https://api.1inch.dev';
 // Routing mode: 'hybrid' uses 1inch for routing intelligence, 'dflow' uses dFlow, 'deterministic' uses fixed demo quotes
-export const ROUTING_MODE = process.env.ROUTING_MODE || 'hybrid';
+exports.ROUTING_MODE = process.env.ROUTING_MODE || 'hybrid';
 // Execution swap mode: 'demo' executes via DemoSwapRouter, 'real' uses Uniswap V3 on Sepolia
-export const EXECUTION_SWAP_MODE = process.env.EXECUTION_SWAP_MODE || 'demo';
+exports.EXECUTION_SWAP_MODE = process.env.EXECUTION_SWAP_MODE || 'demo';
 // Uniswap V3 SwapRouter02 address on Sepolia (for real swap execution)
-export const UNISWAP_V3_ROUTER_ADDRESS = process.env.UNISWAP_V3_ROUTER_ADDRESS ||
+exports.UNISWAP_V3_ROUTER_ADDRESS = process.env.UNISWAP_V3_ROUTER_ADDRESS ||
     process.env.SEPOLIA_UNISWAP_V3_ROUTER ||
     '0xC532a74256D3Db42D0Bf7a0400fEFDbad7694008'; // Official Uniswap V3 SwapRouter02 on Sepolia
 // If true, fail when live quote fails. If false, gracefully fall back to deterministic quote.
-export const ROUTING_REQUIRE_LIVE_QUOTE = process.env.ROUTING_REQUIRE_LIVE_QUOTE === 'true';
+exports.ROUTING_REQUIRE_LIVE_QUOTE = process.env.ROUTING_REQUIRE_LIVE_QUOTE === 'true';
 // V1: Default to session mode for eth_testnet (one-click execution)
 // Can be overridden with EXECUTION_AUTH_MODE=direct for testing
-export const EXECUTION_AUTH_MODE = process.env.EXECUTION_AUTH_MODE ||
+exports.EXECUTION_AUTH_MODE = process.env.EXECUTION_AUTH_MODE ||
     (EXECUTION_MODE === 'eth_testnet' ? 'session' : 'direct');
-export const RELAYER_PRIVATE_KEY = process.env.RELAYER_PRIVATE_KEY;
+exports.RELAYER_PRIVATE_KEY = process.env.RELAYER_PRIVATE_KEY;
 // V1 Demo Mode: Session-only execution, block direct mode
-export const V1_DEMO = process.env.V1_DEMO === 'true';
+exports.V1_DEMO = process.env.V1_DEMO === 'true';
 // Emergency Kill Switch: Block all execution if enabled
-export const EXECUTION_DISABLED = process.env.EXECUTION_DISABLED === 'true';
+exports.EXECUTION_DISABLED = process.env.EXECUTION_DISABLED === 'true';
 // Devnet Fee Configuration (25 bps = 0.25% default)
 // Valid range: 10-50 bps (0.10% - 0.50%)
 const rawFeeBps = parseInt(process.env.BLOSSOM_FEE_BPS || '25', 10);
-export const BLOSSOM_FEE_BPS = Math.min(50, Math.max(10, isNaN(rawFeeBps) ? 25 : rawFeeBps));
+exports.BLOSSOM_FEE_BPS = Math.min(50, Math.max(10, isNaN(rawFeeBps) ? 25 : rawFeeBps));
 // Aave V3 Pool on Sepolia (single config constant, validated at startup)
-export const AAVE_POOL_ADDRESS_SEPOLIA = process.env.AAVE_POOL_ADDRESS_SEPOLIA ||
+exports.AAVE_POOL_ADDRESS_SEPOLIA = process.env.AAVE_POOL_ADDRESS_SEPOLIA ||
     '0x6Ae43d3271ff6888e7Fc43Fd7321a503ff738951'; // Official Aave V3 Pool on Sepolia
 /**
  * Require ETH testnet configuration when in eth_testnet mode
  * Throws a clear error if required variables are missing
  */
-export function requireEthTestnetConfig() {
+function requireEthTestnetConfig() {
     if (EXECUTION_MODE !== 'eth_testnet') {
         return; // Not required in other modes
     }
     const missing = [];
-    if (!EXECUTION_ROUTER_ADDRESS) {
+    if (!exports.EXECUTION_ROUTER_ADDRESS) {
         missing.push('EXECUTION_ROUTER_ADDRESS');
     }
-    if (!MOCK_SWAP_ADAPTER_ADDRESS) {
+    if (!exports.MOCK_SWAP_ADAPTER_ADDRESS) {
         missing.push('MOCK_SWAP_ADAPTER_ADDRESS');
     }
     if (missing.length > 0) {
@@ -191,15 +196,15 @@ export function requireEthTestnetConfig() {
  * Require relayer configuration when in session mode
  * Throws a clear error if required variables are missing
  */
-export function requireRelayerConfig() {
-    if (EXECUTION_MODE !== 'eth_testnet' || EXECUTION_AUTH_MODE !== 'session') {
+function requireRelayerConfig() {
+    if (EXECUTION_MODE !== 'eth_testnet' || exports.EXECUTION_AUTH_MODE !== 'session') {
         return; // Not required in other modes
     }
     const missing = [];
-    if (!RELAYER_PRIVATE_KEY) {
+    if (!exports.RELAYER_PRIVATE_KEY) {
         missing.push('RELAYER_PRIVATE_KEY');
     }
-    if (!ETH_TESTNET_RPC_URL) {
+    if (!exports.ETH_TESTNET_RPC_URL) {
         missing.push('ETH_TESTNET_RPC_URL');
     }
     if (missing.length > 0) {
@@ -212,19 +217,19 @@ export function requireRelayerConfig() {
  * Checks chainId, router address, and adapter addresses
  * Throws clear errors if configuration is invalid
  */
-export async function validateEthTestnetConfig() {
+async function validateEthTestnetConfig() {
     if (EXECUTION_MODE !== 'eth_testnet') {
         return; // Not required in other modes
     }
     const errors = [];
     // Validate chainId
-    if (ETH_TESTNET_CHAIN_ID !== 11155111) {
-        errors.push(`ETH_TESTNET_CHAIN_ID must be 11155111 (Sepolia), got ${ETH_TESTNET_CHAIN_ID}`);
+    if (exports.ETH_TESTNET_CHAIN_ID !== 11155111) {
+        errors.push(`ETH_TESTNET_CHAIN_ID must be 11155111 (Sepolia), got ${exports.ETH_TESTNET_CHAIN_ID}`);
     }
     // Validate router address format
-    if (EXECUTION_ROUTER_ADDRESS) {
-        if (!/^0x[a-fA-F0-9]{40}$/.test(EXECUTION_ROUTER_ADDRESS)) {
-            errors.push(`EXECUTION_ROUTER_ADDRESS has invalid format: ${EXECUTION_ROUTER_ADDRESS}`);
+    if (exports.EXECUTION_ROUTER_ADDRESS) {
+        if (!/^0x[a-fA-F0-9]{40}$/.test(exports.EXECUTION_ROUTER_ADDRESS)) {
+            errors.push(`EXECUTION_ROUTER_ADDRESS has invalid format: ${exports.EXECUTION_ROUTER_ADDRESS}`);
         }
     }
     else {
@@ -232,11 +237,11 @@ export async function validateEthTestnetConfig() {
     }
     // Validate adapter addresses format (if set)
     const adapterAddresses = [
-        { name: 'MOCK_SWAP_ADAPTER_ADDRESS', value: MOCK_SWAP_ADAPTER_ADDRESS },
-        { name: 'UNISWAP_V3_ADAPTER_ADDRESS', value: UNISWAP_V3_ADAPTER_ADDRESS },
-        { name: 'WETH_WRAP_ADAPTER_ADDRESS', value: WETH_WRAP_ADAPTER_ADDRESS },
-        { name: 'ERC20_PULL_ADAPTER_ADDRESS', value: ERC20_PULL_ADAPTER_ADDRESS },
-        { name: 'PROOF_ADAPTER_ADDRESS', value: PROOF_ADAPTER_ADDRESS },
+        { name: 'MOCK_SWAP_ADAPTER_ADDRESS', value: exports.MOCK_SWAP_ADAPTER_ADDRESS },
+        { name: 'UNISWAP_V3_ADAPTER_ADDRESS', value: exports.UNISWAP_V3_ADAPTER_ADDRESS },
+        { name: 'WETH_WRAP_ADAPTER_ADDRESS', value: exports.WETH_WRAP_ADAPTER_ADDRESS },
+        { name: 'ERC20_PULL_ADAPTER_ADDRESS', value: exports.ERC20_PULL_ADAPTER_ADDRESS },
+        { name: 'PROOF_ADAPTER_ADDRESS', value: exports.PROOF_ADAPTER_ADDRESS },
     ];
     for (const { name, value } of adapterAddresses) {
         if (value && !/^0x[a-fA-F0-9]{40}$/.test(value)) {
@@ -244,15 +249,15 @@ export async function validateEthTestnetConfig() {
         }
     }
     // Validate RPC URL is set and accessible
-    if (!ETH_TESTNET_RPC_URL) {
+    if (!exports.ETH_TESTNET_RPC_URL) {
         errors.push('ETH_TESTNET_RPC_URL is required for eth_testnet mode');
     }
-    else if (ETH_TESTNET_RPC_URL && !ETH_TESTNET_RPC_URL.startsWith('http')) {
-        errors.push(`ETH_TESTNET_RPC_URL must be a valid HTTP/HTTPS URL, got: ${ETH_TESTNET_RPC_URL.substring(0, 50)}...`);
+    else if (exports.ETH_TESTNET_RPC_URL && !exports.ETH_TESTNET_RPC_URL.startsWith('http')) {
+        errors.push(`ETH_TESTNET_RPC_URL must be a valid HTTP/HTTPS URL, got: ${exports.ETH_TESTNET_RPC_URL.substring(0, 50)}...`);
     }
     // V1: Validate Aave Pool address (if using real Aave)
-    if (AAVE_POOL_ADDRESS_SEPOLIA && !/^0x[a-fA-F0-9]{40}$/.test(AAVE_POOL_ADDRESS_SEPOLIA)) {
-        errors.push(`AAVE_POOL_ADDRESS_SEPOLIA has invalid format: ${AAVE_POOL_ADDRESS_SEPOLIA}`);
+    if (exports.AAVE_POOL_ADDRESS_SEPOLIA && !/^0x[a-fA-F0-9]{40}$/.test(exports.AAVE_POOL_ADDRESS_SEPOLIA)) {
+        errors.push(`AAVE_POOL_ADDRESS_SEPOLIA has invalid format: ${exports.AAVE_POOL_ADDRESS_SEPOLIA}`);
     }
     if (errors.length > 0) {
         throw new Error(`ETH testnet configuration validation failed:\n${errors.map(e => `  - ${e}`).join('\n')}\n` +

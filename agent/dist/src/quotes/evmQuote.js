@@ -1,20 +1,58 @@
+"use strict";
 // @ts-nocheck
 /**
  * EVM Quote Provider
  * Provides quotes for demo swap router and other EVM-based venues
  * Supports hybrid routing: 1inch for route intelligence, demo router for execution
  */
-import { DEMO_SWAP_ROUTER_ADDRESS, DEFAULT_SWAP_SLIPPAGE_BPS, DEMO_USDC_ADDRESS, DEMO_WETH_ADDRESS, ROUTING_MODE, ROUTING_REQUIRE_LIVE_QUOTE, ETH_TESTNET_CHAIN_ID, } from '../config';
-import { getOneInchQuote, isOneInchAvailable } from './oneInchQuote';
-import { getUniswapV3Quote, isUniswapQuoterAvailable } from './uniswapQuoter';
-import { formatUnits } from 'viem';
-import { getSwapQuoteRouted } from '../routing/routingService';
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.getDemoSwapQuote = getDemoSwapQuote;
+exports.getSwapQuote = getSwapQuote;
+exports.getSwapRoutingDecision = getSwapRoutingDecision;
+const config_1 = require("../config");
+const oneInchQuote_1 = require("./oneInchQuote");
+const uniswapQuoter_1 = require("./uniswapQuoter");
+const viem_1 = require("viem");
+const routingService_1 = require("../routing/routingService");
 /**
  * Get quote from demo swap router
  * Demo router uses fixed 95% rate (5% fee)
  */
-export async function getDemoSwapQuote(params) {
-    const { tokenIn, tokenOut, amountIn, slippageBps = DEFAULT_SWAP_SLIPPAGE_BPS } = params;
+async function getDemoSwapQuote(params) {
+    const { tokenIn, tokenOut, amountIn, slippageBps = config_1.DEFAULT_SWAP_SLIPPAGE_BPS } = params;
     // Demo router uses fixed rate: 95% output (5% fee)
     const RATE_NUMERATOR = 95n;
     const RATE_DENOMINATOR = 100n;
@@ -23,14 +61,14 @@ export async function getDemoSwapQuote(params) {
     // Calculate expected output (95% of input)
     // Handle decimal differences: DEMO_USDC has 6 decimals, DEMO_WETH has 18 decimals
     let expectedOut;
-    if (tokenIn.toLowerCase() === DEMO_USDC_ADDRESS?.toLowerCase() &&
-        tokenOut.toLowerCase() === DEMO_WETH_ADDRESS?.toLowerCase()) {
+    if (tokenIn.toLowerCase() === config_1.DEMO_USDC_ADDRESS?.toLowerCase() &&
+        tokenOut.toLowerCase() === config_1.DEMO_WETH_ADDRESS?.toLowerCase()) {
         // USDC (6 decimals) -> WETH (18 decimals)
         // Apply rate first, then scale up by 10^12
         expectedOut = (amountInBigInt * RATE_NUMERATOR / RATE_DENOMINATOR) * 10n ** 12n;
     }
-    else if (tokenIn.toLowerCase() === DEMO_WETH_ADDRESS?.toLowerCase() &&
-        tokenOut.toLowerCase() === DEMO_USDC_ADDRESS?.toLowerCase()) {
+    else if (tokenIn.toLowerCase() === config_1.DEMO_WETH_ADDRESS?.toLowerCase() &&
+        tokenOut.toLowerCase() === config_1.DEMO_USDC_ADDRESS?.toLowerCase()) {
         // WETH (18 decimals) -> USDC (6 decimals)
         // Apply rate first, then scale down by 10^12
         expectedOut = (amountInBigInt * RATE_NUMERATOR / RATE_DENOMINATOR) / 10n ** 12n;
@@ -55,13 +93,13 @@ export async function getDemoSwapQuote(params) {
 /**
  * Get quote for a swap (supports demo router)
  */
-export async function getSwapQuote(params) {
+async function getSwapQuote(params) {
     // Check if this is a demo swap
-    const isDemoSwap = (params.tokenIn.toLowerCase() === DEMO_USDC_ADDRESS?.toLowerCase() ||
-        params.tokenIn.toLowerCase() === DEMO_WETH_ADDRESS?.toLowerCase()) &&
-        (params.tokenOut.toLowerCase() === DEMO_USDC_ADDRESS?.toLowerCase() ||
-            params.tokenOut.toLowerCase() === DEMO_WETH_ADDRESS?.toLowerCase());
-    if (isDemoSwap && DEMO_SWAP_ROUTER_ADDRESS) {
+    const isDemoSwap = (params.tokenIn.toLowerCase() === config_1.DEMO_USDC_ADDRESS?.toLowerCase() ||
+        params.tokenIn.toLowerCase() === config_1.DEMO_WETH_ADDRESS?.toLowerCase()) &&
+        (params.tokenOut.toLowerCase() === config_1.DEMO_USDC_ADDRESS?.toLowerCase() ||
+            params.tokenOut.toLowerCase() === config_1.DEMO_WETH_ADDRESS?.toLowerCase());
+    if (isDemoSwap && config_1.DEMO_SWAP_ROUTER_ADDRESS) {
         return getDemoSwapQuote(params);
     }
     // Future: Add real Uniswap quote logic here
@@ -71,8 +109,8 @@ export async function getSwapQuote(params) {
  * Get routing decision: tries 1inch first, falls back to deterministic
  * This is the hybrid model: real routing intelligence + deterministic execution
  */
-export async function getSwapRoutingDecision(params) {
-    const { tokenIn, tokenOut, tokenInSymbol, tokenOutSymbol, tokenInDecimals, tokenOutDecimals, amountIn, slippageBps = DEFAULT_SWAP_SLIPPAGE_BPS, } = params;
+async function getSwapRoutingDecision(params) {
+    const { tokenIn, tokenOut, tokenInSymbol, tokenOutSymbol, tokenInDecimals, tokenOutDecimals, amountIn, slippageBps = config_1.DEFAULT_SWAP_SLIPPAGE_BPS, } = params;
     const warnings = [];
     let oneInchResult;
     let dflowResult;
@@ -80,20 +118,20 @@ export async function getSwapRoutingDecision(params) {
     let routingMetadata;
     // Sprint 3: Use unified routing service for dFlow routing
     // Generate correlation ID for routing request
-    const { makeCorrelationId } = await import('../utils/correlationId');
+    const { makeCorrelationId } = await Promise.resolve().then(() => __importStar(require('../utils/correlationId')));
     const routingCorrelationId = makeCorrelationId('swap');
-    const routedQuote = await getSwapQuoteRouted({
+    const routedQuote = await (0, routingService_1.getSwapQuoteRouted)({
         tokenIn,
         tokenOut,
         amountIn,
         slippageBps,
-        chainId: ETH_TESTNET_CHAIN_ID,
+        chainId: config_1.ETH_TESTNET_CHAIN_ID,
         correlationId: routingCorrelationId,
         fallbackQuote: async () => {
             // Fallback: Try Uniswap V3 quoter
-            if (isUniswapQuoterAvailable()) {
+            if ((0, uniswapQuoter_1.isUniswapQuoterAvailable)()) {
                 try {
-                    const uniswapQuote = await getUniswapV3Quote({
+                    const uniswapQuote = await (0, uniswapQuoter_1.getUniswapV3Quote)({
                         tokenIn,
                         tokenOut,
                         amountIn,
@@ -105,7 +143,7 @@ export async function getSwapRoutingDecision(params) {
                             gasEstimate: uniswapQuote.gasEstimate,
                         };
                         // Calculate minOut with slippage
-                        const slippageMultiplier = BigInt(10000 - (slippageBps || DEFAULT_SWAP_SLIPPAGE_BPS));
+                        const slippageMultiplier = BigInt(10000 - (slippageBps || config_1.DEFAULT_SWAP_SLIPPAGE_BPS));
                         const minOutRaw = (BigInt(uniswapQuote.amountOut) * slippageMultiplier / 10000n).toString();
                         return {
                             amountOut: uniswapQuote.amountOut,
@@ -120,10 +158,10 @@ export async function getSwapRoutingDecision(params) {
                 }
             }
             // Try 1inch if hybrid mode
-            if (ROUTING_MODE === 'hybrid' && isOneInchAvailable()) {
+            if (config_1.ROUTING_MODE === 'hybrid' && (0, oneInchQuote_1.isOneInchAvailable)()) {
                 try {
-                    oneInchResult = await getOneInchQuote({
-                        chainId: ETH_TESTNET_CHAIN_ID,
+                    oneInchResult = await (0, oneInchQuote_1.getOneInchQuote)({
+                        chainId: config_1.ETH_TESTNET_CHAIN_ID,
                         tokenIn,
                         tokenOut,
                         amountIn,
@@ -175,9 +213,9 @@ export async function getSwapRoutingDecision(params) {
     else if (routedQuote.ok && routedQuote.data) {
         // Routing service provided fallback data, use it
         const expectedOutRaw = routedQuote.data.amountOut;
-        const expectedOut = formatUnits(BigInt(expectedOutRaw), tokenOutDecimals);
+        const expectedOut = (0, viem_1.formatUnits)(BigInt(expectedOutRaw), tokenOutDecimals);
         const minOutRaw = routedQuote.data.minAmountOut;
-        const minOut = formatUnits(BigInt(minOutRaw), tokenOutDecimals);
+        const minOut = (0, viem_1.formatUnits)(BigInt(minOutRaw), tokenOutDecimals);
         return {
             expectedOut,
             expectedOutRaw,
@@ -191,7 +229,7 @@ export async function getSwapRoutingDecision(params) {
             executionVenue: 'Blossom Demo Router',
             executionNote: 'Routing via fallback provider',
             chain: 'Sepolia',
-            chainId: ETH_TESTNET_CHAIN_ID,
+            chainId: config_1.ETH_TESTNET_CHAIN_ID,
             settlementEstimate: '~1 block',
             warnings: routedQuote.routing.reason ? [routedQuote.routing.reason] : undefined,
             routing: routingMetadata,
@@ -200,9 +238,9 @@ export async function getSwapRoutingDecision(params) {
     // If dFlow succeeded, use its data for routing intelligence
     if (dflowResult) {
         const expectedOutRaw = dflowResult.amountOut;
-        const expectedOut = formatUnits(BigInt(expectedOutRaw), tokenOutDecimals);
+        const expectedOut = (0, viem_1.formatUnits)(BigInt(expectedOutRaw), tokenOutDecimals);
         const minOutRaw = dflowResult.minAmountOut;
-        const minOut = formatUnits(BigInt(minOutRaw), tokenOutDecimals);
+        const minOut = (0, viem_1.formatUnits)(BigInt(minOutRaw), tokenOutDecimals);
         return {
             expectedOut,
             expectedOutRaw,
@@ -216,7 +254,7 @@ export async function getSwapRoutingDecision(params) {
             executionVenue: 'Blossom Demo Router',
             executionNote: 'Routing powered by dFlow; executed via deterministic demo venue.',
             chain: 'Sepolia',
-            chainId: ETH_TESTNET_CHAIN_ID,
+            chainId: config_1.ETH_TESTNET_CHAIN_ID,
             settlementEstimate: '~1 block',
             warnings: warnings.length > 0 ? warnings : undefined,
             routing: routingMetadata, // Sprint 3: Include routing metadata
@@ -229,10 +267,10 @@ export async function getSwapRoutingDecision(params) {
         // Choose route with higher output
         if (uniswapOut > oneInchOut) {
             // Uniswap is better
-            const expectedOut = formatUnits(uniswapOut, tokenOutDecimals);
+            const expectedOut = (0, viem_1.formatUnits)(uniswapOut, tokenOutDecimals);
             const slippageMultiplier = BigInt(10000 - slippageBps);
             const minOutRaw = (uniswapOut * slippageMultiplier / 10000n).toString();
-            const minOut = formatUnits(BigInt(minOutRaw), tokenOutDecimals);
+            const minOut = (0, viem_1.formatUnits)(BigInt(minOutRaw), tokenOutDecimals);
             return {
                 expectedOut,
                 expectedOutRaw: uniswapResult.amountOut,
@@ -244,9 +282,9 @@ export async function getSwapRoutingDecision(params) {
                 protocols: ['Uniswap V3'],
                 estimatedGas: uniswapResult.gasEstimate,
                 executionVenue: 'Uniswap V3',
-                executionNote: `Best route: Uniswap V3 (${expectedOut} ${tokenOutSymbol} vs 1inch ${formatUnits(oneInchOut, tokenOutDecimals)} ${tokenOutSymbol})`,
+                executionNote: `Best route: Uniswap V3 (${expectedOut} ${tokenOutSymbol} vs 1inch ${(0, viem_1.formatUnits)(oneInchOut, tokenOutDecimals)} ${tokenOutSymbol})`,
                 chain: 'Sepolia',
-                chainId: ETH_TESTNET_CHAIN_ID,
+                chainId: config_1.ETH_TESTNET_CHAIN_ID,
                 settlementEstimate: '~1 block',
                 warnings: warnings.length > 0 ? warnings : undefined,
                 routing: routingMetadata, // Sprint 3: Include routing metadata
@@ -255,10 +293,10 @@ export async function getSwapRoutingDecision(params) {
         else {
             // 1inch is better
             const expectedOutRaw = oneInchResult.toTokenAmount;
-            const expectedOut = formatUnits(BigInt(expectedOutRaw), tokenOutDecimals);
+            const expectedOut = (0, viem_1.formatUnits)(BigInt(expectedOutRaw), tokenOutDecimals);
             const slippageMultiplier = BigInt(10000 - slippageBps);
             const minOutRaw = (BigInt(expectedOutRaw) * slippageMultiplier / 10000n).toString();
-            const minOut = formatUnits(BigInt(minOutRaw), tokenOutDecimals);
+            const minOut = (0, viem_1.formatUnits)(BigInt(minOutRaw), tokenOutDecimals);
             return {
                 expectedOut,
                 expectedOutRaw,
@@ -270,9 +308,9 @@ export async function getSwapRoutingDecision(params) {
                 protocols: oneInchResult.protocols,
                 estimatedGas: oneInchResult.estimatedGas,
                 executionVenue: 'Uniswap V3', // Still execute via Uniswap V3 adapter
-                executionNote: `Best route: 1inch (${expectedOut} ${tokenOutSymbol} vs Uniswap ${formatUnits(uniswapOut, tokenOutDecimals)} ${tokenOutSymbol})`,
+                executionNote: `Best route: 1inch (${expectedOut} ${tokenOutSymbol} vs Uniswap ${(0, viem_1.formatUnits)(uniswapOut, tokenOutDecimals)} ${tokenOutSymbol})`,
                 chain: 'Sepolia',
-                chainId: ETH_TESTNET_CHAIN_ID,
+                chainId: config_1.ETH_TESTNET_CHAIN_ID,
                 settlementEstimate: '~1 block',
                 warnings: warnings.length > 0 ? warnings : undefined,
                 routing: routingMetadata, // Sprint 3: Include routing metadata
@@ -282,11 +320,11 @@ export async function getSwapRoutingDecision(params) {
     // If only 1inch succeeded, use its data for routing intelligence
     if (oneInchResult) {
         const expectedOutRaw = oneInchResult.toTokenAmount;
-        const expectedOut = formatUnits(BigInt(expectedOutRaw), tokenOutDecimals);
+        const expectedOut = (0, viem_1.formatUnits)(BigInt(expectedOutRaw), tokenOutDecimals);
         // Apply slippage to get minOut
         const slippageMultiplier = BigInt(10000 - slippageBps);
         const minOutRaw = (BigInt(expectedOutRaw) * slippageMultiplier / 10000n).toString();
-        const minOut = formatUnits(BigInt(minOutRaw), tokenOutDecimals);
+        const minOut = (0, viem_1.formatUnits)(BigInt(minOutRaw), tokenOutDecimals);
         return {
             expectedOut,
             expectedOutRaw,
@@ -300,7 +338,7 @@ export async function getSwapRoutingDecision(params) {
             executionVenue: 'Uniswap V3', // Execute via Uniswap V3 adapter
             executionNote: 'Routing computed from 1inch aggregator; executed via Uniswap V3.',
             chain: 'Sepolia',
-            chainId: ETH_TESTNET_CHAIN_ID,
+            chainId: config_1.ETH_TESTNET_CHAIN_ID,
             settlementEstimate: '~1 block',
             warnings: warnings.length > 0 ? warnings : undefined,
             routing: routingMetadata, // Sprint 3: Include routing metadata
@@ -308,10 +346,10 @@ export async function getSwapRoutingDecision(params) {
     }
     // If only Uniswap succeeded, use its data
     if (uniswapResult) {
-        const expectedOut = formatUnits(BigInt(uniswapResult.amountOut), tokenOutDecimals);
+        const expectedOut = (0, viem_1.formatUnits)(BigInt(uniswapResult.amountOut), tokenOutDecimals);
         const slippageMultiplier = BigInt(10000 - slippageBps);
         const minOutRaw = (BigInt(uniswapResult.amountOut) * slippageMultiplier / 10000n).toString();
-        const minOut = formatUnits(BigInt(minOutRaw), tokenOutDecimals);
+        const minOut = (0, viem_1.formatUnits)(BigInt(minOutRaw), tokenOutDecimals);
         return {
             expectedOut,
             expectedOutRaw: uniswapResult.amountOut,
@@ -325,14 +363,14 @@ export async function getSwapRoutingDecision(params) {
             executionVenue: 'Uniswap V3',
             executionNote: 'Routing and execution via Uniswap V3.',
             chain: 'Sepolia',
-            chainId: ETH_TESTNET_CHAIN_ID,
+            chainId: config_1.ETH_TESTNET_CHAIN_ID,
             settlementEstimate: '~1 block',
             warnings: warnings.length > 0 ? warnings : undefined,
             routing: routingMetadata, // Sprint 3: Include routing metadata
         };
     }
     // 1inch not available or failed - use deterministic fallback
-    if (ROUTING_REQUIRE_LIVE_QUOTE) {
+    if (config_1.ROUTING_REQUIRE_LIVE_QUOTE) {
         throw new Error('Live routing quote required but unavailable. Set ROUTING_REQUIRE_LIVE_QUOTE=false to allow fallback.');
     }
     // Fallback to demo swap quote (deterministic)
@@ -343,8 +381,8 @@ export async function getSwapRoutingDecision(params) {
         amountIn,
         slippageBps,
     });
-    const expectedOut = formatUnits(BigInt(demoQuote.expectedOut), tokenOutDecimals);
-    const minOut = formatUnits(BigInt(demoQuote.minOut), tokenOutDecimals);
+    const expectedOut = (0, viem_1.formatUnits)(BigInt(demoQuote.expectedOut), tokenOutDecimals);
+    const minOut = (0, viem_1.formatUnits)(BigInt(demoQuote.minOut), tokenOutDecimals);
     return {
         expectedOut,
         expectedOutRaw: demoQuote.expectedOut,
@@ -357,7 +395,7 @@ export async function getSwapRoutingDecision(params) {
         executionVenue: 'Blossom Demo Router',
         executionNote: 'Deterministic routing and execution via demo venue.',
         chain: 'Sepolia',
-        chainId: ETH_TESTNET_CHAIN_ID,
+        chainId: config_1.ETH_TESTNET_CHAIN_ID,
         settlementEstimate: demoQuote.settlementEstimate,
         warnings: warnings.length > 0 ? warnings : undefined,
         routing: routingMetadata, // Sprint 3: Include routing metadata

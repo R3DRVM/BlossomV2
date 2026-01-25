@@ -75,6 +75,9 @@ export default function RightPanel(_props: RightPanelProps) {
   const [lastStateTransition, setLastStateTransition] = useState<string>('initial');
   const [backendExecutionMode, setBackendExecutionMode] = useState<string | null>(null);
 
+  // Track last-known balances to display when loading/error (prevents indefinite "Loading...")
+  const lastKnownBalancesRef = useRef<{ value: number; balances: any[] } | null>(null);
+
   // Demo token faucet state
   const [faucetStatus, setFaucetStatus] = useState<'idle' | 'minting' | 'success' | 'error'>('idle');
   const [faucetError, setFaucetError] = useState<string>('');
@@ -354,7 +357,7 @@ export default function RightPanel(_props: RightPanelProps) {
     } catch (error) {
       // Provider not available - ignore
     }
-  }, [isEthTestnetMode, walletState, account.balances, account.accountValue, walletAddress, ethTestnetChainId]);
+  }, [isEthTestnetMode, walletState, walletAddress, ethTestnetChainId]); // Removed account.balances and account.accountValue to prevent re-fetch loops
   
   // Trigger balance sync when connection state changes
   useEffect(() => {
@@ -373,20 +376,22 @@ export default function RightPanel(_props: RightPanelProps) {
       const detail = customEvent.detail;
       const duration = detail?.duration || 0;
       const status = detail?.status || 200;
-      
+
       if (import.meta.env.DEV) {
-        console.log(`[RightPanel] Balance fetch completed in ${duration}ms → setting balanceFetchCompleted=true`);
+        console.log(`[RightPanel] Balance fetch success in ${duration}ms`);
       }
-      
+
       setLastBalances({
         status,
         duration,
         ok: true,
         timestamp: Date.now(),
       });
-      
+
       setBalanceFetchCompleted(true);
-      setLastStateTransition(`Balance fetch success (${duration}ms) → balanceFetchCompleted=true`);
+      setBalanceError(null); // Clear any previous error
+      setWalletState('CONNECTED_READY'); // Explicitly transition to READY
+      setLastStateTransition(`Balance success (${duration}ms) → CONNECTED_READY`);
     };
 
     const handleBalanceError = (event: Event) => {
@@ -394,23 +399,25 @@ export default function RightPanel(_props: RightPanelProps) {
       const detail = customEvent.detail;
       const duration = detail.duration || 0;
       const status = detail.status || 503;
-      
+
       if (import.meta.env.DEV) {
         console.warn(`[RightPanel] Balance fetch error after ${duration}ms:`, detail);
       }
-      
+
       setLastBalances({
         status,
         duration,
         ok: false,
         timestamp: Date.now(),
       });
-      
+
+      // Store error but still transition to READY (show last-known with note)
       setBalanceError(detail.message || 'Balance fetch failed');
       setBalanceErrorCode(detail.code || null);
       setBalanceErrorFix(detail.fix || null);
-      setBalanceFetchCompleted(true); // Mark as completed even on error (so we can show error state)
-      setLastStateTransition(`Balance fetch error (${duration}ms): ${detail.code} → ERROR`);
+      setBalanceFetchCompleted(true);
+      setWalletState('CONNECTED_READY'); // Show last-known balances with error note
+      setLastStateTransition(`Balance error (${duration}ms) → CONNECTED_READY with error`);
     };
 
     window.addEventListener('blossom-wallet-balance-success', handleBalanceSuccess);
@@ -422,25 +429,32 @@ export default function RightPanel(_props: RightPanelProps) {
     };
   }, [isEthTestnetMode]);
 
-  // Timeout fallback: if stuck in CONNECTED_LOADING for > 3s, show error
+  // Store last-known balances when we have valid data
+  useEffect(() => {
+    if (account.accountValue > 0 || account.balances.length > 0) {
+      lastKnownBalancesRef.current = { value: account.accountValue, balances: account.balances };
+    }
+  }, [account.accountValue, account.balances]);
+
+  // Timeout fallback: if stuck in CONNECTED_LOADING for > 5s, transition to READY with last-known or fallback
   useEffect(() => {
     if (!isEthTestnetMode || walletState !== 'CONNECTED_LOADING') return;
 
     const timeout = setTimeout(() => {
-      if (!balanceFetchCompleted && !balanceError) {
+      if (!balanceFetchCompleted) {
         if (import.meta.env.DEV) {
-          console.warn('[RightPanel] Balance fetch timeout after 3s → showing error');
+          console.warn('[RightPanel] Balance fetch timeout after 5s → transitioning to CONNECTED_READY with last-known');
         }
-        setBalanceError('Balance fetch timed out after 3 seconds');
-        setBalanceErrorCode('TIMEOUT');
-        setBalanceErrorFix('Check backend is running and reachable at http://127.0.0.1:3001');
-        setBalanceFetchCompleted(true); // Mark as completed so we can show error state
-        setLastStateTransition('Timeout after 3s → ERROR');
+        // Instead of showing error, transition to READY so UI isn't stuck
+        // If we have last-known balances, those will be shown
+        setBalanceFetchCompleted(true);
+        setWalletState('CONNECTED_READY');
+        setLastStateTransition('Timeout 5s → CONNECTED_READY (using last-known or zero)');
       }
-    }, 3000);
+    }, 5000);
 
     return () => clearTimeout(timeout);
-  }, [walletState, balanceFetchCompleted, balanceError, isEthTestnetMode]);
+  }, [walletState, balanceFetchCompleted, isEthTestnetMode]);
   
   const handleConnectWallet = async () => {
     setWalletState('CONNECTING');
@@ -752,9 +766,13 @@ export default function RightPanel(_props: RightPanelProps) {
 
       // Refresh balances after 5 seconds
       setTimeout(() => {
-        // Trigger balance refresh
-        window.dispatchEvent(new CustomEvent('blossom-wallet-balance-trigger'));
+        // Trigger balance refresh (use connection-change event which is actually listened to)
+        window.dispatchEvent(new CustomEvent('blossom-wallet-connection-change'));
         setFaucetStatus('idle');
+        // Mark faucet as claimed in localStorage to prevent repeated prompts
+        if (walletAddress) {
+          localStorage.setItem(`blossom_faucet_claimed_${walletAddress.toLowerCase()}`, 'true');
+        }
       }, 5000);
     } catch (error: any) {
       console.error('[RightPanel] Faucet error:', error);
@@ -769,19 +787,19 @@ export default function RightPanel(_props: RightPanelProps) {
 
   return (
     <div className="h-full flex flex-col min-h-0 overflow-hidden bg-slate-50">
-      {/* Wallet Snapshot - Sticky at top */}
-      <div className="flex-shrink-0 sticky top-0 z-10 bg-slate-50/90 backdrop-blur pt-4 pb-3">
-        {/* Wallet Card */}
-        <div className="rounded-2xl border border-slate-100 bg-white shadow-sm px-4 py-4 space-y-3 w-full">
-          {/* Title */}
+      {/* Wallet Snapshot - Compact sticky header */}
+      <div className="flex-shrink-0 sticky top-0 z-10 bg-slate-50/95 backdrop-blur pt-2 pb-2">
+        {/* Wallet Card - Compact */}
+        <div className="rounded-xl border border-slate-100 bg-white shadow-sm px-3 py-2.5 space-y-2 w-full">
+          {/* Title - Compact */}
           <div className="flex items-center justify-between">
-            <div className="text-[11px] font-semibold tracking-[0.12em] text-slate-500 uppercase">WALLET</div>
+            <div className="text-[10px] font-semibold tracking-[0.1em] text-slate-500 uppercase">WALLET</div>
             {(backendExecutionMode || executionMode) && (
-              <div 
-                className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-slate-100 text-slate-600"
-                title={(backendExecutionMode || executionMode) === 'sim' ? 'SIM mode returns deterministic balances. Switch to eth_testnet to read real wallet balances.' : 'ETH_TESTNET mode reads real wallet balances from Sepolia.'}
+              <div
+                className="text-[8px] font-medium px-1 py-0.5 rounded bg-slate-100 text-slate-500"
+                title={(backendExecutionMode || executionMode) === 'sim' ? 'SIM mode' : 'ETH_TESTNET mode'}
               >
-                {(backendExecutionMode || executionMode) === 'eth_testnet' ? 'ETH_TESTNET' : 'SIM'}
+                {(backendExecutionMode || executionMode) === 'eth_testnet' ? 'TESTNET' : 'SIM'}
               </div>
             )}
           </div>
@@ -789,108 +807,71 @@ export default function RightPanel(_props: RightPanelProps) {
           {/* Wallet State Machine UI */}
           {isEthTestnetMode && (
             <>
-              {/* DISCONNECTED or CONNECTING - Use new universal wallet button */}
+              {/* DISCONNECTED or CONNECTING - Compact */}
               {(walletState === 'DISCONNECTED' || walletState === 'CONNECTING') && (
-                <div className="space-y-3">
-                  <div className="text-center py-4">
-                    <div className="text-sm text-slate-600 mb-3">Connect your wallet to view balances</div>
-                    <ConnectWalletButton />
-                  </div>
+                <div className="text-center py-2">
+                  <div className="text-xs text-slate-500 mb-2">Connect wallet to start</div>
+                  <ConnectWalletButton />
                 </div>
               )}
 
-              {/* WRONG_NETWORK - Use wagmi switchChain */}
+              {/* WRONG_NETWORK - Compact */}
               {walletState === 'WRONG_NETWORK' && walletAddress && (
-                <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 space-y-2">
-                  <div className="text-xs font-medium text-amber-800">Wrong Network</div>
-                  <div className="text-xs text-amber-700">Please switch to Sepolia testnet to continue.</div>
+                <div className="flex items-center justify-between px-2 py-1.5 rounded bg-amber-50 border border-amber-200">
+                  <span className="text-[10px] text-amber-800">Wrong network</span>
                   <button
                     onClick={() => switchChain?.({ chainId: sepolia.id })}
                     disabled={isSwitching}
-                    className="w-full px-3 py-1.5 bg-amber-500 text-white rounded-lg text-xs font-medium hover:bg-amber-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="px-2 py-0.5 bg-amber-500 text-white rounded text-[10px] font-medium hover:bg-amber-600 disabled:opacity-50"
                   >
-                    {isSwitching ? 'Switching...' : 'Switch to Sepolia'}
+                    {isSwitching ? '...' : 'Switch to Sepolia'}
                   </button>
                 </div>
               )}
               
-              {/* ERROR */}
+              {/* ERROR - Compact */}
               {walletState === 'ERROR' && (
-                <div className="rounded-lg bg-rose-50 border border-rose-200 p-3 space-y-2">
-                  <div className="text-xs font-medium text-rose-800">Connection Error</div>
-                  <div className="text-xs text-rose-700">{balanceError || 'Failed to connect wallet'}</div>
-                  <button
-                    onClick={handleConnectWallet}
-                    className="w-full px-3 py-1.5 bg-rose-500 text-white rounded-lg text-xs font-medium hover:bg-rose-600 transition-colors"
-                  >
+                <div className="flex items-center justify-between px-2 py-1.5 rounded bg-rose-50 border border-rose-200">
+                  <span className="text-[10px] text-rose-700 truncate mr-2">{balanceError || 'Connection error'}</span>
+                  <button onClick={handleConnectWallet} className="px-2 py-0.5 bg-rose-500 text-white rounded text-[10px] font-medium hover:bg-rose-600">
                     Retry
                   </button>
                 </div>
               )}
-              
-              {/* BACKEND_OFFLINE */}
+
+              {/* BACKEND_OFFLINE - Compact */}
               {walletState === 'BACKEND_OFFLINE' && (
-                <div className="rounded-lg bg-slate-50 border border-slate-200 p-3 space-y-2">
-                  <div className="text-xs font-medium text-slate-800">Backend Offline</div>
-                  <div className="text-xs text-slate-700">
-                    Cannot reach backend server. Please ensure the backend is running.
+                <div className="px-2 py-1.5 rounded bg-slate-100 border border-slate-200">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-slate-700">Backend offline</span>
+                    <button onClick={handleRefreshBalances} className="px-2 py-0.5 bg-slate-500 text-white rounded text-[10px] font-medium hover:bg-slate-600">
+                      Retry
+                    </button>
                   </div>
-                  <div className="text-[10px] text-slate-500 mt-1 font-mono bg-slate-100 px-2 py-1 rounded">
-                    npm run dev:demo
-                  </div>
-                  <div className="text-[10px] text-slate-500">
-                    Or: <code className="bg-slate-100 px-1 rounded">cd agent && npm run dev</code>
-                  </div>
-                  <button
-                    onClick={handleRefreshBalances}
-                    className="w-full px-3 py-1.5 bg-slate-500 text-white rounded-lg text-xs font-medium hover:bg-slate-600 transition-colors"
-                  >
-                    Retry Connection
-                  </button>
+                  <div className="text-[9px] text-slate-500 mt-1 font-mono">npm run dev:demo</div>
                 </div>
               )}
-              
-              {/* BACKEND_MISCONFIGURED */}
+
+              {/* BACKEND_MISCONFIGURED - Compact */}
               {walletState === 'BACKEND_MISCONFIGURED' && (
-                <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 space-y-2">
-                  <div className="text-xs font-medium text-amber-800">Backend Misconfigured</div>
-                  <div className="text-xs text-amber-700">
-                    {balanceError || 'RPC endpoint not configured'}
+                <div className="px-2 py-1.5 rounded bg-amber-50 border border-amber-200">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-amber-700 truncate mr-2">{balanceError || 'Misconfigured'}</span>
+                    <button
+                      onClick={() => balanceErrorFix && navigator.clipboard.writeText(balanceErrorFix)}
+                      className="px-2 py-0.5 bg-amber-500 text-white rounded text-[10px] font-medium hover:bg-amber-600"
+                    >
+                      Copy fix
+                    </button>
                   </div>
-                  {balanceErrorFix && (
-                    <div className="text-[10px] text-amber-600 mt-1 font-mono bg-amber-100 px-2 py-1 rounded">
-                      {balanceErrorFix}
-                    </div>
-                  )}
-                  <button
-                    onClick={() => {
-                      if (balanceErrorFix) {
-                        navigator.clipboard.writeText(balanceErrorFix);
-                      }
-                    }}
-                    className="w-full px-3 py-1.5 bg-amber-500 text-white rounded-lg text-xs font-medium hover:bg-amber-600 transition-colors"
-                  >
-                    {balanceErrorFix ? 'Copy Fix Command' : 'Retry'}
-                  </button>
                 </div>
               )}
-              
-              {/* RPC_UNREACHABLE */}
+
+              {/* RPC_UNREACHABLE - Compact */}
               {walletState === 'RPC_UNREACHABLE' && (
-                <div className="rounded-lg bg-orange-50 border border-orange-200 p-3 space-y-2">
-                  <div className="text-xs font-medium text-orange-800">RPC Unreachable</div>
-                  <div className="text-xs text-orange-700">
-                    {balanceError || 'Cannot connect to RPC endpoint'}
-                  </div>
-                  {balanceErrorFix && (
-                    <div className="text-[10px] text-orange-600 mt-1">
-                      {balanceErrorFix}
-                    </div>
-                  )}
-                  <button
-                    onClick={handleRefreshBalances}
-                    className="w-full px-3 py-1.5 bg-orange-500 text-white rounded-lg text-xs font-medium hover:bg-orange-600 transition-colors"
-                  >
+                <div className="flex items-center justify-between px-2 py-1.5 rounded bg-orange-50 border border-orange-200">
+                  <span className="text-[10px] text-orange-700 truncate mr-2">{balanceError || 'RPC unreachable'}</span>
+                  <button onClick={handleRefreshBalances} className="px-2 py-0.5 bg-orange-500 text-white rounded text-[10px] font-medium hover:bg-orange-600">
                     Retry
                   </button>
                 </div>
@@ -914,56 +895,36 @@ export default function RightPanel(_props: RightPanelProps) {
                   {/* Total Balance */}
                   <div>
                     <div className="flex items-center justify-between">
-                      <div className="text-xl font-semibold text-slate-900">
+                      <div className="text-lg font-semibold text-slate-900">
                         {walletState === 'CONNECTED_LOADING' ? (
-                          <span className="text-slate-400">Loading...</span>
+                          // Show last-known or spinner (never stuck indefinitely due to timeout)
+                          lastKnownBalancesRef.current ? (
+                            <span className="text-slate-600">
+                              ${lastKnownBalancesRef.current.value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              <span className="ml-1.5 text-[10px] text-slate-400 font-normal">updating...</span>
+                            </span>
+                          ) : (
+                            <span className="text-slate-400 text-sm">Loading...</span>
+                          )
                         ) : (
                           `$${account.accountValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                         )}
                       </div>
-                      <div className="flex items-center gap-2">
-                        {walletState === 'CONNECTED_READY' && (
-                          <button
-                            onClick={handleRefreshBalances}
-                            className="p-1 text-slate-400 hover:text-slate-600 transition-colors"
-                            title="Refresh balances"
-                          >
-                            <RefreshCw className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                    <div className="mt-1.5 flex items-center gap-2">
-                      <div
-                        className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-slate-50 border border-slate-100"
-                        title="Real balances from Sepolia testnet"
+                      <button
+                        onClick={handleRefreshBalances}
+                        className="p-1 text-slate-400 hover:text-slate-600 transition-colors"
+                        title="Refresh balances"
+                        disabled={walletState === 'CONNECTED_LOADING'}
                       >
-                        <span className="text-[10px] font-medium text-slate-600">Sepolia Testnet</span>
-                      </div>
-
-                      {/* Session Status Indicator */}
-                      {isSessionMode && (
-                        <div
-                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border ${
-                            sessionStatus === 'active'
-                              ? 'bg-emerald-50 border-emerald-200'
-                              : 'bg-gray-50 border-gray-200'
-                          }`}
-                          title={sessionStatus === 'active' ? 'One-click execution enabled' : 'One-click execution not enabled'}
-                        >
-                          <span
-                            className={`w-1.5 h-1.5 rounded-full ${
-                              sessionStatus === 'active' ? 'bg-emerald-500' : 'bg-gray-400'
-                            }`}
-                          ></span>
-                          <span
-                            className={`text-[10px] font-medium ${
-                              sessionStatus === 'active' ? 'text-emerald-700' : 'text-gray-600'
-                            }`}
-                          >
-                            Session: {sessionStatus === 'active' ? 'On' : 'Off'}
-                          </span>
-                        </div>
+                        <RefreshCw className={`w-3.5 h-3.5 ${walletState === 'CONNECTED_LOADING' ? 'animate-spin' : ''}`} />
+                      </button>
+                    </div>
+                    <div className="mt-1 flex items-center gap-2 flex-wrap">
+                      <span className="text-[10px] text-slate-500">Sepolia</span>
+                      {balanceError && (
+                        <span className="text-[9px] text-amber-600" title={balanceErrorFix || balanceError}>
+                          (sync issue)
+                        </span>
                       )}
                     </div>
                   </div>
@@ -1052,120 +1013,77 @@ export default function RightPanel(_props: RightPanelProps) {
             </div>
           )}
 
-          {/* Summary Row */}
-          <div className="space-y-1.5">
-            <div className="flex justify-between items-center">
-              <span className="text-[11px] text-slate-500">Perp exposure:</span>
-              <span className="text-xs font-medium text-slate-900">${account.openPerpExposure.toLocaleString()}</span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-[11px] text-slate-500">Total PnL:</span>
-              <span className={`text-xs font-medium ${account.totalPnlPct >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
-                {perpPnlSign}{account.totalPnlPct.toFixed(1)}%
-              </span>
-            </div>
+          {/* Summary Row - Compact inline */}
+          <div className="flex items-center gap-3 text-[10px] text-slate-500">
+            <span>Exposure: <span className="font-medium text-slate-700">${account.openPerpExposure.toLocaleString()}</span></span>
+            <span className="text-slate-300">|</span>
+            <span>PnL: <span className={`font-medium ${account.totalPnlPct >= 0 ? 'text-emerald-600' : 'text-rose-500'}`}>{perpPnlSign}{account.totalPnlPct.toFixed(1)}%</span></span>
           </div>
 
-          {/* Token Holdings */}
+          {/* Token Holdings - Compact */}
           <div>
-            <div className="text-[11px] font-semibold tracking-[0.12em] text-slate-500 uppercase mb-2">Holdings</div>
-            <div className="space-y-1.5">
+            <div className="text-[11px] font-semibold tracking-[0.12em] text-slate-500 uppercase mb-1.5">Holdings</div>
+            <div className="flex flex-wrap gap-x-4 gap-y-1">
               {account.balances.map((balance) => {
-                // For USDC, quantity equals USD value (1:1), so show as quantity
-                // For other tokens, show USD value (quantity would require current price data)
                 const displayValue = balance.symbol === 'USDC'
-                  ? balance.balanceUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                  : `$${balance.balanceUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-                
+                  ? balance.balanceUsd.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })
+                  : balance.balanceUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
                 return (
-                  <div key={balance.symbol} className="flex justify-between items-center">
-                    <span className="text-xs font-medium text-slate-700">{balance.symbol}</span>
-                    <div className="text-right">
-                      <div className="text-xs text-slate-500">{displayValue}</div>
-                    </div>
+                  <div key={balance.symbol} className="flex items-center gap-1">
+                    <span className="text-[11px] font-medium text-slate-600">{balance.symbol}</span>
+                    <span className="text-[11px] text-slate-500">${displayValue}</span>
                   </div>
                 );
               })}
             </div>
           </div>
 
-          {/* Demo Token Faucet - Only show in eth_testnet when balances are low/zero */}
-          {isEthTestnetMode && walletState === 'CONNECTED_READY' && (() => {
-            const usdcBalance = account.balances.find(b => b.symbol === 'USDC')?.balanceUsd || 0;
-            const wethBalance = account.balances.find(b => b.symbol === 'WETH')?.balanceUsd || 0;
-            const hasLowBalances = usdcBalance < 100 || wethBalance < 0.1;
-
-            if (!hasLowBalances) return null;
-
-            return (
-              <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
-                <p className="text-xs text-amber-900 mb-2 font-medium">
-                  Need demo tokens to test trades?
-                </p>
-                <button
-                  onClick={handleGetDemoTokens}
-                  disabled={faucetStatus === 'minting'}
-                  className="w-full px-3 py-2 bg-amber-600 text-white text-xs font-medium rounded hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
-                >
-                  {faucetStatus === 'minting' ? 'Minting tokens...' : 'Get Demo Tokens (10k USDC + 5 WETH)'}
-                </button>
-                {faucetStatus === 'success' && (
-                  <p className="text-xs text-green-700 mt-2 font-medium">✅ Tokens minted! Refreshing balances...</p>
-                )}
-                {faucetStatus === 'error' && (
-                  <p className="text-xs text-red-700 mt-2">❌ {faucetError}</p>
-                )}
-              </div>
-            );
-          })()}
-
-          {/* Mini PnL / Exposure Preview */}
-          <div className="pt-3 border-t border-slate-100 space-y-1">
-            <div className="flex justify-between items-center">
-              <span className="text-[11px] text-slate-500">Perps PnL (sim):</span>
-              <span className={`text-xs font-medium ${perpPnlUsd >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
-                {perpPnlSign}${Math.abs(perpPnlUsd).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} / {perpPnlSign}{account.totalPnlPct.toFixed(1)}%
-              </span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-[11px] text-slate-500">Open Perp Exposure:</span>
-              <span className="text-xs font-medium text-slate-900">${account.openPerpExposure.toLocaleString()}</span>
-            </div>
-          </div>
-          
-          {/* Action Buttons */}
-          <div className="grid grid-cols-3 gap-2 pt-1">
+          {/* Action Buttons + Demo Token Helper - Compact inline */}
+          <div className="flex items-center gap-2 pt-1 flex-wrap">
             <button
               onClick={handleFund}
               title={isEthTestnetMode ? "Get testnet ETH from faucet" : "Fund account"}
-              className="flex-1 rounded-full border border-slate-200 bg-slate-50 text-xs font-medium text-slate-700 hover:bg-pink-50 hover:border-pink-200 transition py-2"
+              className="px-2.5 py-0.5 rounded-full border border-slate-200 bg-slate-50 text-[10px] font-medium text-slate-600 hover:bg-pink-50 hover:border-pink-200 transition"
             >
-              {isEthTestnetMode ? 'Faucet' : 'Fund'}
+              {isEthTestnetMode ? 'ETH Faucet' : 'Fund'}
             </button>
-            <button
-              onClick={handleSend}
-              disabled={isEthTestnetMode}
-              title={isEthTestnetMode ? "Coming soon" : "Send tokens"}
-              className={`flex-1 rounded-full border text-xs font-medium transition py-2 ${
-                isEthTestnetMode 
-                  ? 'border-slate-100 bg-slate-50/50 text-slate-400 cursor-not-allowed' 
-                  : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-pink-50 hover:border-pink-200'
-              }`}
-            >
-              Send
-            </button>
-            <button
-              onClick={handleSwap}
-              disabled={isEthTestnetMode}
-              title={isEthTestnetMode ? "Use chat to swap" : "Swap tokens"}
-              className={`flex-1 rounded-full border text-xs font-medium transition py-2 ${
-                isEthTestnetMode 
-                  ? 'border-slate-100 bg-slate-50/50 text-slate-400 cursor-not-allowed' 
-                  : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-pink-50 hover:border-pink-200'
-              }`}
-            >
-              Swap
-            </button>
+            {/* Demo USDC helper - inline next to ETH Faucet */}
+            {isEthTestnetMode && walletState === 'CONNECTED_READY' && (() => {
+              const usdcBalance = account.balances.find(b => b.symbol === 'USDC')?.balanceUsd || 0;
+              const hasLowUsdc = usdcBalance < 50;
+              const faucetClaimedKey = walletAddress ? `blossom_faucet_claimed_${walletAddress.toLowerCase()}` : null;
+              const wasClaimed = faucetClaimedKey && localStorage.getItem(faucetClaimedKey) === 'true';
+              if (!hasLowUsdc || wasClaimed) return null;
+              return (
+                <span className="flex items-center gap-1 text-[9px] text-slate-500">
+                  <span>Need USDC?</span>
+                  <button
+                    onClick={handleGetDemoTokens}
+                    disabled={faucetStatus === 'minting'}
+                    className="text-pink-600 hover:text-pink-700 font-medium underline"
+                  >
+                    {faucetStatus === 'minting' ? '...' : 'Mint'}
+                  </button>
+                </span>
+              );
+            })()}
+            {!isEthTestnetMode && (
+              <>
+                <button
+                  onClick={handleSend}
+                  className="px-2.5 py-0.5 rounded-full border border-slate-200 bg-slate-50 text-[10px] font-medium text-slate-600 hover:bg-pink-50 hover:border-pink-200 transition"
+                >
+                  Send
+                </button>
+                <button
+                  onClick={handleSwap}
+                  className="px-2.5 py-0.5 rounded-full border border-slate-200 bg-slate-50 text-[10px] font-medium text-slate-600 hover:bg-pink-50 hover:border-pink-200 transition"
+                >
+                  Swap
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>

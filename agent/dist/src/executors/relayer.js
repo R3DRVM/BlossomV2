@@ -1,11 +1,47 @@
+"use strict";
 /**
  * Relayer
  * Sends transactions on behalf of users using session permissions
  */
-import { RELAYER_PRIVATE_KEY, ETH_TESTNET_RPC_URL, requireRelayerConfig } from '../config';
-import { createWalletClient, http } from 'viem';
-import { privateKeyToAccount } from 'viem/accounts';
-import { sepolia } from 'viem/chains';
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.sendRelayedTx = sendRelayedTx;
+const config_1 = require("../config");
+const viem_1 = require("viem");
+const accounts_1 = require("viem/accounts");
+const chains_1 = require("viem/chains");
 /**
  * Send a relayed transaction using the relayer's private key
  * @param to Contract address
@@ -13,12 +49,12 @@ import { sepolia } from 'viem/chains';
  * @param value ETH value (default: 0)
  * @returns Transaction hash
  */
-export async function sendRelayedTx({ to, data, value = '0x0', }) {
-    requireRelayerConfig();
-    if (!RELAYER_PRIVATE_KEY) {
+async function sendRelayedTx({ to, data, value = '0x0', }) {
+    (0, config_1.requireRelayerConfig)();
+    if (!config_1.RELAYER_PRIVATE_KEY) {
         throw new Error('RELAYER_PRIVATE_KEY is required for relayed execution');
     }
-    if (!ETH_TESTNET_RPC_URL) {
+    if (!config_1.ETH_TESTNET_RPC_URL) {
         throw new Error('ETH_TESTNET_RPC_URL is required for relayed execution');
     }
     // Debug: log parameters
@@ -30,17 +66,17 @@ export async function sendRelayedTx({ to, data, value = '0x0', }) {
     });
     try {
         // Create wallet client with relayer's account
-        const account = privateKeyToAccount(RELAYER_PRIVATE_KEY);
-        const client = createWalletClient({
+        const account = (0, accounts_1.privateKeyToAccount)(config_1.RELAYER_PRIVATE_KEY);
+        const client = (0, viem_1.createWalletClient)({
             account,
-            chain: sepolia,
-            transport: http(ETH_TESTNET_RPC_URL),
+            chain: chains_1.sepolia,
+            transport: (0, viem_1.http)(config_1.ETH_TESTNET_RPC_URL),
         });
         // Task C: Estimate gas before sending (prevent "gas limit too high" errors)
-        const { createPublicClient } = await import('viem');
+        const { createPublicClient } = await Promise.resolve().then(() => __importStar(require('viem')));
         const publicClient = createPublicClient({
-            chain: sepolia,
-            transport: http(ETH_TESTNET_RPC_URL),
+            chain: chains_1.sepolia,
+            transport: (0, viem_1.http)(config_1.ETH_TESTNET_RPC_URL),
         });
         let gasLimit;
         try {

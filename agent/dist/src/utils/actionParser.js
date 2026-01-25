@@ -1,12 +1,51 @@
+"use strict";
 /**
  * Action Parser and Validator
  * Parses and validates BlossomAction[] from LLM JSON output
  */
-import { getTopKalshiMarketsByVolume, getTopPolymarketMarketsByVolume, getHighestVolumeMarket } from '../services/predictionData';
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.validateActions = validateActions;
+exports.buildBlossomPrompts = buildBlossomPrompts;
+exports.validateExecutionRequest = validateExecutionRequest;
+exports.buildPredictionMarketResponse = buildPredictionMarketResponse;
+const predictionData_1 = require("../services/predictionData");
 /**
  * Validate and sanitize actions from LLM output
  */
-export function validateActions(raw) {
+function validateActions(raw) {
     if (!Array.isArray(raw)) {
         console.warn('Actions is not an array:', typeof raw);
         return [];
@@ -135,7 +174,7 @@ export function validateActions(raw) {
 /**
  * Build prompts for Blossom LLM
  */
-export async function buildBlossomPrompts(args) {
+async function buildBlossomPrompts(args) {
     const { userMessage, portfolio, venue } = args;
     const systemPrompt = `You are Blossom, an AI trading copilot. You speak clearly and concisely, like a professional portfolio manager. You always:
 
@@ -399,7 +438,7 @@ Example JSON output (event market bet):
     let topVaults = [];
     if (isDefiIntent) {
         try {
-            const { getTopYieldVaults } = await import('../quotes/defiLlamaQuote');
+            const { getTopYieldVaults } = await Promise.resolve().then(() => __importStar(require('../quotes/defiLlamaQuote')));
             topVaults = await getTopYieldVaults();
         }
         catch (error) {
@@ -423,7 +462,7 @@ Example JSON output (event market bet):
     let eventMarkets = [];
     if (isEventIntent) {
         try {
-            const { getEventMarkets } = await import('../quotes/eventMarkets');
+            const { getEventMarkets } = await Promise.resolve().then(() => __importStar(require('../quotes/eventMarkets')));
             const markets = await getEventMarkets(5);
             eventMarkets = markets.map(m => ({ id: m.id, title: m.title, yesPrice: m.yesPrice, noPrice: m.noPrice }));
         }
@@ -532,17 +571,17 @@ Example JSON output (event market bet):
         try {
             if (isAskingTopKalshi || isAskingHighestVolume || (isPredictionMarketQuery && hasKalshi)) {
                 console.log('[prediction] Fetching Kalshi markets for prompt');
-                kalshiMarkets = await getTopKalshiMarketsByVolume(5);
+                kalshiMarkets = await (0, predictionData_1.getTopKalshiMarketsByVolume)(5);
                 console.log(`[prediction] Fetched ${kalshiMarkets.length} Kalshi markets:`, kalshiMarkets.map(m => m.title).join(', '));
             }
             if (isAskingTopPolymarket || isAskingHighestVolume || (isPredictionMarketQuery && hasPolymarket)) {
                 console.log('[prediction] Fetching Polymarket markets for prompt');
-                polymarketMarkets = await getTopPolymarketMarketsByVolume(5);
+                polymarketMarkets = await (0, predictionData_1.getTopPolymarketMarketsByVolume)(5);
                 console.log(`[prediction] Fetched ${polymarketMarkets.length} Polymarket markets:`, polymarketMarkets.map(m => m.title).join(', '));
             }
             if (isAskingHighestVolume) {
                 console.log('[prediction] Fetching highest volume market');
-                highestVolumeMarket = await getHighestVolumeMarket();
+                highestVolumeMarket = await (0, predictionData_1.getHighestVolumeMarket)();
                 console.log(`[prediction] Highest volume market:`, highestVolumeMarket ? highestVolumeMarket.title : 'none');
             }
         }
@@ -629,7 +668,7 @@ Example JSON output (event market bet):
 /**
  * Validate execution request from LLM
  */
-export function validateExecutionRequest(raw) {
+function validateExecutionRequest(raw) {
     if (!raw || typeof raw !== 'object') {
         return null;
     }
@@ -713,7 +752,7 @@ export function validateExecutionRequest(raw) {
 /**
  * Build deterministic response for prediction market queries in stub mode
  */
-export async function buildPredictionMarketResponse(userMessage, venue, accountValueUsd) {
+async function buildPredictionMarketResponse(userMessage, venue, accountValueUsd) {
     const lowerMessage = userMessage.toLowerCase();
     const hasKalshi = lowerMessage.includes('kalshi');
     const hasPolymarket = lowerMessage.includes('polymarket');
@@ -722,17 +761,17 @@ export async function buildPredictionMarketResponse(userMessage, venue, accountV
     let platformName = '';
     if (hasKalshi || (hasHighestVolume && !hasPolymarket)) {
         console.log('[prediction-stub] Fetching Kalshi markets for stub response');
-        markets = await getTopKalshiMarketsByVolume(5);
+        markets = await (0, predictionData_1.getTopKalshiMarketsByVolume)(5);
         platformName = 'Kalshi';
     }
     else if (hasPolymarket || hasHighestVolume) {
         console.log('[prediction-stub] Fetching Polymarket markets for stub response');
-        markets = await getTopPolymarketMarketsByVolume(5);
+        markets = await (0, predictionData_1.getTopPolymarketMarketsByVolume)(5);
         platformName = 'Polymarket';
     }
     else {
         // Default to Kalshi if unclear
-        markets = await getTopKalshiMarketsByVolume(5);
+        markets = await (0, predictionData_1.getTopKalshiMarketsByVolume)(5);
         platformName = 'Kalshi';
     }
     // Build numbered list response with clear formatting
@@ -760,7 +799,7 @@ export async function buildPredictionMarketResponse(userMessage, venue, accountV
         let targetMarket;
         if (wantsHighestVolume) {
             try {
-                const highestVolumeMarket = await getHighestVolumeMarket();
+                const highestVolumeMarket = await (0, predictionData_1.getHighestVolumeMarket)();
                 if (highestVolumeMarket) {
                     targetMarket = highestVolumeMarket;
                 }

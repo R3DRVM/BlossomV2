@@ -1,15 +1,12 @@
 /**
  * Intent Execution Card
  *
- * Displays intent execution status and results in the chat UI.
- * Matches existing Blossom card styling (card-glass, strategy-card).
+ * Unified plan card for all intent types (perp, swap, deposit, bridge, event).
+ * Matches the existing Blossom strategy-card template for consistent UX.
  */
 
 import React, { useState } from 'react';
 import {
-  CheckCircle,
-  XCircle,
-  Clock,
   ExternalLink,
   Copy,
   ChevronDown,
@@ -29,42 +26,81 @@ interface IntentExecutionCardProps {
   isConfirming?: boolean;
 }
 
-// Status badge colors matching existing theme
-const getStatusColor = (status: string): string => {
-  switch (status) {
-    case 'confirmed':
-      return 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400';
-    case 'failed':
-      return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400';
-    case 'executing':
-      return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400';
-    case 'queued':
-    case 'planned':
-    case 'routed':
-      return 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400';
-    default:
-      return 'bg-gray-100 text-gray-700 dark:bg-gray-900/30 dark:text-gray-400';
-  }
-};
-
-// Get chain badge color
-const getChainColor = (chain: string): string => {
-  switch (chain) {
-    case 'ethereum':
-      return 'bg-blue-900/50 text-blue-400';
-    case 'solana':
-      return 'bg-purple-900/50 text-purple-400';
-    default:
-      return 'bg-gray-900/50 text-gray-400';
-  }
-};
-
 // Copy to clipboard helper
 const copyToClipboard = async (text: string) => {
   try {
     await navigator.clipboard.writeText(text);
   } catch (err) {
     console.error('Failed to copy:', err);
+  }
+};
+
+// Format USD values consistently
+const formatUsd = (value: number | string | undefined | null): string => {
+  if (value === undefined || value === null) return '—';
+  const num = typeof value === 'string' ? parseFloat(value) : value;
+  if (isNaN(num)) return '—';
+  return `$${num.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+};
+
+// Derive card title from intent kind
+const getCardTitle = (parsed: any, intentText: string): string => {
+  if (!parsed) return intentText.slice(0, 50);
+  switch (parsed.kind) {
+    case 'perp':
+      return `${parsed.targetAsset || 'PERP'}-PERP`;
+    case 'swap':
+      return `Swap ${parsed.amountUnit || ''} → ${parsed.targetAsset || ''}`.trim();
+    case 'lend_supply':
+    case 'deposit':
+      return `Deposit ${parsed.amountUnit || ''}`;
+    case 'bridge':
+      return `Bridge ${parsed.amountUnit || ''}`;
+    case 'event':
+      return parsed.market || 'Event Market';
+    default:
+      return parsed.action || intentText.slice(0, 30);
+  }
+};
+
+// Get side/direction display for different intent kinds
+const getSideDisplay = (parsed: any): { label: string; value: string; color: string } | null => {
+  if (!parsed) return null;
+  switch (parsed.kind) {
+    case 'perp':
+      const direction = parsed.direction || (parsed.action?.toLowerCase().includes('long') ? 'long' : 'short');
+      return {
+        label: 'Side',
+        value: direction === 'long' ? 'Long' : 'Short',
+        color: direction === 'long' ? 'text-emerald-600' : 'text-rose-600',
+      };
+    case 'swap':
+      return {
+        label: 'From → To',
+        value: `${parsed.amountUnit || '?'} → ${parsed.targetAsset || '?'}`,
+        color: 'text-slate-700',
+      };
+    case 'lend_supply':
+    case 'deposit':
+      return {
+        label: 'Asset',
+        value: parsed.amountUnit || parsed.targetAsset || '—',
+        color: 'text-slate-700',
+      };
+    case 'bridge':
+      return {
+        label: 'Route',
+        value: `${parsed.sourceChain || 'ETH'} → ${parsed.destChain || 'SOL'}`,
+        color: 'text-purple-600',
+      };
+    case 'event':
+      return {
+        label: 'Side',
+        value: parsed.side || 'YES',
+        color: parsed.side === 'NO' ? 'text-rose-600' : 'text-emerald-600',
+      };
+    default:
+      return null;
   }
 };
 
@@ -76,7 +112,7 @@ export default function IntentExecutionCard({
   onConfirm,
   isConfirming = false,
 }: IntentExecutionCardProps) {
-  const [isExpanded, setIsExpanded] = useState(false);
+  const [isCardExpanded, setIsCardExpanded] = useState(false);
   const [isErrorExpanded, setIsErrorExpanded] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
 
@@ -89,19 +125,13 @@ export default function IntentExecutionCard({
   // Render loading state
   if (isExecuting && !result) {
     return (
-      <div className="card-glass strategy-card p-4 my-2">
-        <div className="flex items-center gap-3">
+      <div className="mt-1.5 w-full max-w-md strategy-card card-glass">
+        <div className="p-3 flex items-center gap-3">
           <Loader2 className="w-5 h-5 text-blossom-pink animate-spin" />
           <div>
-            <p className="text-sm font-medium text-gray-800 dark:text-white">Executing Intent</p>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">"{intentText}"</p>
+            <p className="text-xs font-semibold text-blossom-ink">Executing Intent</p>
+            <p className="text-[11px] text-slate-500 mt-0.5 truncate max-w-[280px]">"{intentText}"</p>
           </div>
-        </div>
-        <div className="mt-3 flex items-center gap-2 text-xs text-gray-500">
-          <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 flex items-center gap-1">
-            <Clock className="w-3 h-3" />
-            Processing...
-          </span>
         </div>
       </div>
     );
@@ -114,318 +144,327 @@ export default function IntentExecutionCard({
   const { ok, status, txHash, explorerUrl, error, metadata } = result;
   const parsed = metadata?.parsed;
   const route = metadata?.route;
-  const isProofOnly = metadata?.executedKind === 'proof_only';
   const isPlanOnly = status === 'planned' && metadata?.planOnly;
+  const isExecuted = status === 'confirmed' && ok;
+  const isFailed = status === 'failed' || !ok;
 
-  // Get header text based on status
-  const getHeaderText = () => {
-    if (isPlanOnly) return 'Intent Ready';
-    if (ok && status === 'confirmed') return 'Intent Executed';
-    if (!ok || status === 'failed') return 'Execution Failed';
-    return 'Intent Processing';
-  };
+  const cardTitle = getCardTitle(parsed, intentText);
+  const sideDisplay = getSideDisplay(parsed);
 
-  // Get header icon
-  const getHeaderIcon = () => {
-    if (isPlanOnly) return <Zap className="w-5 h-5 text-blue-500" />;
-    if (ok && status === 'confirmed') return <CheckCircle className="w-5 h-5 text-green-500" />;
-    return <XCircle className="w-5 h-5 text-red-500" />;
+  // Status text styling: subtle inline text, not badge
+  const getStatusText = () => {
+    if (isPlanOnly) return { text: 'planned', className: 'text-blossom-pink' };
+    if (isExecuted) return { text: 'executed', className: 'text-slate-500' };
+    if (isFailed) return { text: 'failed', className: 'text-slate-500' };
+    return { text: status, className: 'text-slate-500' };
   };
+  const statusDisplay = getStatusText();
 
   return (
-    <div className="card-glass strategy-card p-4 my-2">
-      {/* Header */}
-      <div className="flex items-start justify-between">
+    <div className="mt-1.5 w-full max-w-md strategy-card card-glass transition-all duration-300">
+      {/* Header - clickable to expand/collapse */}
+      <button
+        onClick={() => setIsCardExpanded(!isCardExpanded)}
+        className="w-full flex items-center justify-between p-3 pb-1.5 border-b border-blossom-outline/20 hover:bg-slate-50/50 transition-colors"
+      >
+        <h3 className="text-xs font-semibold text-blossom-ink truncate max-w-[200px]">
+          {cardTitle}
+        </h3>
         <div className="flex items-center gap-2">
-          {getHeaderIcon()}
-          <div>
-            <p className="text-sm font-medium text-gray-800 dark:text-white">
-              {getHeaderText()}
-            </p>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 max-w-[300px] truncate">
-              "{intentText}"
-            </p>
-          </div>
-        </div>
-        <span className={`px-2 py-0.5 rounded text-xs flex items-center gap-1 ${getStatusColor(status)}`}>
-          {status === 'confirmed' && <CheckCircle className="w-3 h-3" />}
-          {status === 'failed' && <XCircle className="w-3 h-3" />}
-          {status === 'executing' && <Loader2 className="w-3 h-3 animate-spin" />}
-          {status === 'planned' && <Clock className="w-3 h-3" />}
-          {status}
-        </span>
-      </div>
-
-      {/* Confirm Button for planned intents */}
-      {isPlanOnly && onConfirm && result.intentId && (
-        <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
-          <button
-            onClick={() => onConfirm(result.intentId)}
-            disabled={isConfirming}
-            className="w-full py-2 px-4 bg-blossom-pink hover:bg-blossom-pink/90 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          {/* Status as subtle inline text */}
+          <span className={`text-[10px] font-medium ${statusDisplay.className}`}>
+            {statusDisplay.text}
+          </span>
+          <svg
+            className={`w-3 h-3 text-slate-400 transition-transform ${isCardExpanded ? 'rotate-180' : ''}`}
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
           >
-            {isConfirming ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Executing...
-              </>
-            ) : (
-              <>
-                <Zap className="w-4 h-4" />
-                Confirm & Execute
-              </>
-            )}
-          </button>
-          {route?.warnings && route.warnings.length > 0 && (
-            <div className="mt-2 text-xs text-amber-600 dark:text-amber-400 flex items-start gap-1">
-              <AlertTriangle className="w-3 h-3 mt-0.5 flex-shrink-0" />
-              <span>{route.warnings[0]}</span>
-            </div>
-          )}
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
         </div>
-      )}
+      </button>
 
-      {/* Execution Details Row */}
-      <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
-        {/* Chain/Network */}
-        {route && (
-          <span className={`px-2 py-0.5 rounded ${getChainColor(route.chain)}`}>
-            {route.chain}/{route.network}
-          </span>
-        )}
-
-        {/* Venue */}
-        {route?.venue && (
-          <span className="px-2 py-0.5 rounded bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300">
-            {route.venue}
-          </span>
-        )}
-
-        {/* Kind */}
-        {parsed?.kind && (
-          <span className="px-2 py-0.5 rounded bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-400">
-            {parsed.kind}
-          </span>
-        )}
-
-        {/* Proof Only Indicator */}
-        {isProofOnly && (
-          <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 flex items-center gap-1">
-            <AlertTriangle className="w-3 h-3" />
-            proof_only
-          </span>
-        )}
-      </div>
-
-      {/* Explorer Link - Always visible when available */}
-      {txHash && explorerUrl && (
-        <div className="mt-3 p-2 bg-gray-50 dark:bg-gray-800/50 rounded-lg">
+      {/* Collapsed: 2 compact rows */}
+      {!isCardExpanded && (
+        <div className="px-3 py-2 space-y-1.5 text-[11px]">
+          {/* Row 1: Primary info */}
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 text-xs">
-              <Zap className="w-3 h-3 text-green-500" />
-              <span className="text-gray-600 dark:text-gray-400">TX:</span>
-              <code className="text-gray-800 dark:text-gray-200 font-mono">
-                {txHash.slice(0, 10)}...{txHash.slice(-6)}
-              </code>
-            </div>
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => handleCopy(txHash, 'tx')}
-                className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors"
-                title="Copy TX Hash"
-              >
-                <Copy className="w-3 h-3 text-gray-500" />
-              </button>
-              <a
-                href={explorerUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors"
-                title="View on Explorer"
-              >
-                <ExternalLink className="w-3 h-3 text-blue-500" />
-              </a>
-            </div>
-          </div>
-          {copied === 'tx' && (
-            <span className="text-xs text-green-500 ml-2">Copied!</span>
-          )}
-        </div>
-      )}
-
-      {/* Error Display - Compact with collapsible details */}
-      {error && (
-        <div className="mt-3 text-xs">
-          {/* Compact error row */}
-          <div className="flex items-center justify-between gap-2 p-2 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-red-200 dark:border-red-900/50">
             <div className="flex items-center gap-2 min-w-0">
-              <XCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
-              <span className="text-gray-700 dark:text-gray-300 truncate">
-                Execution failed: <span className="font-medium text-red-600 dark:text-red-400">{error.code}</span>
+              {sideDisplay && (
+                <>
+                  <span className={`font-medium ${sideDisplay.color}`}>
+                    {sideDisplay.value}
+                  </span>
+                  <span className="text-slate-400">•</span>
+                </>
+              )}
+              <span className="text-slate-600 truncate">
+                {parsed?.amount ? formatUsd(parsed.amount) : '—'}
               </span>
             </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
-              {onRetry && (
-                <button
-                  onClick={onRetry}
-                  className="px-2 py-0.5 bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 rounded transition-colors"
-                >
-                  Retry
-                </button>
+            {parsed?.leverage && (
+              <span className="text-slate-500 flex-shrink-0">
+                {parsed.leverage}x leverage
+              </span>
+            )}
+          </div>
+
+          {/* Row 2: Routing/Execution */}
+          <div className="flex items-center justify-between text-slate-500">
+            <span className="truncate">
+              {route ? `${route.venue || '—'} • ${route.chain}/${route.network}` : 'Routing...'}
+            </span>
+            {txHash && (
+              <span className="flex-shrink-0 text-[9px] text-emerald-600">✓ On-chain</span>
+            )}
+          </div>
+
+          {/* Chips row */}
+          {(isPlanOnly || isExecuted || isFailed) && (
+            <div className="flex items-center gap-1.5 flex-wrap overflow-hidden">
+              {isPlanOnly && (
+                <span className="text-slate-500 text-[10px]">Ready to confirm</span>
               )}
+              {isExecuted && (
+                <span className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-emerald-50 text-emerald-700 whitespace-nowrap">
+                  Confirmed
+                </span>
+              )}
+              {isFailed && error && (
+                <span className="flex items-center gap-1 text-[10px] text-slate-500">
+                  <AlertTriangle className="w-3 h-3" />
+                  {error.code}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* CTA row (collapsed) - only for planned intents */}
+          {isPlanOnly && onConfirm && result.intentId && (
+            <div className="pt-1.5 border-t border-slate-100">
               <button
-                onClick={() => setIsErrorExpanded(!isErrorExpanded)}
-                className="flex items-center gap-1 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onConfirm(result.intentId);
+                }}
+                disabled={isConfirming}
+                className={`w-full px-3 py-2 text-xs font-medium rounded-lg transition-colors ${
+                  !isConfirming
+                    ? 'bg-blossom-pink text-white hover:bg-blossom-pink/90 shadow-sm'
+                    : 'bg-blossom-outline/40 text-slate-400 cursor-not-allowed'
+                }`}
               >
-                {isErrorExpanded ? (
-                  <ChevronDown className="w-3 h-3" />
+                {isConfirming ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    Executing...
+                  </span>
                 ) : (
-                  <ChevronRight className="w-3 h-3" />
+                  'Confirm & Execute'
                 )}
-                Details
               </button>
             </div>
+          )}
+        </div>
+      )}
+
+      {/* Expanded: Full details */}
+      {isCardExpanded && (
+        <div className="max-h-[60vh] overflow-y-auto p-3 pt-1.5">
+          {/* Details Grid */}
+          <div className="grid grid-cols-2 gap-1.5 text-xs mb-2">
+            {sideDisplay && (
+              <div>
+                <div className="text-xs text-blossom-slate mb-0.5">{sideDisplay.label}</div>
+                <div className={`font-medium ${sideDisplay.color}`}>{sideDisplay.value}</div>
+              </div>
+            )}
+            {parsed?.amount && (
+              <div>
+                <div className="text-xs text-blossom-slate mb-0.5">Amount</div>
+                <div className="font-medium text-blossom-ink">{formatUsd(parsed.amount)}</div>
+              </div>
+            )}
+            {parsed?.leverage && (
+              <div>
+                <div className="text-xs text-blossom-slate mb-0.5">Leverage</div>
+                <div className="font-medium text-blossom-ink">{parsed.leverage}x</div>
+              </div>
+            )}
+            {parsed?.targetAsset && (
+              <div>
+                <div className="text-xs text-blossom-slate mb-0.5">Target</div>
+                <div className="font-medium text-blossom-ink">{parsed.targetAsset}</div>
+              </div>
+            )}
           </div>
-          {/* Expanded error details */}
-          {isErrorExpanded && (
-            <div className="mt-1 p-2 bg-gray-50 dark:bg-gray-800/30 rounded-lg text-gray-600 dark:text-gray-400">
-              <p className="text-xs text-gray-500 mb-1">Stage: {error.stage}</p>
-              <p className="text-xs break-words">{error.message}</p>
-              {result?.intentId && (
+
+          {/* Interpretation line */}
+          <div className="mt-1.5 px-0 pb-1.5">
+            <p className="text-[11px] text-slate-500">
+              Blossom interpreted this as:{' '}
+              <span className="font-medium text-slate-700">{parsed?.action || intentText.slice(0, 40)}</span>
+              {parsed?.amount && ` for ${formatUsd(parsed.amount)}`}
+              {parsed?.targetAsset && ` targeting ${parsed.targetAsset}`}
+              {parsed?.leverage && ` at ${parsed.leverage}x`}.
+            </p>
+          </div>
+
+          {/* Warning box for route warnings */}
+          {route?.warnings && route.warnings.length > 0 && (
+            <div className="mb-3 p-2.5 bg-amber-50 border border-amber-200 rounded-lg">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="w-3 h-3 text-amber-600 mt-0.5 flex-shrink-0" />
+                <div className="flex-1">
+                  <ul className="text-xs text-amber-700 space-y-0.5">
+                    {route.warnings.map((warning, idx) => (
+                      <li key={idx}>{warning}</li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Error display - compact row with optional expand */}
+          {error && (
+            <div className="mb-3">
+              <div className="flex items-center justify-between gap-2 p-2 bg-slate-50 rounded-lg border border-slate-200">
+                <div className="flex items-center gap-2 min-w-0">
+                  <AlertTriangle className="w-3 h-3 text-slate-500 flex-shrink-0" />
+                  <span className="text-[11px] text-slate-600 truncate">
+                    {error.code}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  {onRetry && (
+                    <button
+                      onClick={onRetry}
+                      className="px-2 py-0.5 text-[10px] bg-slate-200 hover:bg-slate-300 text-slate-700 rounded transition-colors"
+                    >
+                      Retry
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setIsErrorExpanded(!isErrorExpanded)}
+                    className="flex items-center gap-1 text-[10px] text-slate-500 hover:text-slate-700 transition-colors"
+                  >
+                    {isErrorExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                    Details
+                  </button>
+                </div>
+              </div>
+              {isErrorExpanded && (
+                <div className="mt-1 p-2 bg-slate-50 rounded-lg text-[10px] text-slate-600">
+                  <p className="text-slate-500 mb-1">Stage: {error.stage}</p>
+                  <p className="break-words">{error.message}</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* CTA button for planned intents (expanded) */}
+          {isPlanOnly && onConfirm && result.intentId && (
+            <div className="pt-3 border-t border-slate-100">
+              <button
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onConfirm(result.intentId);
+                }}
+                disabled={isConfirming}
+                className={`w-full px-3 py-2 text-xs font-medium rounded-lg transition-colors ${
+                  !isConfirming
+                    ? 'bg-blossom-pink text-white hover:bg-blossom-pink/90 shadow-sm'
+                    : 'bg-blossom-outline/40 text-slate-400 cursor-not-allowed'
+                }`}
+              >
+                {isConfirming ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    Executing...
+                  </span>
+                ) : (
+                  'Confirm & Execute'
+                )}
+              </button>
+            </div>
+          )}
+
+          {/* Route + Details accordion */}
+          <div className="mt-3 pt-2 border-t border-slate-100">
+            <div className="space-y-1.5 text-[11px]">
+              {/* Route info */}
+              {route && (
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-500">Route</span>
+                  <span className="text-slate-700">{route.venue} • {route.chain}/{route.network}</span>
+                </div>
+              )}
+
+              {/* TX hash with explorer link */}
+              {txHash && explorerUrl && (
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-500">TX</span>
+                  <div className="flex items-center gap-1.5">
+                    <code className="text-slate-700 font-mono text-[10px]">
+                      {txHash.slice(0, 8)}...{txHash.slice(-4)}
+                    </code>
+                    <button
+                      onClick={() => handleCopy(txHash, 'tx')}
+                      className="p-0.5 hover:bg-slate-200 rounded transition-colors"
+                      title="Copy"
+                    >
+                      <Copy className="w-3 h-3 text-slate-400" />
+                    </button>
+                    <a
+                      href={explorerUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="p-0.5 hover:bg-slate-200 rounded transition-colors"
+                      title="View on Explorer"
+                    >
+                      <ExternalLink className="w-3 h-3 text-blue-500" />
+                    </a>
+                    {copied === 'tx' && <span className="text-emerald-500 text-[9px]">Copied!</span>}
+                  </div>
+                </div>
+              )}
+
+              {/* Dual-chain proof (for bridge) */}
+              {metadata?.destChainProof && (
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-500">Dest Chain Proof</span>
+                  <div className="flex items-center gap-1.5">
+                    <code className="text-purple-700 font-mono text-[10px]">
+                      {metadata.destChainProof.txHash.slice(0, 8)}...
+                    </code>
+                    <a
+                      href={metadata.destChainProof.explorerUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="p-0.5 hover:bg-slate-200 rounded transition-colors"
+                    >
+                      <ExternalLink className="w-3 h-3 text-purple-500" />
+                    </a>
+                  </div>
+                </div>
+              )}
+
+              {/* Dev Stats link */}
+              <div className="pt-1.5">
                 <a
                   href={`/dev/stats?intent=${result.intentId}`}
-                  className="inline-flex items-center gap-1 mt-2 text-blue-500 hover:text-blue-600"
+                  className="text-blue-500 hover:text-blue-600 text-[10px] flex items-center gap-1"
                 >
                   <ExternalLink className="w-3 h-3" />
                   View in Dev Stats
                 </a>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Expandable Details */}
-      <button
-        onClick={() => setIsExpanded(!isExpanded)}
-        className="mt-3 flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
-      >
-        {isExpanded ? (
-          <ChevronDown className="w-3 h-3" />
-        ) : (
-          <ChevronRight className="w-3 h-3" />
-        )}
-        {isExpanded ? 'Hide Details' : 'Show Details'}
-      </button>
-
-      {isExpanded && (
-        <div className="mt-2 p-2 bg-gray-50 dark:bg-gray-800/50 rounded-lg text-xs space-y-2">
-          {/* Intent ID */}
-          <div className="flex items-center justify-between">
-            <span className="text-gray-500">Intent ID:</span>
-            <div className="flex items-center gap-1">
-              <code className="text-gray-700 dark:text-gray-300 font-mono">
-                {result.intentId.slice(0, 12)}...
-              </code>
-              <button
-                onClick={() => handleCopy(result.intentId, 'intentId')}
-                className="p-0.5 hover:bg-gray-200 dark:hover:bg-gray-700 rounded"
-              >
-                <Copy className="w-3 h-3 text-gray-400" />
-              </button>
-            </div>
-          </div>
-
-          {/* Execution ID */}
-          {result.executionId && (
-            <div className="flex items-center justify-between">
-              <span className="text-gray-500">Execution ID:</span>
-              <div className="flex items-center gap-1">
-                <code className="text-gray-700 dark:text-gray-300 font-mono">
-                  {result.executionId.slice(0, 12)}...
-                </code>
-                <button
-                  onClick={() => handleCopy(result.executionId!, 'execId')}
-                  className="p-0.5 hover:bg-gray-200 dark:hover:bg-gray-700 rounded"
-                >
-                  <Copy className="w-3 h-3 text-gray-400" />
-                </button>
               </div>
             </div>
-          )}
-
-          {/* Parsed Details */}
-          {parsed && (
-            <>
-              <div className="flex items-center justify-between">
-                <span className="text-gray-500">Action:</span>
-                <span className="text-gray-700 dark:text-gray-300">{parsed.action}</span>
-              </div>
-              {parsed.amount && (
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-500">Amount:</span>
-                  <span className="text-gray-700 dark:text-gray-300">
-                    {parsed.amount} {parsed.amountUnit}
-                  </span>
-                </div>
-              )}
-              {parsed.targetAsset && (
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-500">Target:</span>
-                  <span className="text-gray-700 dark:text-gray-300">{parsed.targetAsset}</span>
-                </div>
-              )}
-              {parsed.leverage && (
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-500">Leverage:</span>
-                  <span className="text-gray-700 dark:text-gray-300">{parsed.leverage}x</span>
-                </div>
-              )}
-            </>
-          )}
-
-          {/* Warnings */}
-          {route?.warnings && route.warnings.length > 0 && (
-            <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
-              <p className="text-amber-600 dark:text-amber-400 font-medium mb-1">Notes:</p>
-              {route.warnings.map((warning, i) => (
-                <p key={i} className="text-gray-600 dark:text-gray-400 text-xs">
-                  • {warning}
-                </p>
-              ))}
-            </div>
-          )}
-
-          {/* Dual-chain proof (for bridge intents) */}
-          {metadata?.destChainProof && (
-            <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
-              <p className="text-purple-600 dark:text-purple-400 font-medium mb-1">Destination Chain Proof:</p>
-              <div className="flex items-center justify-between">
-                <code className="text-gray-700 dark:text-gray-300 font-mono text-xs">
-                  {metadata.destChainProof.txHash.slice(0, 10)}...
-                </code>
-                <a
-                  href={metadata.destChainProof.explorerUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-blue-500 hover:text-blue-600 flex items-center gap-1"
-                >
-                  <ExternalLink className="w-3 h-3" />
-                  View
-                </a>
-              </div>
-            </div>
-          )}
-
-          {/* Dev Stats Link */}
-          <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
-            <a
-              href={`/dev/stats?intent=${result.intentId}`}
-              className="text-blue-500 hover:text-blue-600 text-xs flex items-center gap-1"
-            >
-              <ExternalLink className="w-3 h-3" />
-              View in Dev Stats
-            </a>
           </div>
         </div>
       )}

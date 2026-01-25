@@ -1,21 +1,24 @@
+"use strict";
 /**
  * dFlow Provider Implementation
  * Provides market data and quotes from dFlow API
  */
-import { isDflowConfigured, isDflowCapabilityAvailable, getEventMarkets as dflowGetEventMarkets, getEventQuote as dflowGetEventQuote, getSwapQuote as dflowGetSwapQuote, } from '../integrations/dflow/dflowClient';
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.DflowQuoteProvider = exports.DflowMarketDataProvider = void 0;
+const dflowClient_1 = require("../integrations/dflow/dflowClient");
 /**
  * dFlow Market Data Provider
  */
-export class DflowMarketDataProvider {
+class DflowMarketDataProvider {
     name = 'dflow';
     isAvailable() {
-        return isDflowCapabilityAvailable('eventsMarkets');
+        return (0, dflowClient_1.isDflowCapabilityAvailable)('eventsMarkets');
     }
     async getEventMarkets() {
         if (!this.isAvailable()) {
             return [];
         }
-        const response = await dflowGetEventMarkets();
+        const response = await (0, dflowClient_1.getEventMarkets)();
         if (!response.ok || !response.data) {
             console.warn('[DflowMarketDataProvider] Failed to fetch markets:', response.error);
             return [];
@@ -34,19 +37,20 @@ export class DflowMarketDataProvider {
         }));
     }
 }
+exports.DflowMarketDataProvider = DflowMarketDataProvider;
 /**
  * dFlow Quote Provider
  */
-export class DflowQuoteProvider {
+class DflowQuoteProvider {
     name = 'dflow';
     isAvailable() {
-        return isDflowConfigured();
+        return (0, dflowClient_1.isDflowConfigured)();
     }
     async getSwapQuote(params) {
-        if (!isDflowCapabilityAvailable('swapsQuotes')) {
+        if (!(0, dflowClient_1.isDflowCapabilityAvailable)('swapsQuotes')) {
             return null;
         }
-        const response = await dflowGetSwapQuote({
+        const response = await (0, dflowClient_1.getSwapQuote)({
             tokenIn: params.tokenIn,
             tokenOut: params.tokenOut,
             amountIn: params.amountIn,
@@ -73,10 +77,10 @@ export class DflowQuoteProvider {
         };
     }
     async getEventQuote(params) {
-        if (!isDflowCapabilityAvailable('eventsQuotes')) {
+        if (!(0, dflowClient_1.isDflowCapabilityAvailable)('eventsQuotes')) {
             return null;
         }
-        const response = await dflowGetEventQuote(params);
+        const response = await (0, dflowClient_1.getEventQuote)(params);
         if (!response.ok || !response.data) {
             console.warn('[DflowQuoteProvider] Failed to get event quote:', response.error);
             return null;
@@ -95,4 +99,5 @@ export class DflowQuoteProvider {
         };
     }
 }
+exports.DflowQuoteProvider = DflowQuoteProvider;
 //# sourceMappingURL=dflowProvider.js.map

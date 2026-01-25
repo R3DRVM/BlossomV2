@@ -1,11 +1,18 @@
+"use strict";
 /**
  * Provider Registry
  * Central selection logic for market data and quote providers
  */
-import { DflowMarketDataProvider, DflowQuoteProvider } from './dflowProvider';
-import { FallbackMarketDataProvider, FallbackQuoteProvider } from './fallbackProvider';
-import { DFLOW_ENABLED, DFLOW_REQUIRE, ROUTING_MODE, } from '../config';
-import { getDflowCapabilities } from '../integrations/dflow/dflowClient';
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.getMarketDataProvider = getMarketDataProvider;
+exports.getQuoteProvider = getQuoteProvider;
+exports.getProviderStatus = getProviderStatus;
+exports.resetProviders = resetProviders;
+exports.isDflowActiveFor = isDflowActiveFor;
+const dflowProvider_1 = require("./dflowProvider");
+const fallbackProvider_1 = require("./fallbackProvider");
+const config_1 = require("../config");
+const dflowClient_1 = require("../integrations/dflow/dflowClient");
 // Singleton instances
 let marketDataProvider = null;
 let quoteProvider = null;
@@ -13,27 +20,27 @@ let quoteProvider = null;
  * Get the market data provider based on configuration
  * @throws Error if DFLOW_REQUIRE=true and dFlow is unavailable
  */
-export function getMarketDataProvider() {
+function getMarketDataProvider() {
     if (marketDataProvider) {
         return marketDataProvider;
     }
     // Try dFlow first if enabled
-    if (DFLOW_ENABLED) {
-        const dflowProvider = new DflowMarketDataProvider();
+    if (config_1.DFLOW_ENABLED) {
+        const dflowProvider = new dflowProvider_1.DflowMarketDataProvider();
         if (dflowProvider.isAvailable()) {
             marketDataProvider = dflowProvider;
             console.log('[ProviderRegistry] Using dFlow for market data');
             return marketDataProvider;
         }
         // dFlow enabled but not available
-        if (DFLOW_REQUIRE) {
+        if (config_1.DFLOW_REQUIRE) {
             throw new Error('dFlow is required but events markets capability is not configured. ' +
                 'Set DFLOW_EVENTS_MARKETS_PATH or disable DFLOW_REQUIRE.');
         }
         console.warn('[ProviderRegistry] dFlow enabled but events markets unavailable, using fallback');
     }
     // Use fallback
-    marketDataProvider = new FallbackMarketDataProvider();
+    marketDataProvider = new fallbackProvider_1.FallbackMarketDataProvider();
     console.log('[ProviderRegistry] Using fallback for market data (Polymarket + Kalshi)');
     return marketDataProvider;
 }
@@ -41,43 +48,43 @@ export function getMarketDataProvider() {
  * Get the quote provider based on configuration
  * @throws Error if DFLOW_REQUIRE=true and dFlow is unavailable
  */
-export function getQuoteProvider() {
+function getQuoteProvider() {
     if (quoteProvider) {
         return quoteProvider;
     }
     // Check ROUTING_MODE first
-    if (ROUTING_MODE === 'dflow' || DFLOW_ENABLED) {
-        const dflowProvider = new DflowQuoteProvider();
+    if (config_1.ROUTING_MODE === 'dflow' || config_1.DFLOW_ENABLED) {
+        const dflowProvider = new dflowProvider_1.DflowQuoteProvider();
         if (dflowProvider.isAvailable()) {
             quoteProvider = dflowProvider;
             console.log('[ProviderRegistry] Using dFlow for quotes');
             return quoteProvider;
         }
         // dFlow requested but not available
-        if (ROUTING_MODE === 'dflow' && DFLOW_REQUIRE) {
+        if (config_1.ROUTING_MODE === 'dflow' && config_1.DFLOW_REQUIRE) {
             throw new Error('dFlow routing is required but not configured. ' +
                 'Set DFLOW_API_KEY and DFLOW_BASE_URL or change ROUTING_MODE.');
         }
         console.warn('[ProviderRegistry] dFlow quotes unavailable, using fallback');
     }
     // Use fallback
-    quoteProvider = new FallbackQuoteProvider();
+    quoteProvider = new fallbackProvider_1.FallbackQuoteProvider();
     console.log('[ProviderRegistry] Using fallback for quotes (1inch + deterministic)');
     return quoteProvider;
 }
 /**
  * Get provider status for preflight
  */
-export function getProviderStatus() {
-    const dflowCaps = getDflowCapabilities();
+function getProviderStatus() {
+    const dflowCaps = (0, dflowClient_1.getDflowCapabilities)();
     // Determine market data provider
     let marketDataProviderName = 'fallback';
     let marketDataAvailable = true;
     let marketDataFallback;
-    if (DFLOW_ENABLED && dflowCaps.eventsMarkets) {
+    if (config_1.DFLOW_ENABLED && dflowCaps.eventsMarkets) {
         marketDataProviderName = 'dflow';
     }
-    else if (DFLOW_ENABLED) {
+    else if (config_1.DFLOW_ENABLED) {
         marketDataFallback = 'Polymarket + Kalshi';
     }
     // Determine quote provider
@@ -86,7 +93,7 @@ export function getProviderStatus() {
     let quoteFallback;
     let swapsAvailable = true;
     let eventsAvailable = false;
-    if (ROUTING_MODE === 'dflow' && dflowCaps.enabled) {
+    if (config_1.ROUTING_MODE === 'dflow' && dflowCaps.enabled) {
         quoteProviderName = 'dflow';
         swapsAvailable = dflowCaps.swapsQuotes;
         eventsAvailable = dflowCaps.eventsQuotes;
@@ -94,7 +101,7 @@ export function getProviderStatus() {
             quoteFallback = '1inch + deterministic';
         }
     }
-    else if (ROUTING_MODE === 'hybrid') {
+    else if (config_1.ROUTING_MODE === 'hybrid') {
         quoteProviderName = '1inch';
         quoteFallback = 'deterministic';
     }
@@ -121,14 +128,14 @@ export function getProviderStatus() {
 /**
  * Reset provider cache (for testing)
  */
-export function resetProviders() {
+function resetProviders() {
     marketDataProvider = null;
     quoteProvider = null;
 }
 /**
  * Check if dFlow is the active provider for a capability
  */
-export function isDflowActiveFor(capability) {
+function isDflowActiveFor(capability) {
     const status = getProviderStatus();
     switch (capability) {
         case 'marketData':

@@ -43,3 +43,8 @@ agent/execution-ledger/ledger.db-wal
 # Never commit private keys
 **/solana-*.key
 **/dev-wallet-*.json
+
+# Access codes (NEVER commit these!)
+ACCESS_CODES_LOCAL.md
+ACCESS_CODES_LOCAL.csv
+access-codes-*.txt

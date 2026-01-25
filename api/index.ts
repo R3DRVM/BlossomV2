@@ -14,8 +14,8 @@ async function getApp() {
     // Set Vercel environment flag before importing
     process.env.VERCEL = '1';
 
-    // Import from pre-compiled dist directory
-    const httpModule = await import('../agent/dist/src/server/http.js');
+    // Import from esbuild bundle
+    const httpModule = await import('../agent/dist/server-bundle.js');
     app = httpModule.app;
     appInitialized = true;
   }

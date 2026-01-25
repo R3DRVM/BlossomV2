@@ -39,8 +39,8 @@ const Navigation = ({ navigate }: { navigate: (path: string) => void }) => (
 
       <div className="hidden md:flex items-center gap-8 text-sm font-medium text-[#666666]">
         <a href="#features" className="hover:text-[#F25AA2] transition-colors">Capabilities</a>
-        <a href="#engine" className="hover:text-[#F25AA2] transition-colors">ElizaOS Engine</a>
-        <a href="#roadmap" className="hover:text-[#F25AA2] transition-colors">Roadmap</a>
+        <a href="/stats" className="hover:text-[#F25AA2] transition-colors">Statistics</a>
+        <a href="/whitepaper" className="hover:text-[#F25AA2] transition-colors">Whitepaper</a>
       </div>
 
       <Button onClick={() => navigate('/app')} className="shadow-lg" style={{

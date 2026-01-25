@@ -1,14 +1,18 @@
+"use strict";
 /**
  * Solana Devnet Client
  * Minimal RPC client for Solana devnet execution
  *
  * No external dependencies - uses native fetch for RPC calls
  */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.SolanaClient = void 0;
+exports.createSolanaClient = createSolanaClient;
 const DEFAULT_DEVNET_RPC = 'https://api.devnet.solana.com';
 /**
  * Solana RPC client for devnet operations
  */
-export class SolanaClient {
+class SolanaClient {
     rpcUrl;
     constructor(config = {}) {
         this.rpcUrl = config.rpcUrl || process.env.SOLANA_RPC_URL || DEFAULT_DEVNET_RPC;
@@ -149,11 +153,12 @@ export class SolanaClient {
         }
     }
 }
+exports.SolanaClient = SolanaClient;
 /**
  * Create a Solana devnet client
  */
-export function createSolanaClient(rpcUrl) {
+function createSolanaClient(rpcUrl) {
     return new SolanaClient({ rpcUrl });
 }
-export default SolanaClient;
+exports.default = SolanaClient;
 //# sourceMappingURL=solanaClient.js.map
