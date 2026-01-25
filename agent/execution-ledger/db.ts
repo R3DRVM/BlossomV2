@@ -24,7 +24,10 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 // Database file path (in agent/execution-ledger directory)
-const DB_PATH = process.env.EXECUTION_LEDGER_DB_PATH || path.join(__dirname, 'ledger.db');
+// In serverless environments (Vercel), use /tmp which is writable
+const isVercel = process.env.VERCEL === '1';
+const defaultPath = isVercel ? '/tmp/ledger.db' : path.join(__dirname, 'ledger.db');
+const DB_PATH = process.env.EXECUTION_LEDGER_DB_PATH || defaultPath;
 
 let db: Database.Database | null = null;
 const dbType = detectDatabaseType();
