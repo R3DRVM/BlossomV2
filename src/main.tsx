@@ -1,3 +1,6 @@
+// Polyfills must be imported FIRST (before any Solana libs)
+import './polyfills'
+
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'

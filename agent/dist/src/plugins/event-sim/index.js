@@ -1,9 +1,19 @@
+"use strict";
 /**
  * Event Markets Simulation Plugin
  * Simulates event/prediction market positions
  */
-import { v4 as uuidv4 } from 'uuid';
-import { fetchKalshiMarkets, fetchPolymarketMarkets } from '../../services/predictionData';
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.setBalanceCallbacks = setBalanceCallbacks;
+exports.openEventPosition = openEventPosition;
+exports.getLiveEventPrice = getLiveEventPrice;
+exports.updateEventStake = updateEventStake;
+exports.closeEventPosition = closeEventPosition;
+exports.getEventSnapshot = getEventSnapshot;
+exports.getEventExposureUsd = getEventExposureUsd;
+exports.resetEventState = resetEventState;
+const uuid_1 = require("uuid");
+const predictionData_1 = require("../../services/predictionData");
 // Seed markets matching FALLBACK_MARKETS (harmonized IDs)
 const SEEDED_MARKETS = [
     {
@@ -50,21 +60,21 @@ let eventState = {
 // Reference to perps account for balance updates
 let getUsdcBalance;
 let updateUsdcBalance;
-export function setBalanceCallbacks(getBalance, updateBalance) {
+function setBalanceCallbacks(getBalance, updateBalance) {
     getUsdcBalance = getBalance;
     updateUsdcBalance = updateBalance;
 }
 /**
  * Open an event position
  */
-export async function openEventPosition(eventKey, side, stakeUsd, label // Optional label for live markets
+async function openEventPosition(eventKey, side, stakeUsd, label // Optional label for live markets
 ) {
     let market = eventState.markets.find(m => m.key === eventKey);
     // If market not found in seeded markets, try to find it in live markets
     if (!market) {
         try {
-            const kalshiMarkets = await fetchKalshiMarkets();
-            const polymarketMarkets = await fetchPolymarketMarkets();
+            const kalshiMarkets = await (0, predictionData_1.fetchKalshiMarkets)();
+            const polymarketMarkets = await (0, predictionData_1.fetchPolymarketMarkets)();
             const allLiveMarkets = [...kalshiMarkets, ...polymarketMarkets];
             const liveMarket = allLiveMarkets.find(m => m.id === eventKey);
             if (liveMarket) {
@@ -99,8 +109,8 @@ export async function openEventPosition(eventKey, side, stakeUsd, label // Optio
     let marketSource = 'DEMO';
     let externalMarketId = undefined;
     try {
-        const kalshiMarkets = await fetchKalshiMarkets();
-        const polymarketMarkets = await fetchPolymarketMarkets();
+        const kalshiMarkets = await (0, predictionData_1.fetchKalshiMarkets)();
+        const polymarketMarkets = await (0, predictionData_1.fetchPolymarketMarkets)();
         const allLiveMarkets = [...kalshiMarkets, ...polymarketMarkets];
         // Try to match by title (fuzzy match)
         const matchedMarket = allLiveMarkets.find(m => m.title.toLowerCase().includes(market.label.toLowerCase()) ||
@@ -123,7 +133,7 @@ export async function openEventPosition(eventKey, side, stakeUsd, label // Optio
     const maxLossUsd = stakeUsd;
     // Create position
     const position = {
-        id: uuidv4(),
+        id: (0, uuid_1.v4)(),
         eventKey,
         label: market.label,
         side,
@@ -140,14 +150,14 @@ export async function openEventPosition(eventKey, side, stakeUsd, label // Optio
 /**
  * Get live market price for an event position (if available)
  */
-export async function getLiveEventPrice(position) {
+async function getLiveEventPrice(position) {
     if (!position.externalMarketId || !position.marketSource || position.marketSource === 'DEMO') {
         return undefined;
     }
     try {
         const markets = position.marketSource === 'KALSHI'
-            ? await fetchKalshiMarkets()
-            : await fetchPolymarketMarkets();
+            ? await (0, predictionData_1.fetchKalshiMarkets)()
+            : await (0, predictionData_1.fetchPolymarketMarkets)();
         const liveMarket = markets.find(m => m.id === position.externalMarketId);
         if (liveMarket) {
             return liveMarket.yesPrice; // Return current YES probability
@@ -161,7 +171,7 @@ export async function getLiveEventPrice(position) {
 /**
  * Update an event position's stake
  */
-export async function updateEventStake(params) {
+async function updateEventStake(params) {
     const position = eventState.positions.find(p => p.id === params.positionId && !p.isClosed);
     if (!position) {
         throw new Error(`Event position ${params.positionId} not found or already closed`);
@@ -197,7 +207,7 @@ export async function updateEventStake(params) {
 /**
  * Close an event position
  */
-export async function closeEventPosition(id) {
+async function closeEventPosition(id) {
     const position = eventState.positions.find(p => p.id === id && !p.isClosed);
     if (!position) {
         throw new Error(`Position ${id} not found or already closed`);
@@ -255,7 +265,7 @@ export async function closeEventPosition(id) {
 /**
  * Get event snapshot
  */
-export function getEventSnapshot() {
+function getEventSnapshot() {
     const openPositions = eventState.positions.filter(p => !p.isClosed);
     const eventExposureUsd = openPositions.reduce((sum, p) => sum + p.stakeUsd, 0);
     return {
@@ -266,14 +276,14 @@ export function getEventSnapshot() {
 /**
  * Get total event exposure
  */
-export function getEventExposureUsd() {
+function getEventExposureUsd() {
     const openPositions = eventState.positions.filter(p => !p.isClosed);
     return openPositions.reduce((sum, p) => sum + p.stakeUsd, 0);
 }
 /**
  * Reset event state (for testing)
  */
-export function resetEventState() {
+function resetEventState() {
     eventState = {
         markets: [...SEEDED_MARKETS],
         positions: [],

@@ -1,3 +1,4 @@
+"use strict";
 /**
  * Unified Routing Service
  * Sprint 3: dFlow routing with truthful metadata and deterministic fallback
@@ -9,35 +10,40 @@
  * - All responses include routing metadata (source, ok, reason, latencyMs)
  * - NEVER log API keys or include them in responses
  */
-import { DFLOW_ENABLED, ROUTING_MODE, } from '../config';
-import { isDflowConfigured, isDflowCapabilityAvailable, getSwapQuote as dflowGetSwapQuote, getEventMarkets as dflowGetEventMarkets, } from '../integrations/dflow/dflowClient';
-import { makeCorrelationId } from '../utils/correlationId';
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.getRoutingStats = getRoutingStats;
+exports.resetRoutingStats = resetRoutingStats;
+exports.getSwapQuoteRouted = getSwapQuoteRouted;
+exports.getEventMarketsRouted = getEventMarketsRouted;
+const config_1 = require("../config");
+const dflowClient_1 = require("../integrations/dflow/dflowClient");
+const correlationId_1 = require("../utils/correlationId");
 // DEV-ONLY: Force dFlow failure/timeout for testing
 const DFLOW_FORCE_FAIL = process.env.DFLOW_FORCE_FAIL === 'true' && process.env.NODE_ENV !== 'production';
 const DFLOW_FORCE_TIMEOUT = process.env.DFLOW_FORCE_TIMEOUT === 'true' && process.env.NODE_ENV !== 'production';
 // DEV-ONLY: Track dFlow call count for deterministic mode proof
 let dflowCallCount = 0;
 let lastDflowCallAt = null;
-export function getRoutingStats() {
+function getRoutingStats() {
     return { dflowCallCount, lastDflowCallAt };
 }
-export function resetRoutingStats() {
+function resetRoutingStats() {
     dflowCallCount = 0;
     lastDflowCallAt = null;
 }
 /**
  * Get swap quote with routing metadata
  */
-export async function getSwapQuoteRouted(params) {
+async function getSwapQuoteRouted(params) {
     const startTime = Date.now();
-    const correlationId = params.correlationId || makeCorrelationId('swap');
+    const correlationId = params.correlationId || (0, correlationId_1.makeCorrelationId)('swap');
     const { tokenIn, tokenOut, amountIn, slippageBps, chainId, fallbackQuote } = params;
     // DEV-ONLY: Log routing request
     if (process.env.NODE_ENV !== 'production') {
-        console.log(`[ROUTING] kind=swap_quote mode=${ROUTING_MODE} corr=${correlationId}`);
+        console.log(`[ROUTING] kind=swap_quote mode=${config_1.ROUTING_MODE} corr=${correlationId}`);
     }
     // ROUTING_MODE='deterministic' => never call dFlow
-    if (ROUTING_MODE === 'deterministic') {
+    if (config_1.ROUTING_MODE === 'deterministic') {
         if (fallbackQuote) {
             const fallbackData = await fallbackQuote();
             const latencyMs = Date.now() - startTime;
@@ -89,8 +95,8 @@ export async function getSwapQuoteRouted(params) {
         };
     }
     // ROUTING_MODE='dflow' => hard fail if dFlow unavailable
-    if (ROUTING_MODE === 'dflow') {
-        if (!isDflowConfigured() || !isDflowCapabilityAvailable('swapsQuotes')) {
+    if (config_1.ROUTING_MODE === 'dflow') {
+        if (!(0, dflowClient_1.isDflowConfigured)() || !(0, dflowClient_1.isDflowCapabilityAvailable)('swapsQuotes')) {
             const latencyMs = Date.now() - startTime;
             return {
                 ok: false,
@@ -100,7 +106,7 @@ export async function getSwapQuoteRouted(params) {
                     ok: false,
                     reason: 'dFlow not configured or swapsQuotes capability unavailable',
                     latencyMs,
-                    mode: ROUTING_MODE,
+                    mode: config_1.ROUTING_MODE,
                     correlationId,
                 },
                 error: {
@@ -136,7 +142,7 @@ export async function getSwapQuoteRouted(params) {
         // Track dFlow call (for deterministic mode proof)
         dflowCallCount++;
         lastDflowCallAt = Date.now();
-        const dflowResult = await dflowGetSwapQuote({
+        const dflowResult = await (0, dflowClient_1.getSwapQuote)({
             tokenIn,
             tokenOut,
             amountIn,
@@ -193,13 +199,13 @@ export async function getSwapQuoteRouted(params) {
         };
     }
     // ROUTING_MODE='hybrid' => dFlow first, then fallback
-    if (ROUTING_MODE === 'hybrid' || DFLOW_ENABLED) {
+    if (config_1.ROUTING_MODE === 'hybrid' || config_1.DFLOW_ENABLED) {
         // Try dFlow first (unless forced to fail/timeout in DEV)
-        if (!DFLOW_FORCE_FAIL && !DFLOW_FORCE_TIMEOUT && isDflowConfigured() && isDflowCapabilityAvailable('swapsQuotes')) {
+        if (!DFLOW_FORCE_FAIL && !DFLOW_FORCE_TIMEOUT && (0, dflowClient_1.isDflowConfigured)() && (0, dflowClient_1.isDflowCapabilityAvailable)('swapsQuotes')) {
             // Track dFlow call
             dflowCallCount++;
             lastDflowCallAt = Date.now();
-            const dflowResult = await dflowGetSwapQuote({
+            const dflowResult = await (0, dflowClient_1.getSwapQuote)({
                 tokenIn,
                 tokenOut,
                 amountIn,
@@ -231,7 +237,7 @@ export async function getSwapQuoteRouted(params) {
                         kind: 'swap_quote',
                         ok: true,
                         latencyMs,
-                        mode: ROUTING_MODE,
+                        mode: config_1.ROUTING_MODE,
                         correlationId,
                     },
                 };
@@ -265,7 +271,7 @@ export async function getSwapQuoteRouted(params) {
                             ok: true,
                             reason: fallbackReason,
                             latencyMs: totalLatencyMs,
-                            mode: ROUTING_MODE,
+                            mode: config_1.ROUTING_MODE,
                             correlationId,
                         },
                     };
@@ -281,7 +287,7 @@ export async function getSwapQuoteRouted(params) {
                     ok: false,
                     reason: errorReason,
                     latencyMs,
-                    mode: ROUTING_MODE,
+                    mode: config_1.ROUTING_MODE,
                     correlationId,
                 },
                 error: {
@@ -314,7 +320,7 @@ export async function getSwapQuoteRouted(params) {
                     ok: true,
                     reason: 'dFlow not enabled or unavailable',
                     latencyMs,
-                    mode: ROUTING_MODE,
+                    mode: config_1.ROUTING_MODE,
                     correlationId,
                 },
             };
@@ -330,7 +336,7 @@ export async function getSwapQuoteRouted(params) {
             ok: false,
             reason: 'No routing providers available',
             latencyMs,
-            mode: ROUTING_MODE,
+            mode: config_1.ROUTING_MODE,
             correlationId,
         },
         error: {
@@ -342,16 +348,16 @@ export async function getSwapQuoteRouted(params) {
 /**
  * Get event markets with routing metadata
  */
-export async function getEventMarketsRouted(params) {
+async function getEventMarketsRouted(params) {
     const startTime = Date.now();
-    const correlationId = params.correlationId || makeCorrelationId('markets');
+    const correlationId = params.correlationId || (0, correlationId_1.makeCorrelationId)('markets');
     const { limit = 10, fallbackMarkets } = params;
     // DEV-ONLY: Log routing request
     if (process.env.NODE_ENV !== 'production') {
-        console.log(`[ROUTING] kind=event_markets mode=${ROUTING_MODE} corr=${correlationId}`);
+        console.log(`[ROUTING] kind=event_markets mode=${config_1.ROUTING_MODE} corr=${correlationId}`);
     }
     // ROUTING_MODE='deterministic' => never call dFlow
-    if (ROUTING_MODE === 'deterministic') {
+    if (config_1.ROUTING_MODE === 'deterministic') {
         if (fallbackMarkets) {
             const fallbackData = await fallbackMarkets();
             const latencyMs = Date.now() - startTime;
@@ -392,8 +398,8 @@ export async function getEventMarketsRouted(params) {
         };
     }
     // ROUTING_MODE='dflow' => hard fail if dFlow unavailable
-    if (ROUTING_MODE === 'dflow') {
-        if (!isDflowConfigured() || !isDflowCapabilityAvailable('eventsMarkets')) {
+    if (config_1.ROUTING_MODE === 'dflow') {
+        if (!(0, dflowClient_1.isDflowConfigured)() || !(0, dflowClient_1.isDflowCapabilityAvailable)('eventsMarkets')) {
             const latencyMs = Date.now() - startTime;
             return {
                 ok: false,
@@ -403,7 +409,7 @@ export async function getEventMarketsRouted(params) {
                     ok: false,
                     reason: 'dFlow not configured or eventsMarkets capability unavailable',
                     latencyMs,
-                    mode: ROUTING_MODE,
+                    mode: config_1.ROUTING_MODE,
                     correlationId,
                 },
                 error: {
@@ -439,7 +445,7 @@ export async function getEventMarketsRouted(params) {
         // Track dFlow call
         dflowCallCount++;
         lastDflowCallAt = Date.now();
-        const dflowResult = await dflowGetEventMarkets();
+        const dflowResult = await (0, dflowClient_1.getEventMarkets)();
         const latencyMs = Date.now() - startTime;
         // DEV-ONLY: Log routing result
         if (process.env.NODE_ENV !== 'production') {
@@ -488,13 +494,13 @@ export async function getEventMarketsRouted(params) {
         };
     }
     // ROUTING_MODE='hybrid' => dFlow first, then fallback
-    if (ROUTING_MODE === 'hybrid' || DFLOW_ENABLED) {
+    if (config_1.ROUTING_MODE === 'hybrid' || config_1.DFLOW_ENABLED) {
         // Try dFlow first (unless forced to fail/timeout in DEV)
-        if (!DFLOW_FORCE_FAIL && !DFLOW_FORCE_TIMEOUT && isDflowConfigured() && isDflowCapabilityAvailable('eventsMarkets')) {
+        if (!DFLOW_FORCE_FAIL && !DFLOW_FORCE_TIMEOUT && (0, dflowClient_1.isDflowConfigured)() && (0, dflowClient_1.isDflowCapabilityAvailable)('eventsMarkets')) {
             // Track dFlow call
             dflowCallCount++;
             lastDflowCallAt = Date.now();
-            const dflowResult = await dflowGetEventMarkets();
+            const dflowResult = await (0, dflowClient_1.getEventMarkets)();
             const latencyMs = Date.now() - startTime;
             // DEV-ONLY: Log routing result
             if (process.env.NODE_ENV !== 'production') {
@@ -518,7 +524,7 @@ export async function getEventMarketsRouted(params) {
                         kind: 'event_markets',
                         ok: true,
                         latencyMs,
-                        mode: ROUTING_MODE,
+                        mode: config_1.ROUTING_MODE,
                         correlationId,
                     },
                 };
@@ -541,7 +547,7 @@ export async function getEventMarketsRouted(params) {
                         ok: true,
                         reason: fallbackReason,
                         latencyMs: totalLatencyMs,
-                        mode: ROUTING_MODE,
+                        mode: config_1.ROUTING_MODE,
                         correlationId,
                     },
                 };
@@ -556,7 +562,7 @@ export async function getEventMarketsRouted(params) {
                     ok: false,
                     reason: errorReason,
                     latencyMs,
-                    mode: ROUTING_MODE,
+                    mode: config_1.ROUTING_MODE,
                     correlationId,
                 },
                 error: {
@@ -583,7 +589,7 @@ export async function getEventMarketsRouted(params) {
                 ok: true,
                 reason: 'dFlow not enabled or unavailable',
                 latencyMs,
-                mode: ROUTING_MODE,
+                mode: config_1.ROUTING_MODE,
                 correlationId,
             },
         };
@@ -598,7 +604,7 @@ export async function getEventMarketsRouted(params) {
             ok: false,
             reason: 'No routing providers available',
             latencyMs,
-            mode: ROUTING_MODE,
+            mode: config_1.ROUTING_MODE,
             correlationId,
         },
         error: {

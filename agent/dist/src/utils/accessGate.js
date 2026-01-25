@@ -1,13 +1,24 @@
+"use strict";
 /**
  * Access Gate for Whitelist Testing
  * Lightweight whitelist system with access codes
  */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.generateAccessCode = generateAccessCode;
+exports.createAccessCode = createAccessCode;
+exports.validateAccessCode = validateAccessCode;
+exports.hasAccess = hasAccess;
+exports.getAllAccessCodes = getAllAccessCodes;
+exports.revokeAccessCode = revokeAccessCode;
+exports.initializeAccessCodes = initializeAccessCodes;
+exports.loadAccessCodesFromEnv = loadAccessCodesFromEnv;
+exports.checkAccess = checkAccess;
 // In-memory store (for MVP - can be replaced with JSON file/DB later)
 let accessCodes = new Map();
 /**
  * Generate a new access code
  */
-export function generateAccessCode() {
+function generateAccessCode() {
     // Generate 8-character alphanumeric code
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // Exclude confusing chars
     let code = '';
@@ -19,7 +30,7 @@ export function generateAccessCode() {
 /**
  * Create a new access code
  */
-export function createAccessCode() {
+function createAccessCode() {
     const code = generateAccessCode();
     const accessCode = {
         code,
@@ -33,7 +44,7 @@ export function createAccessCode() {
  * Validate and use an access code
  * Returns true if code is valid and can be used
  */
-export function validateAccessCode(code, walletAddress) {
+function validateAccessCode(code, walletAddress) {
     const accessCode = accessCodes.get(code.toUpperCase());
     if (!accessCode) {
         return { valid: false, error: 'Invalid access code' };
@@ -56,7 +67,7 @@ export function validateAccessCode(code, walletAddress) {
 /**
  * Check if a wallet has access
  */
-export function hasAccess(walletAddress) {
+function hasAccess(walletAddress) {
     const codes = Array.from(accessCodes.values());
     for (const accessCode of codes) {
         if (accessCode.used && accessCode.walletAddress?.toLowerCase() === walletAddress.toLowerCase()) {
@@ -68,13 +79,13 @@ export function hasAccess(walletAddress) {
 /**
  * Get all access codes (admin utility)
  */
-export function getAllAccessCodes() {
+function getAllAccessCodes() {
     return Array.from(accessCodes.values());
 }
 /**
  * Revoke an access code
  */
-export function revokeAccessCode(code) {
+function revokeAccessCode(code) {
     const accessCode = accessCodes.get(code.toUpperCase());
     if (!accessCode) {
         return false;
@@ -85,7 +96,7 @@ export function revokeAccessCode(code) {
 /**
  * Initialize with pre-generated codes (for MVP)
  */
-export function initializeAccessCodes(codes) {
+function initializeAccessCodes(codes) {
     if (codes && codes.length > 0) {
         // Load pre-generated codes
         for (const code of codes) {
@@ -106,7 +117,7 @@ export function initializeAccessCodes(codes) {
 /**
  * Load access codes from environment variable
  */
-export function loadAccessCodesFromEnv() {
+function loadAccessCodesFromEnv() {
     const accessGateEnabled = process.env.ACCESS_GATE_ENABLED === "true";
     if (!accessGateEnabled) {
         console.log(`[accessGate] Access gate is disabled`);
@@ -128,7 +139,7 @@ export function loadAccessCodesFromEnv() {
  * Express middleware to check access
  * If access gate is disabled, always passes
  */
-export function checkAccess(req, res, next) {
+function checkAccess(req, res, next) {
     const accessGateEnabled = process.env.ACCESS_GATE_ENABLED === "true";
     // If gate is disabled, always allow
     if (!accessGateEnabled) {

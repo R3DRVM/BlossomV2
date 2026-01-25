@@ -81,7 +81,18 @@ export default function ConnectWalletButton({ className = '', variant = 'primary
     if (chain === 'ethereum') {
       openConnectModal?.();
     } else {
+      // Log for debugging Solana connection issues
+      if (import.meta.env.DEV) {
+        console.log('[Wallet] openSolanaModal clicked');
+      }
       setSolanaModalVisible(true);
+      // Confirm modal state changed
+      if (import.meta.env.DEV) {
+        // Use setTimeout to check after React updates
+        setTimeout(() => {
+          console.log('[Wallet] solana modal visible set to true');
+        }, 100);
+      }
     }
   }, [openConnectModal, setSolanaModalVisible]);
 

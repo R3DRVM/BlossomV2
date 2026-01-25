@@ -1,9 +1,15 @@
+"use strict";
 /**
  * LLM Client Service
  * Supports OpenAI, Anthropic, or stub mode
  */
-import OpenAI from 'openai';
-import Anthropic from '@anthropic-ai/sdk';
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.callLlm = callLlm;
+const openai_1 = __importDefault(require("openai"));
+const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
 function getProvider() {
     const provider = process.env.BLOSSOM_MODEL_PROVIDER;
     if (provider === 'openai' || provider === 'anthropic' || provider === 'gemini') {
@@ -14,7 +20,7 @@ function getProvider() {
 /**
  * Call LLM with structured JSON output
  */
-export async function callLlm(input) {
+async function callLlm(input) {
     const provider = getProvider();
     console.log('[llmClient] Using provider:', provider);
     if (provider === 'stub') {
@@ -50,7 +56,7 @@ async function callOpenAI(input) {
         throw new Error('BLOSSOM_OPENAI_API_KEY is not set');
     }
     const model = process.env.BLOSSOM_OPENAI_MODEL || 'gpt-4o-mini';
-    const client = new OpenAI({ apiKey });
+    const client = new openai_1.default({ apiKey });
     try {
         const response = await client.chat.completions.create({
             model,
@@ -84,7 +90,7 @@ async function callAnthropic(input) {
         throw new Error('BLOSSOM_ANTHROPIC_API_KEY is not set');
     }
     const model = process.env.BLOSSOM_ANTHROPIC_MODEL || 'claude-3-5-sonnet-20241022';
-    const client = new Anthropic({ apiKey });
+    const client = new sdk_1.default({ apiKey });
     try {
         // Anthropic requires JSON in the system prompt or user message
         const enhancedSystemPrompt = `${input.systemPrompt}\n\nYou MUST respond with ONLY a valid JSON object, no other text before or after.`;

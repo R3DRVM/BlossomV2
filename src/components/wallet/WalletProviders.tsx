@@ -7,6 +7,9 @@
  * - Solana: Devnet only
  *
  * Light theme to match Blossom UI.
+ *
+ * IMPORTANT: Wallet Standard auto-detection is DISABLED to prevent duplicate key errors.
+ * We explicitly list only Phantom and Solflare for Solana.
  */
 
 import { ReactNode, useMemo } from 'react';
@@ -15,7 +18,6 @@ import { WagmiProvider, createConfig, http } from 'wagmi';
 import { sepolia } from 'wagmi/chains';
 import {
   RainbowKitProvider,
-  getDefaultConfig,
   lightTheme,
   connectorsForWallets,
 } from '@rainbow-me/rainbowkit';
@@ -28,10 +30,11 @@ import {
 } from '@rainbow-me/rainbowkit/wallets';
 import '@rainbow-me/rainbowkit/styles.css';
 
-// Solana imports
+// Solana imports - use explicit adapters only (no Wallet Standard auto-detection)
 import { ConnectionProvider, WalletProvider } from '@solana/wallet-adapter-react';
 import { WalletModalProvider } from '@solana/wallet-adapter-react-ui';
 import { PhantomWalletAdapter, SolflareWalletAdapter } from '@solana/wallet-adapter-wallets';
+import type { Adapter } from '@solana/wallet-adapter-base';
 import '@solana/wallet-adapter-react-ui/styles.css';
 
 // Check if WalletConnect project ID is configured
@@ -103,13 +106,54 @@ interface WalletProvidersProps {
   children: ReactNode;
 }
 
+// Blocklist: wallet names we do NOT want in the Solana modal
+// MetaMask appears via Wallet Standard auto-detection but we only want native Solana wallets
+const SOLANA_WALLET_BLOCKLIST = ['MetaMask', 'Coinbase Wallet', 'Rainbow'];
+
 export default function WalletProviders({ children }: WalletProvidersProps) {
-  // Use explicit wallet adapters for reliable detection (Phantom, Solflare)
-  // This is more reliable than relying on Wallet Standard auto-detection
-  const solanaWallets = useMemo(
-    () => [new PhantomWalletAdapter(), new SolflareWalletAdapter()],
-    []
-  );
+  // Build Solana wallets as a SINGLE source of truth
+  // - Only Phantom and Solflare (native Solana wallets)
+  // - No Wallet Standard auto-detection (would pull in MetaMask etc.)
+  // - Robust dedupe by adapter.name
+  const solanaWallets = useMemo(() => {
+    // Create ONLY explicit Solana-native adapters
+    const explicitAdapters: Adapter[] = [
+      new PhantomWalletAdapter(),
+      new SolflareWalletAdapter(),
+    ];
+
+    // Dedupe by adapter.name AND remove blocklisted wallets (MetaMask etc.)
+    const seen = new Set<string>();
+    const finalList = explicitAdapters.filter((adapter) => {
+      const name = adapter.name;
+
+      // Remove blocklisted wallets (EVM wallets that appear via Wallet Standard)
+      if (SOLANA_WALLET_BLOCKLIST.includes(name)) {
+        if (import.meta.env.DEV) {
+          console.log(`[solana-wallets] Removed blocklisted wallet: ${name}`);
+        }
+        return false;
+      }
+
+      // Dedupe by name (keep first occurrence)
+      if (seen.has(name)) {
+        if (import.meta.env.DEV) {
+          console.log(`[solana-wallets] Removed duplicate: ${name}`);
+        }
+        return false;
+      }
+
+      seen.add(name);
+      return true;
+    });
+
+    // DEV: Log final list ONCE on mount
+    if (import.meta.env.DEV) {
+      console.log(`[solana-wallets] final list: ${finalList.map((a) => a.name).join(', ')}`);
+    }
+
+    return finalList;
+  }, []);
 
   return (
     <QueryClientProvider client={queryClient}>

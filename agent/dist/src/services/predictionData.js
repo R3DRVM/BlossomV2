@@ -1,7 +1,14 @@
+"use strict";
 /**
  * Prediction Market Data Service
  * Fetches live data from Kalshi and Polymarket APIs with fallback to static demo data
  */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.fetchKalshiMarkets = fetchKalshiMarkets;
+exports.fetchPolymarketMarkets = fetchPolymarketMarkets;
+exports.getTopKalshiMarketsByVolume = getTopKalshiMarketsByVolume;
+exports.getTopPolymarketMarketsByVolume = getTopPolymarketMarketsByVolume;
+exports.getHighestVolumeMarket = getHighestVolumeMarket;
 // Static fallback for Kalshi markets
 const STATIC_KALSHI_MARKETS = [
     {
@@ -65,7 +72,7 @@ const STATIC_POLYMARKET_MARKETS = [
 /**
  * Fetch markets from Kalshi API
  */
-export async function fetchKalshiMarkets() {
+async function fetchKalshiMarkets() {
     const apiUrl = process.env.KALSHI_API_URL;
     const apiKey = process.env.KALSHI_API_KEY;
     // If no API credentials, return static fallback
@@ -238,7 +245,7 @@ async function fetchPolymarketPublicMarkets() {
 /**
  * Fetch markets from Polymarket API (with fallback chain)
  */
-export async function fetchPolymarketMarkets() {
+async function fetchPolymarketMarkets() {
     const now = Date.now();
     // Check cache first
     if (polymarketCache && now - polymarketCache.fetchedAt < POLYMARKET_CACHE_TTL_MS) {
@@ -353,7 +360,7 @@ export async function fetchPolymarketMarkets() {
 /**
  * Get top N markets by volume from Kalshi
  */
-export async function getTopKalshiMarketsByVolume(limit = 5) {
+async function getTopKalshiMarketsByVolume(limit = 5) {
     const markets = await fetchKalshiMarkets();
     const sorted = markets.sort((a, b) => {
         const aValue = a.volume24hUsd || a.openInterestUsd || 0;
@@ -365,7 +372,7 @@ export async function getTopKalshiMarketsByVolume(limit = 5) {
 /**
  * Get top N markets by volume from Polymarket
  */
-export async function getTopPolymarketMarketsByVolume(limit = 5) {
+async function getTopPolymarketMarketsByVolume(limit = 5) {
     const markets = await fetchPolymarketMarkets();
     const sorted = markets.sort((a, b) => {
         const aValue = a.volume24hUsd || a.openInterestUsd || 0;
@@ -377,7 +384,7 @@ export async function getTopPolymarketMarketsByVolume(limit = 5) {
 /**
  * Get highest volume market across both platforms
  */
-export async function getHighestVolumeMarket() {
+async function getHighestVolumeMarket() {
     const [kalshiMarkets, polymarketMarkets] = await Promise.all([
         fetchKalshiMarkets(),
         fetchPolymarketMarkets(),

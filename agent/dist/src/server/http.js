@@ -1,27 +1,66 @@
+"use strict";
 // @ts-nocheck
 /**
  * Blossom Agent HTTP Server
  * Provides API endpoints for the React front-end
  */
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.app = void 0;
 // Load environment variables FIRST (before any other imports that use process.env)
-import { config } from 'dotenv';
-import { resolve, dirname } from 'path';
-import { fileURLToPath } from 'url';
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const agentDir = resolve(__dirname, '../..');
-const rootDir = resolve(agentDir, '..');
+const dotenv_1 = require("dotenv");
+const path_1 = require("path");
+const url_1 = require("url");
+const __filename = (0, url_1.fileURLToPath)(import.meta.url);
+const __dirname = (0, path_1.dirname)(__filename);
+const agentDir = (0, path_1.resolve)(__dirname, '../..');
+const rootDir = (0, path_1.resolve)(agentDir, '..');
 // Load .env files with precedence (most specific first)
 // Precedence: agent/.env.local → agent/.env → root/.env.local → root/.env
 const envFiles = [
-    resolve(agentDir, '.env.local'),
-    resolve(agentDir, '.env'),
-    resolve(rootDir, '.env.local'),
-    resolve(rootDir, '.env'),
+    (0, path_1.resolve)(agentDir, '.env.local'),
+    (0, path_1.resolve)(agentDir, '.env'),
+    (0, path_1.resolve)(rootDir, '.env.local'),
+    (0, path_1.resolve)(rootDir, '.env'),
 ];
 let loadedEnvFile = null;
 for (const envFile of envFiles) {
-    const result = config({ path: envFile });
+    const result = (0, dotenv_1.config)({ path: envFile });
     if (!result.error) {
         loadedEnvFile = envFile;
         break; // First successful load wins
@@ -34,12 +73,12 @@ if (loadedEnvFile) {
 else {
     console.log(`⚠️  No .env file found (using system environment variables)`);
 }
-import express from 'express';
-import cors from 'cors';
-import { validateActions, buildBlossomPrompts } from '../utils/actionParser';
-import { callLlm } from '../services/llmClient';
-import * as perpsSim from '../plugins/perps-sim';
-import * as defiSim from '../plugins/defi-sim';
+const express_1 = __importDefault(require("express"));
+const cors_1 = __importDefault(require("cors"));
+const actionParser_1 = require("../utils/actionParser");
+const llmClient_1 = require("../services/llmClient");
+const perpsSim = __importStar(require("../plugins/perps-sim"));
+const defiSim = __importStar(require("../plugins/defi-sim"));
 // Allowed CORS origins for MVP
 const ALLOWED_ORIGINS = [
     'http://localhost:5173',
@@ -49,16 +88,17 @@ const ALLOWED_ORIGINS = [
     // Preview/staging subdomains
     /^https:\/\/.*\.blossom\.onl$/,
 ];
-import * as eventSim from '../plugins/event-sim';
-import { resetAllSims, getPortfolioSnapshot } from '../services/state';
-import { getOnchainTicker, getEventMarketsTicker } from '../services/ticker';
-import { logExecutionArtifact, getExecutionArtifacts } from '../utils/executionLogger';
-import { validateAccessCode, loadAccessCodesFromEnv, checkAccess } from '../utils/accessGate';
-import { logEvent, hashAddress } from '../telemetry/logger';
-import { waitForReceipt } from '../executors/evmReceipt';
-const app = express();
+const eventSim = __importStar(require("../plugins/event-sim"));
+const state_1 = require("../services/state");
+const ticker_1 = require("../services/ticker");
+const executionLogger_1 = require("../utils/executionLogger");
+const accessGate_1 = require("../utils/accessGate");
+const logger_1 = require("../telemetry/logger");
+const evmReceipt_1 = require("../executors/evmReceipt");
+const app = (0, express_1.default)();
+exports.app = app;
 // Configure CORS with specific origins for security
-app.use(cors({
+app.use((0, cors_1.default)({
     origin: (origin, callback) => {
         // Allow requests with no origin (like curl, mobile apps, or same-origin)
         if (!origin) {
@@ -86,7 +126,7 @@ app.use(cors({
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'X-Ledger-Secret', 'X-Access-Code', 'X-Wallet-Address', 'x-correlation-id'],
 }));
-app.use(express.json());
+app.use(express_1.default.json());
 // ============================================
 // TELEMETRY-ONLY MODE: Block sensitive endpoints
 // ============================================
@@ -155,13 +195,13 @@ if (TELEMETRY_ONLY) {
         next();
     });
 }
-import { makeCorrelationId } from '../utils/correlationId';
+const correlationId_1 = require("../utils/correlationId");
 /**
  * Generate short correlation ID (8 chars for readability)
  */
 function generateCorrelationId() {
     // Use centralized correlation ID generator for consistency
-    return makeCorrelationId();
+    return (0, correlationId_1.makeCorrelationId)();
 }
 /**
  * Correlation ID middleware
@@ -192,7 +232,7 @@ app.use((req, res, next) => {
         // Log ALL requests to database for devnet stats (skip static assets)
         if (!req.path.includes('.') && req.path.startsWith('/')) {
             try {
-                const { logRequest } = await import('../../telemetry/db');
+                const { logRequest } = await Promise.resolve().then(() => __importStar(require('../../telemetry/db')));
                 logRequest({
                     endpoint: req.path,
                     method: req.method,
@@ -266,9 +306,9 @@ function detectSuspectedIntent(userMessage) {
 }
 // Access gate feature flag
 const ACCESS_GATE_ENABLED = process.env.ACCESS_GATE_ENABLED === "true";
-const maybeCheckAccess = ACCESS_GATE_ENABLED ? checkAccess : (req, res, next) => next();
+const maybeCheckAccess = ACCESS_GATE_ENABLED ? accessGate_1.checkAccess : (req, res, next) => next();
 // Initialize access gate on startup (safe - won't crash if disabled)
-loadAccessCodesFromEnv();
+(0, accessGate_1.loadAccessCodesFromEnv)();
 // Set up balance callbacks for DeFi and Event sims
 // Use perps sim as the source of truth for REDACTED balance
 const getUsdcBalance = () => {
@@ -284,14 +324,14 @@ eventSim.setBalanceCallbacks(getUsdcBalance, updateUsdcBalance);
  * (Now uses centralized helper)
  */
 function buildPortfolioSnapshot() {
-    return getPortfolioSnapshot();
+    return (0, state_1.getPortfolioSnapshot)();
 }
 /**
  * Apply action to appropriate sim and return unified ExecutionResult
  */
 async function applyAction(action) {
     const portfolioBefore = buildPortfolioSnapshot();
-    const { v4: uuidv4 } = await import('uuid');
+    const { v4: uuidv4 } = await Promise.resolve().then(() => __importStar(require('uuid')));
     const simulatedTxId = `sim_${uuidv4()}`;
     try {
         if (action.type === 'perp' && action.action === 'open') {
@@ -462,13 +502,13 @@ async function parseModelResponse(rawJson, isSwapPrompt = false, isDefiPrompt = 
             ? parsed.assistantMessage
             : 'I understand your request.';
         const actions = Array.isArray(parsed.actions)
-            ? validateActions(parsed.actions)
+            ? (0, actionParser_1.validateActions)(parsed.actions)
             : [];
         // Parse and validate executionRequest
         let executionRequest = null;
         let modelOk = true;
         if (parsed.executionRequest) {
-            const { validateExecutionRequest } = await import('../utils/actionParser');
+            const { validateExecutionRequest } = await Promise.resolve().then(() => __importStar(require('../utils/actionParser')));
             executionRequest = validateExecutionRequest(parsed.executionRequest);
             if (!executionRequest && (isSwapPrompt || isDefiPrompt || isPerpPrompt || isEventPrompt)) {
                 // Invalid executionRequest - try deterministic fallback
@@ -583,7 +623,7 @@ async function applyDeterministicFallback(userMessage, isSwapPrompt, isDefiPromp
         const stakeUsd = stakeMatch ? parseFloat(stakeMatch[1]) : 5;
         const outcome = lowerMessage.includes('yes') ? 'YES' : 'NO';
         // Find matching market
-        const { findEventMarketByKeyword } = await import('../quotes/eventMarkets');
+        const { findEventMarketByKeyword } = await Promise.resolve().then(() => __importStar(require('../quotes/eventMarkets')));
         const keyword = lowerMessage.includes('fed') ? 'fed' : lowerMessage.includes('rate cut') ? 'rate cut' : 'fed';
         const market = await findEventMarketByKeyword(keyword);
         return {
@@ -676,7 +716,7 @@ async function applyDeterministicFallback(userMessage, isSwapPrompt, isDefiPromp
                 userMessage.match(/(?:park|deposit|lend|supply)\s+(\d+\.?\d*)/i);
             amount = amountMatch ? amountMatch[1] : '10';
             // Get vault recommendation from DefiLlama
-            const { getVaultRecommendation } = await import('../quotes/defiLlamaQuote');
+            const { getVaultRecommendation } = await Promise.resolve().then(() => __importStar(require('../quotes/defiLlamaQuote')));
             const vault = await getVaultRecommendation(parseFloat(amount));
             vaultName = vault?.name;
             console.log('[deterministic fallback] Parsed natural language allocation:', { amount, vaultName, format: 'natural' });
@@ -704,7 +744,7 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
     try {
         const { userMessage, venue, clientPortfolio } = req.body;
         // Telemetry: log chat request
-        logEvent('chat_request', {
+        (0, logger_1.logEvent)('chat_request', {
             venue,
             notes: [userMessage ? (userMessage.substring(0, 50) + (userMessage.length > 50 ? '...' : '')) : 'undefined'],
         });
@@ -738,7 +778,7 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
                 requestedCount = parseInt(numericMatch[1], 10);
             }
             try {
-                const { getTopProtocolsByTVL } = await import('../quotes/defiLlamaQuote');
+                const { getTopProtocolsByTVL } = await Promise.resolve().then(() => __importStar(require('../quotes/defiLlamaQuote')));
                 const protocols = await getTopProtocolsByTVL(requestedCount);
                 // Return response with protocol list (frontend will render with quick action buttons)
                 const portfolioAfter = buildPortfolioSnapshot();
@@ -785,7 +825,7 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
                 requestedCount = parseInt(numericMatch[1], 10);
             }
             try {
-                const { getEventMarketsWithRouting } = await import('../quotes/eventMarkets');
+                const { getEventMarketsWithRouting } = await Promise.resolve().then(() => __importStar(require('../quotes/eventMarkets')));
                 const result = await getEventMarketsWithRouting(requestedCount);
                 // Return response with event market list (frontend will render with quick action buttons)
                 const portfolioAfter = buildPortfolioSnapshot();
@@ -805,7 +845,7 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
                 console.error('[api/chat] Failed to fetch event markets:', error.message, error.stack);
                 // Return error response with fallback routing metadata
                 const portfolioAfter = buildPortfolioSnapshot();
-                const correlationId = req.correlationId || makeCorrelationId('error');
+                const correlationId = req.correlationId || (0, correlationId_1.makeCorrelationId)('error');
                 return res.json({
                     ok: false,
                     assistantMessage: "I couldn't fetch the prediction markets right now. Please try again later.",
@@ -870,7 +910,7 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
                 }
                 // Find matching market from event markets ticker
                 try {
-                    const { getEventMarketsWithRouting } = await import('../quotes/eventMarkets');
+                    const { getEventMarketsWithRouting } = await Promise.resolve().then(() => __importStar(require('../quotes/eventMarkets')));
                     const result = await getEventMarketsWithRouting(10);
                     const markets = result.markets;
                     const matchedMarket = markets.find(m => m.title.toLowerCase().includes(marketTitle.toLowerCase()) ||
@@ -909,7 +949,7 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
         }
         // Build prompts for LLM (now async to fetch live market data)
         // Use normalized message for prompt building
-        const { systemPrompt, userPrompt, isPredictionMarketQuery } = await buildBlossomPrompts({
+        const { systemPrompt, userPrompt, isPredictionMarketQuery } = await (0, actionParser_1.buildBlossomPrompts)({
             userMessage: normalizedUserMessage,
             portfolio: portfolioForPrompt,
             venue: venue || 'hyperliquid',
@@ -961,7 +1001,7 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
             // Short-circuit: build deterministic response for prediction markets in stub mode
             console.log('[api/chat] ✅ STUB SHORT-CIRCUIT: Building deterministic prediction market response');
             try {
-                const { buildPredictionMarketResponse } = await import('../utils/actionParser');
+                const { buildPredictionMarketResponse } = await Promise.resolve().then(() => __importStar(require('../utils/actionParser')));
                 const accountValue = portfolioForPrompt?.accountValueUsd || 10000;
                 const stubResponse = await buildPredictionMarketResponse(userMessage, venue || 'hyperliquid', accountValue);
                 assistantMessage = stubResponse.assistantMessage;
@@ -981,7 +1021,7 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
             catch (error) {
                 console.error('[api/chat] ❌ Failed to build stub prediction market response:', error.message);
                 // Fall through to normal stub LLM call
-                const llmOutput = await callLlm({ systemPrompt, userPrompt });
+                const llmOutput = await (0, llmClient_1.callLlm)({ systemPrompt, userPrompt });
                 modelResponse = await parseModelResponse(llmOutput.rawJson, isSwapPrompt);
                 assistantMessage = modelResponse.assistantMessage;
                 actions = modelResponse.actions;
@@ -1017,7 +1057,7 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
                     normalizedUserMessage.toLowerCase().includes('rate cut'));
             try {
                 // Call LLM with normalized prompt
-                const llmOutput = await callLlm({ systemPrompt, userPrompt: normalizedUserPrompt });
+                const llmOutput = await (0, llmClient_1.callLlm)({ systemPrompt, userPrompt: normalizedUserPrompt });
                 // Parse JSON response with normalized message for fallback
                 modelResponse = await parseModelResponse(llmOutput.rawJson, normalizedIsSwapPrompt, normalizedIsDefiPrompt, normalizedUserMessage, normalizedIsPerpPrompt, normalizedIsEventPrompt);
                 assistantMessage = modelResponse.assistantMessage;
@@ -1145,7 +1185,7 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
         // Task A: Create draft strategy server-side for actionable intents (deterministic)
         let serverDraftId = undefined;
         if (executionRequest) {
-            const { v4: uuidv4 } = await import('uuid');
+            const { v4: uuidv4 } = await Promise.resolve().then(() => __importStar(require('uuid')));
             const accountValue = portfolioAfter.accountValueUsd || 10000; // Fallback for demo
             if (executionRequest.kind === 'perp') {
                 const perpReq = executionRequest;
@@ -1317,7 +1357,7 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
         // Log execution artifacts if enabled
         if (process.env.DEBUG_EXECUTIONS === '1' && executionResults.length > 0) {
             executionResults.forEach(result => {
-                logExecutionArtifact({
+                (0, executionLogger_1.logExecutionArtifact)({
                     executionRequest,
                     executionResult: result,
                     userAddress: req.body.clientPortfolio?.userAddress,
@@ -1325,7 +1365,7 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
             });
         }
         // Telemetry: log chat response
-        logEvent('chat_response', {
+        (0, logger_1.logEvent)('chat_response', {
             success: modelOk,
             latencyMs: Date.now() - chatStartTime,
             notes: [`actions: ${actions.length}`, executionRequest ? `kind: ${executionRequest.kind}` : 'no_exec'],
@@ -1351,7 +1391,7 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
     }
     catch (error) {
         console.error('Chat error:', error);
-        logEvent('chat_response', {
+        (0, logger_1.logEvent)('chat_response', {
             success: false,
             error: error.message,
             latencyMs: Date.now() - chatStartTime,
@@ -1425,12 +1465,12 @@ app.post('/api/strategy/close', async (req, res) => {
  */
 app.post('/api/reset', async (req, res) => {
     try {
-        const { EXECUTION_MODE } = await import('../config');
+        const { EXECUTION_MODE } = await Promise.resolve().then(() => __importStar(require('../config')));
         const ALLOW_SIM_MODE = process.env.ALLOW_SIM_MODE === 'true';
         // In SIM mode with explicit permission, reset simulation state
         if (EXECUTION_MODE === 'sim' && ALLOW_SIM_MODE) {
-            resetAllSims();
-            const snapshot = getPortfolioSnapshot();
+            (0, state_1.resetAllSims)();
+            const snapshot = (0, state_1.getPortfolioSnapshot)();
             res.json({
                 portfolio: snapshot,
                 message: 'Simulation state reset.'
@@ -1454,7 +1494,7 @@ app.get('/api/ticker', async (req, res) => {
     try {
         const venue = req.query.venue || 'hyperliquid';
         if (venue === 'event_demo') {
-            const payload = await getEventMarketsTicker();
+            const payload = await (0, ticker_1.getEventMarketsTicker)();
             res.json({
                 venue: payload.venue,
                 sections: payload.sections,
@@ -1464,7 +1504,7 @@ app.get('/api/ticker', async (req, res) => {
             });
         }
         else {
-            const payload = await getOnchainTicker();
+            const payload = await (0, ticker_1.getOnchainTicker)();
             res.json({
                 venue: payload.venue,
                 sections: payload.sections,
@@ -1530,7 +1570,7 @@ app.post('/api/execute/prepare', maybeCheckAccess, async (req, res) => {
         userAddress: userAddress?.substring(0, 10),
     });
     try {
-        const { EXECUTION_MODE, EXECUTION_DISABLED, V1_DEMO } = await import('../config');
+        const { EXECUTION_MODE, EXECUTION_DISABLED, V1_DEMO } = await Promise.resolve().then(() => __importStar(require('../config')));
         // V1: Emergency kill switch
         if (EXECUTION_DISABLED) {
             return res.status(503).json({
@@ -1552,18 +1592,18 @@ app.post('/api/execute/prepare', maybeCheckAccess, async (req, res) => {
                 message: 'Direct execution is disabled in V1_DEMO mode. Please enable one-click execution first.',
             });
         }
-        const { prepareEthTestnetExecution } = await import('../executors/ethTestnetExecutor');
+        const { prepareEthTestnetExecution } = await Promise.resolve().then(() => __importStar(require('../executors/ethTestnetExecutor')));
         // Debug: log request body
         console.log('[api/execute/prepare] Request body:', JSON.stringify(req.body, null, 2));
         // Accept executionRequest from chat or fallback to executionIntent
         const result = await prepareEthTestnetExecution(req.body);
         // Include demo token addresses for frontend approval flow
-        const { DEMO_REDACTED_ADDRESS, DEMO_WETH_ADDRESS, EXECUTION_ROUTER_ADDRESS } = await import('../config');
+        const { DEMO_REDACTED_ADDRESS, DEMO_WETH_ADDRESS, EXECUTION_ROUTER_ADDRESS } = await Promise.resolve().then(() => __importStar(require('../config')));
         // Telemetry: log prepare success
         const actionTypes = result.plan?.actions?.map((a) => a.actionType) || [];
-        logEvent('prepare_success', {
+        (0, logger_1.logEvent)('prepare_success', {
             draftId: req.body.draftId,
-            userHash: req.body.userAddress ? hashAddress(req.body.userAddress) : undefined,
+            userHash: req.body.userAddress ? (0, logger_1.hashAddress)(req.body.userAddress) : undefined,
             authMode: req.body.authMode,
             actionTypes,
             executionKind: req.body.executionKind,
@@ -1604,7 +1644,7 @@ app.post('/api/execute/prepare', maybeCheckAccess, async (req, res) => {
             code: error.code || 'UNKNOWN',
             latencyMs: Date.now() - prepareStartTime,
         });
-        logEvent('prepare_fail', {
+        (0, logger_1.logEvent)('prepare_fail', {
             draftId: req.body.draftId,
             error: error.message,
             latencyMs: Date.now() - prepareStartTime,
@@ -1630,12 +1670,12 @@ app.post('/api/setup/approve', maybeCheckAccess, async (req, res) => {
             });
         }
         // Telemetry: log approve prepare
-        logEvent('approve_prepare', {
-            userHash: userAddress ? hashAddress(userAddress) : undefined,
+        (0, logger_1.logEvent)('approve_prepare', {
+            userHash: userAddress ? (0, logger_1.hashAddress)(userAddress) : undefined,
             notes: [tokenAddress.substring(0, 10) + '...', spenderAddress.substring(0, 10) + '...'],
         });
         // Encode approve function call
-        const { encodeFunctionData } = await import('viem');
+        const { encodeFunctionData } = await Promise.resolve().then(() => __importStar(require('viem')));
         const approveAbi = [
             {
                 name: 'approve',
@@ -1657,7 +1697,7 @@ app.post('/api/setup/approve', maybeCheckAccess, async (req, res) => {
             functionName: 'approve',
             args: [spenderAddress, amountBigInt],
         });
-        const { ETH_TESTNET_CHAIN_ID } = await import('../config');
+        const { ETH_TESTNET_CHAIN_ID } = await Promise.resolve().then(() => __importStar(require('../config')));
         res.json({
             chainId: ETH_TESTNET_CHAIN_ID,
             to: tokenAddress,
@@ -1689,20 +1729,20 @@ app.post('/api/execute/submit', maybeCheckAccess, async (req, res) => {
             });
         }
         // Telemetry: log submit
-        logEvent('submit_tx', {
+        (0, logger_1.logEvent)('submit_tx', {
             draftId,
             txHash,
-            userHash: userAddress ? hashAddress(userAddress) : undefined,
+            userHash: userAddress ? (0, logger_1.hashAddress)(userAddress) : undefined,
         });
         // Get portfolio before
         const portfolioBefore = buildPortfolioSnapshot();
-        const { EXECUTION_MODE, ETH_TESTNET_RPC_URL } = await import('../config');
+        const { EXECUTION_MODE, ETH_TESTNET_RPC_URL } = await Promise.resolve().then(() => __importStar(require('../config')));
         // In eth_testnet mode, wait for receipt confirmation
         let receiptStatus = 'confirmed';
         let blockNumber;
         let receiptError;
         if (EXECUTION_MODE === 'eth_testnet' && ETH_TESTNET_RPC_URL) {
-            const receiptResult = await waitForReceipt(ETH_TESTNET_RPC_URL, txHash, {
+            const receiptResult = await (0, evmReceipt_1.waitForReceipt)(ETH_TESTNET_RPC_URL, txHash, {
                 timeoutMs: 60000,
                 pollMs: 2000,
             });
@@ -1711,7 +1751,7 @@ app.post('/api/execute/submit', maybeCheckAccess, async (req, res) => {
             receiptError = receiptResult.error;
             // Telemetry: log receipt result
             if (receiptStatus === 'confirmed') {
-                logEvent('tx_confirmed', {
+                (0, logger_1.logEvent)('tx_confirmed', {
                     draftId,
                     txHash,
                     blockNumber,
@@ -1720,7 +1760,7 @@ app.post('/api/execute/submit', maybeCheckAccess, async (req, res) => {
                 });
             }
             else if (receiptStatus === 'failed') {
-                logEvent('tx_failed', {
+                (0, logger_1.logEvent)('tx_failed', {
                     draftId,
                     txHash,
                     blockNumber,
@@ -1729,7 +1769,7 @@ app.post('/api/execute/submit', maybeCheckAccess, async (req, res) => {
                 });
             }
             else if (receiptStatus === 'timeout') {
-                logEvent('tx_timeout', {
+                (0, logger_1.logEvent)('tx_timeout', {
                     draftId,
                     txHash,
                     error: receiptError,
@@ -1798,7 +1838,7 @@ app.post('/api/execute/submit', maybeCheckAccess, async (req, res) => {
     }
     catch (error) {
         console.error('[api/execute/submit] Error:', error);
-        logEvent('error', {
+        (0, logger_1.logEvent)('error', {
             error: error.message,
             notes: ['submit_tx_error'],
         });
@@ -1818,7 +1858,7 @@ app.post('/api/execute/submit', maybeCheckAccess, async (req, res) => {
  */
 app.get('/api/execute/preflight', async (req, res) => {
     try {
-        const { EXECUTION_MODE } = await import('../config');
+        const { EXECUTION_MODE } = await Promise.resolve().then(() => __importStar(require('../config')));
         const ALLOW_SIM_MODE = process.env.ALLOW_SIM_MODE === 'true';
         // Only allow SIM mode if explicitly enabled
         if (EXECUTION_MODE === 'sim' && ALLOW_SIM_MODE) {
@@ -1837,7 +1877,7 @@ app.get('/api/execute/preflight', async (req, res) => {
                 error: 'Preflight endpoint only available in sim or eth_testnet mode',
             });
         }
-        const { ETH_TESTNET_RPC_URL, EXECUTION_ROUTER_ADDRESS, MOCK_SWAP_ADAPTER_ADDRESS, requireEthTestnetConfig, } = await import('../config');
+        const { ETH_TESTNET_RPC_URL, EXECUTION_ROUTER_ADDRESS, MOCK_SWAP_ADAPTER_ADDRESS, requireEthTestnetConfig, } = await Promise.resolve().then(() => __importStar(require('../config')));
         const notes = [];
         let ok = true;
         // Validate config
@@ -1878,7 +1918,7 @@ app.get('/api/execute/preflight', async (req, res) => {
         let routerOk = false;
         if (EXECUTION_ROUTER_ADDRESS && ETH_TESTNET_RPC_URL && rpcOk) {
             try {
-                const { eth_getCode } = await import('../executors/evmRpc');
+                const { eth_getCode } = await Promise.resolve().then(() => __importStar(require('../executors/evmRpc')));
                 const code = await eth_getCode(ETH_TESTNET_RPC_URL, EXECUTION_ROUTER_ADDRESS);
                 routerOk = code !== '0x' && code.length > 2;
                 if (!routerOk) {
@@ -1896,8 +1936,8 @@ app.get('/api/execute/preflight', async (req, res) => {
         let adapterOk = false;
         if (routerOk && MOCK_SWAP_ADAPTER_ADDRESS && ETH_TESTNET_RPC_URL) {
             try {
-                const { eth_call } = await import('../executors/evmRpc');
-                const { encodeFunctionData } = await import('viem');
+                const { eth_call } = await Promise.resolve().then(() => __importStar(require('../executors/evmRpc')));
+                const { encodeFunctionData } = await Promise.resolve().then(() => __importStar(require('viem')));
                 if (!EXECUTION_ROUTER_ADDRESS) {
                     throw new Error('EXECUTION_ROUTER_ADDRESS not configured');
                 }
@@ -1927,7 +1967,7 @@ app.get('/api/execute/preflight', async (req, res) => {
                     throw new Error(`Invalid call data: ${data}`);
                 }
                 const result = await eth_call(ETH_TESTNET_RPC_URL, EXECUTION_ROUTER_ADDRESS, data);
-                const { decodeBool } = await import('../executors/evmRpc');
+                const { decodeBool } = await Promise.resolve().then(() => __importStar(require('../executors/evmRpc')));
                 adapterOk = decodeBool(result);
                 if (!adapterOk) {
                     notes.push('Adapter not allowlisted in router');
@@ -1981,7 +2021,7 @@ app.get('/api/execute/preflight', async (req, res) => {
             ok = false;
         }
         // Check routing configuration
-        const { ROUTING_MODE, ONEINCH_API_KEY, EXECUTION_SWAP_MODE, } = await import('../config');
+        const { ROUTING_MODE, ONEINCH_API_KEY, EXECUTION_SWAP_MODE, } = await Promise.resolve().then(() => __importStar(require('../config')));
         // Check 1inch connectivity
         let oneinchOk = false;
         if (ONEINCH_API_KEY) {
@@ -2023,7 +2063,7 @@ app.get('/api/execute/preflight', async (req, res) => {
             notes.push('Swap execution: deterministic demo venue');
         }
         // Check lending configuration
-        const { DEMO_LEND_VAULT_ADDRESS, DEMO_LEND_ADAPTER_ADDRESS, LENDING_EXECUTION_MODE, LENDING_RATE_SOURCE, AAVE_SEPOLIA_POOL_ADDRESS, AAVE_ADAPTER_ADDRESS, } = await import('../config');
+        const { DEMO_LEND_VAULT_ADDRESS, DEMO_LEND_ADAPTER_ADDRESS, LENDING_EXECUTION_MODE, LENDING_RATE_SOURCE, AAVE_SEPOLIA_POOL_ADDRESS, AAVE_ADAPTER_ADDRESS, } = await Promise.resolve().then(() => __importStar(require('../config')));
         // Check DefiLlama connectivity
         let defillamaOk = false;
         if (LENDING_RATE_SOURCE === 'defillama') {
@@ -2073,7 +2113,7 @@ app.get('/api/execute/preflight', async (req, res) => {
             }
         }
         // Check dFlow configuration
-        const { DFLOW_ENABLED, DFLOW_API_KEY, DFLOW_BASE_URL, DFLOW_EVENTS_MARKETS_PATH, DFLOW_EVENTS_QUOTE_PATH, DFLOW_SWAPS_QUOTE_PATH, DFLOW_REQUIRE, } = await import('../config');
+        const { DFLOW_ENABLED, DFLOW_API_KEY, DFLOW_BASE_URL, DFLOW_EVENTS_MARKETS_PATH, DFLOW_EVENTS_QUOTE_PATH, DFLOW_SWAPS_QUOTE_PATH, DFLOW_REQUIRE, } = await Promise.resolve().then(() => __importStar(require('../config')));
         const dflowStatus = {
             enabled: DFLOW_ENABLED,
             ok: DFLOW_ENABLED && !!DFLOW_API_KEY && !!DFLOW_BASE_URL,
@@ -2112,7 +2152,7 @@ app.get('/api/execute/preflight', async (req, res) => {
         }
         // Build allowed adapters list for capabilities
         // Note: AAVE_ADAPTER_ADDRESS already imported above at line 2224
-        const { PROOF_ADAPTER_ADDRESS, ERC20_PULL_ADAPTER_ADDRESS, UNISWAP_V3_ADAPTER_ADDRESS, WETH_WRAP_ADAPTER_ADDRESS, } = await import('../config');
+        const { PROOF_ADAPTER_ADDRESS, ERC20_PULL_ADAPTER_ADDRESS, UNISWAP_V3_ADAPTER_ADDRESS, WETH_WRAP_ADAPTER_ADDRESS, } = await Promise.resolve().then(() => __importStar(require('../config')));
         const allowedAdapters = [];
         if (UNISWAP_V3_ADAPTER_ADDRESS) {
             allowedAdapters.push(UNISWAP_V3_ADAPTER_ADDRESS.toLowerCase());
@@ -2184,7 +2224,7 @@ app.post('/api/session/prepare', async (req, res) => {
         bodyKeys,
     });
     try {
-        const { EXECUTION_MODE, EXECUTION_AUTH_MODE } = await import('../config');
+        const { EXECUTION_MODE, EXECUTION_AUTH_MODE } = await Promise.resolve().then(() => __importStar(require('../config')));
         // Accept both body and query params, support both userAddress and address (backward compat)
         const userAddress = req.body?.userAddress || req.body?.address || req.query?.userAddress || req.query?.address;
         // Check cooldown (only log once per cooldown window)
@@ -2230,17 +2270,17 @@ app.post('/api/session/prepare', async (req, res) => {
             userAddress: userAddress.substring(0, 10) + '...',
         });
         // Telemetry: log session prepare
-        logEvent('session_prepare', {
-            userHash: hashAddress(userAddress),
+        (0, logger_1.logEvent)('session_prepare', {
+            userHash: (0, logger_1.hashAddress)(userAddress),
             authMode: 'session',
         });
-        const { EXECUTION_ROUTER_ADDRESS, MOCK_SWAP_ADAPTER_ADDRESS, UNISWAP_V3_ADAPTER_ADDRESS, WETH_WRAP_ADAPTER_ADDRESS, ERC20_PULL_ADAPTER_ADDRESS, PROOF_ADAPTER_ADDRESS, DEMO_LEND_ADAPTER_ADDRESS, AAVE_ADAPTER_ADDRESS, RELAYER_PRIVATE_KEY, ETH_TESTNET_RPC_URL, requireRelayerConfig, } = await import('../config');
+        const { EXECUTION_ROUTER_ADDRESS, MOCK_SWAP_ADAPTER_ADDRESS, UNISWAP_V3_ADAPTER_ADDRESS, WETH_WRAP_ADAPTER_ADDRESS, ERC20_PULL_ADAPTER_ADDRESS, PROOF_ADAPTER_ADDRESS, DEMO_LEND_ADAPTER_ADDRESS, AAVE_ADAPTER_ADDRESS, RELAYER_PRIVATE_KEY, ETH_TESTNET_RPC_URL, requireRelayerConfig, } = await Promise.resolve().then(() => __importStar(require('../config')));
         requireRelayerConfig();
         // DEV-ONLY: Log router + chain diagnostics
         if (process.env.NODE_ENV !== 'production') {
             try {
-                const { createPublicClient, http } = await import('viem');
-                const { sepolia } = await import('viem/chains');
+                const { createPublicClient, http } = await Promise.resolve().then(() => __importStar(require('viem')));
+                const { sepolia } = await Promise.resolve().then(() => __importStar(require('viem/chains')));
                 const publicClient = createPublicClient({
                     chain: sepolia,
                     transport: http(ETH_TESTNET_RPC_URL),
@@ -2262,13 +2302,13 @@ app.post('/api/session/prepare', async (req, res) => {
             }
         }
         // Generate session ID
-        const { keccak256, toBytes, parseUnits } = await import('viem');
+        const { keccak256, toBytes, parseUnits } = await Promise.resolve().then(() => __importStar(require('viem')));
         const sessionId = keccak256(toBytes(userAddress + Date.now().toString()));
         // DEBUG: Log generated sessionId
         console.log('[session/prepare] Generated sessionId:', sessionId);
         console.log('[session/prepare] For userAddress:', userAddress);
         // Derive relayer address from private key
-        const { privateKeyToAccount } = await import('viem/accounts');
+        const { privateKeyToAccount } = await Promise.resolve().then(() => __importStar(require('viem/accounts')));
         const relayerAccount = privateKeyToAccount(RELAYER_PRIVATE_KEY);
         const executor = relayerAccount.address;
         // Set session parameters
@@ -2303,7 +2343,7 @@ app.post('/api/session/prepare', async (req, res) => {
             });
         }
         // Encode createSession call
-        const { encodeFunctionData } = await import('viem');
+        const { encodeFunctionData } = await Promise.resolve().then(() => __importStar(require('viem')));
         const createSessionAbi = [
             {
                 name: 'createSession',
@@ -2464,7 +2504,7 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
         planActions: plan?.actions?.length,
     });
     try {
-        const { EXECUTION_MODE, EXECUTION_AUTH_MODE, EXECUTION_DISABLED, V1_DEMO } = await import('../config');
+        const { EXECUTION_MODE, EXECUTION_AUTH_MODE, EXECUTION_DISABLED, V1_DEMO } = await Promise.resolve().then(() => __importStar(require('../config')));
         // V1: Emergency kill switch
         if (EXECUTION_DISABLED) {
             return res.status(503).json({
@@ -2486,7 +2526,7 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
         if (EXECUTION_MODE === 'eth_testnet' && EXECUTION_AUTH_MODE === 'session') {
             try {
                 // Quick check: verify relayer and router are configured
-                const { RELAYER_PRIVATE_KEY, EXECUTION_ROUTER_ADDRESS, ETH_TESTNET_RPC_URL } = await import('../config');
+                const { RELAYER_PRIVATE_KEY, EXECUTION_ROUTER_ADDRESS, ETH_TESTNET_RPC_URL } = await Promise.resolve().then(() => __importStar(require('../config')));
                 if (RELAYER_PRIVATE_KEY && EXECUTION_ROUTER_ADDRESS && ETH_TESTNET_RPC_URL) {
                     // Optionally verify router has code (quick check with timeout)
                     try {
@@ -2544,7 +2584,7 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
             });
         }
         // STRICT SERVER-SIDE GUARDS
-        const guardConfig = await import('../config');
+        const guardConfig = await Promise.resolve().then(() => __importStar(require('../config')));
         const EXECUTION_ROUTER_ADDRESS = guardConfig.EXECUTION_ROUTER_ADDRESS;
         const UNISWAP_V3_ADAPTER_ADDRESS = guardConfig.UNISWAP_V3_ADAPTER_ADDRESS;
         const WETH_WRAP_ADAPTER_ADDRESS = guardConfig.WETH_WRAP_ADAPTER_ADDRESS;
@@ -2568,7 +2608,7 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
             });
         }
         // Guard 2: Validate allowed adapters only (reuse UNISWAP_V3_ADAPTER_ADDRESS, WETH_WRAP_ADAPTER_ADDRESS, MOCK_SWAP_ADAPTER_ADDRESS from above)
-        const adapterConfig = await import('../config');
+        const adapterConfig = await Promise.resolve().then(() => __importStar(require('../config')));
         const PROOF_ADAPTER_ADDRESS = adapterConfig.PROOF_ADAPTER_ADDRESS;
         const ERC20_PULL_ADAPTER_ADDRESS = adapterConfig.ERC20_PULL_ADAPTER_ADDRESS;
         const DEMO_LEND_ADAPTER_ADDRESS = adapterConfig.DEMO_LEND_ADAPTER_ADDRESS;
@@ -2636,7 +2676,7 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
         }
         // Guard 4: Validate token allowlist (ETH/WETH/REDACTED only for MVP)
         // Include both standard Sepolia tokens AND Aave-specific tokens
-        const { AAVE_REDACTED_ADDRESS, AAVE_WETH_ADDRESS } = await import('../config');
+        const { AAVE_REDACTED_ADDRESS, AAVE_WETH_ADDRESS } = await Promise.resolve().then(() => __importStar(require('../config')));
         const allowedTokens = new Set();
         if (WETH_ADDRESS_SEPOLIA) {
             allowedTokens.add(WETH_ADDRESS_SEPOLIA.toLowerCase());
@@ -2652,7 +2692,7 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
             allowedTokens.add(AAVE_WETH_ADDRESS.toLowerCase());
         }
         // Decode actions to check tokens
-        const { decodeAbiParameters, parseUnits } = await import('viem');
+        const { decodeAbiParameters, parseUnits } = await Promise.resolve().then(() => __importStar(require('viem')));
         for (const action of plan.actions) {
             if (action.actionType === 0) {
                 // SWAP action - decode to check tokens
@@ -2711,12 +2751,12 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
         // Helper to get session status from on-chain
         const getSessionStatusFromChain = async (sessionId) => {
             try {
-                const { ETH_TESTNET_RPC_URL, EXECUTION_ROUTER_ADDRESS } = await import('../config');
+                const { ETH_TESTNET_RPC_URL, EXECUTION_ROUTER_ADDRESS } = await Promise.resolve().then(() => __importStar(require('../config')));
                 if (!ETH_TESTNET_RPC_URL || !EXECUTION_ROUTER_ADDRESS) {
                     return null;
                 }
-                const { createPublicClient, http } = await import('viem');
-                const { sepolia } = await import('viem/chains');
+                const { createPublicClient, http } = await Promise.resolve().then(() => __importStar(require('viem')));
+                const { sepolia } = await Promise.resolve().then(() => __importStar(require('viem/chains')));
                 const publicClient = createPublicClient({
                     chain: sepolia,
                     transport: http(ETH_TESTNET_RPC_URL),
@@ -2781,7 +2821,7 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
             }
         };
         // Evaluate SessionPolicy
-        const { evaluateSessionPolicy, estimatePlanSpend } = await import('./sessionPolicy');
+        const { evaluateSessionPolicy, estimatePlanSpend } = await Promise.resolve().then(() => __importStar(require('./sessionPolicy')));
         // DEV-ONLY: Allow policyOverride in validateOnly mode for testing
         let policyOverride;
         if (validateOnly && (process.env.NODE_ENV !== 'production' || process.env.DEV === 'true')) {
@@ -2876,10 +2916,10 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
             });
         }
         console.log('[api/execute/relayed] Policy passed, importing relayer...');
-        const { sendRelayedTx } = await import('../executors/relayer');
+        const { sendRelayedTx } = await Promise.resolve().then(() => __importStar(require('../executors/relayer')));
         console.log('[api/execute/relayed] Relayer imported, importing viem...');
         // Encode executeWithSession call
-        const { encodeFunctionData } = await import('viem');
+        const { encodeFunctionData } = await Promise.resolve().then(() => __importStar(require('viem')));
         console.log('[api/execute/relayed] Viem imported, encoding function data...');
         const executeWithSessionAbi = [
             {
@@ -3015,7 +3055,7 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
         // Get portfolio before execution
         const portfolioBefore = buildPortfolioSnapshot();
         // V1: Compute planHash server-side (keccak256(abi.encode(plan)))
-        const { keccak256, encodeAbiParameters } = await import('viem');
+        const { keccak256, encodeAbiParameters } = await Promise.resolve().then(() => __importStar(require('viem')));
         let planHash;
         try {
             planHash = keccak256(encodeAbiParameters([
@@ -3068,12 +3108,12 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
             });
         }
         // V1: Wait for receipt confirmation (receipt.status === 1)
-        const { ETH_TESTNET_RPC_URL } = await import('../config');
+        const { ETH_TESTNET_RPC_URL } = await Promise.resolve().then(() => __importStar(require('../config')));
         let receiptStatus = 'pending';
         let blockNumber;
         let receiptError;
         if (ETH_TESTNET_RPC_URL) {
-            const { waitForReceipt } = await import('../executors/evmReceipt');
+            const { waitForReceipt } = await Promise.resolve().then(() => __importStar(require('../executors/evmReceipt')));
             const receiptResult = await waitForReceipt(ETH_TESTNET_RPC_URL, txHash, {
                 timeoutMs: 60000,
                 pollMs: 2000,
@@ -3108,7 +3148,7 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
         };
         // Log execution artifact
         if (process.env.DEBUG_EXECUTIONS === '1') {
-            logExecutionArtifact({
+            (0, executionLogger_1.logExecutionArtifact)({
                 executionRequest: null, // Not available in relayed endpoint
                 plan: req.body.plan,
                 executionResult: result,
@@ -3118,9 +3158,9 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
         }
         // Telemetry: log relayed tx
         const actionTypes = req.body.plan?.actions?.map((a) => a.actionType) || [];
-        logEvent('relayed_tx', {
+        (0, logger_1.logEvent)('relayed_tx', {
             draftId: req.body.draftId,
-            userHash: req.body.userAddress ? hashAddress(req.body.userAddress) : undefined,
+            userHash: req.body.userAddress ? (0, logger_1.hashAddress)(req.body.userAddress) : undefined,
             txHash,
             actionTypes,
             authMode: 'session',
@@ -3164,7 +3204,7 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
         // Log failed attempt
         if (process.env.NODE_ENV !== 'production' && req.body.plan) {
             try {
-                const { estimatePlanSpend } = await import('./sessionPolicy');
+                const { estimatePlanSpend } = await Promise.resolve().then(() => __importStar(require('./sessionPolicy')));
                 const spendEstimate = await estimatePlanSpend(req.body.plan);
                 addRelayedAttempt({
                     correlationId,
@@ -3191,7 +3231,7 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
         };
         // Log failed execution artifact
         if (process.env.DEBUG_EXECUTIONS === '1') {
-            logExecutionArtifact({
+            (0, executionLogger_1.logExecutionArtifact)({
                 executionRequest: null,
                 plan: req.body.plan,
                 executionResult: result,
@@ -3214,7 +3254,7 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
 app.get('/api/session/status', async (req, res) => {
     const correlationId = req.correlationId || generateCorrelationId();
     try {
-        const { EXECUTION_MODE, EXECUTION_AUTH_MODE } = await import('../config');
+        const { EXECUTION_MODE, EXECUTION_AUTH_MODE } = await Promise.resolve().then(() => __importStar(require('../config')));
         // Accept both query and body params
         const userAddress = req.query?.userAddress || req.body?.userAddress;
         const sessionId = req.query?.sessionId || req.body?.sessionId;
@@ -3278,7 +3318,7 @@ app.get('/api/session/status', async (req, res) => {
             });
         }
         // Check for active session on-chain (only if sessionId provided)
-        const { EXECUTION_ROUTER_ADDRESS, ETH_TESTNET_RPC_URL } = await import('../config');
+        const { EXECUTION_ROUTER_ADDRESS, ETH_TESTNET_RPC_URL } = await Promise.resolve().then(() => __importStar(require('../config')));
         if (!ETH_TESTNET_RPC_URL || !EXECUTION_ROUTER_ADDRESS) {
             return res.json({
                 ok: true,
@@ -3294,8 +3334,8 @@ app.get('/api/session/status', async (req, res) => {
         }
         try {
             // Read session from contract (with timeout)
-            const { createPublicClient, http } = await import('viem');
-            const { sepolia } = await import('viem/chains');
+            const { createPublicClient, http } = await Promise.resolve().then(() => __importStar(require('viem')));
+            const { sepolia } = await Promise.resolve().then(() => __importStar(require('viem/chains')));
             const publicClient = createPublicClient({
                 chain: sepolia,
                 transport: http(ETH_TESTNET_RPC_URL),
@@ -3454,7 +3494,7 @@ app.get('/api/session/status', async (req, res) => {
 app.post('/api/session/status', async (req, res) => {
     // Delegate to GET handler logic (same behavior)
     try {
-        const { EXECUTION_MODE, EXECUTION_AUTH_MODE } = await import('../config');
+        const { EXECUTION_MODE, EXECUTION_AUTH_MODE } = await Promise.resolve().then(() => __importStar(require('../config')));
         // Accept both body and query params
         const userAddress = req.body?.userAddress || req.query?.userAddress;
         const sessionId = req.body?.sessionId || req.query?.sessionId;
@@ -3468,7 +3508,7 @@ app.post('/api/session/status', async (req, res) => {
             console.log('[api/session/status] POST request:', { userAddress, sessionId, EXECUTION_MODE, EXECUTION_AUTH_MODE });
         }
         // Task D: Check if session mode is properly configured (POST handler)
-        const { RELAYER_PRIVATE_KEY: RELAYER_PRIVATE_KEY_POST, EXECUTION_ROUTER_ADDRESS: EXECUTION_ROUTER_ADDRESS_POST, ETH_TESTNET_RPC_URL: ETH_TESTNET_RPC_URL_POST } = await import('../config');
+        const { RELAYER_PRIVATE_KEY: RELAYER_PRIVATE_KEY_POST, EXECUTION_ROUTER_ADDRESS: EXECUTION_ROUTER_ADDRESS_POST, ETH_TESTNET_RPC_URL: ETH_TESTNET_RPC_URL_POST } = await Promise.resolve().then(() => __importStar(require('../config')));
         const isSessionModeConfiguredPost = EXECUTION_MODE === 'eth_testnet' && EXECUTION_AUTH_MODE === 'session';
         const hasRequiredConfigPost = !!(RELAYER_PRIVATE_KEY_POST && EXECUTION_ROUTER_ADDRESS_POST && ETH_TESTNET_RPC_URL_POST);
         // In direct mode or sim mode, return enabled: false
@@ -3531,7 +3571,7 @@ app.post('/api/session/status', async (req, res) => {
                 cooldownMs: SESSION_COOLDOWN_MS,
             });
         }
-        const { EXECUTION_ROUTER_ADDRESS, ETH_TESTNET_RPC_URL } = await import('../config');
+        const { EXECUTION_ROUTER_ADDRESS, ETH_TESTNET_RPC_URL } = await Promise.resolve().then(() => __importStar(require('../config')));
         const correlationId = req.correlationId || 'unknown';
         // Check for active session on-chain (only if sessionId provided)
         if (!ETH_TESTNET_RPC_URL || !EXECUTION_ROUTER_ADDRESS) {
@@ -3549,8 +3589,8 @@ app.post('/api/session/status', async (req, res) => {
         }
         try {
             // Read session from contract (with timeout)
-            const { createPublicClient, http } = await import('viem');
-            const { sepolia } = await import('viem/chains');
+            const { createPublicClient, http } = await Promise.resolve().then(() => __importStar(require('viem')));
+            const { sepolia } = await Promise.resolve().then(() => __importStar(require('viem/chains')));
             const publicClient = createPublicClient({
                 chain: sepolia,
                 transport: http(ETH_TESTNET_RPC_URL),
@@ -3674,7 +3714,7 @@ app.post('/api/session/status', async (req, res) => {
  */
 app.post('/api/session/revoke/prepare', async (req, res) => {
     try {
-        const { EXECUTION_MODE, EXECUTION_AUTH_MODE } = await import('../config');
+        const { EXECUTION_MODE, EXECUTION_AUTH_MODE } = await Promise.resolve().then(() => __importStar(require('../config')));
         if (EXECUTION_MODE !== 'eth_testnet' || EXECUTION_AUTH_MODE !== 'session') {
             return res.status(400).json({
                 error: 'Session endpoint only available in eth_testnet mode with session auth',
@@ -3686,9 +3726,9 @@ app.post('/api/session/revoke/prepare', async (req, res) => {
                 error: 'sessionId is required',
             });
         }
-        const { EXECUTION_ROUTER_ADDRESS } = await import('../config');
+        const { EXECUTION_ROUTER_ADDRESS } = await Promise.resolve().then(() => __importStar(require('../config')));
         // Encode revokeSession call
-        const { encodeFunctionData } = await import('viem');
+        const { encodeFunctionData } = await Promise.resolve().then(() => __importStar(require('viem')));
         const revokeSessionAbi = [
             {
                 name: 'revokeSession',
@@ -3737,7 +3777,7 @@ app.post('/api/token/weth/wrap/prepare', async (req, res) => {
                 error: 'Invalid userAddress format',
             });
         }
-        const { WETH_ADDRESS_SEPOLIA } = await import('../config');
+        const { WETH_ADDRESS_SEPOLIA } = await Promise.resolve().then(() => __importStar(require('../config')));
         if (!WETH_ADDRESS_SEPOLIA) {
             return res.status(500).json({
                 error: 'WETH_ADDRESS_SEPOLIA not configured',
@@ -3747,7 +3787,7 @@ app.post('/api/token/weth/wrap/prepare', async (req, res) => {
         // Function selector: deposit() = 0xd0e30db0
         const data = '0xd0e30db0';
         // Convert amount to wei (18 decimals)
-        const { parseUnits } = await import('viem');
+        const { parseUnits } = await Promise.resolve().then(() => __importStar(require('viem')));
         const amountWei = parseUnits(amount, 18);
         const value = '0x' + amountWei.toString(16);
         res.json({
@@ -3786,7 +3826,7 @@ app.post('/api/token/approve/prepare', async (req, res) => {
             });
         }
         // Encode ERC20 approve call
-        const { encodeFunctionData } = await import('viem');
+        const { encodeFunctionData } = await Promise.resolve().then(() => __importStar(require('viem')));
         const approveAbi = [
             {
                 name: 'approve',
@@ -3851,7 +3891,7 @@ app.get('/api/execute/status', async (req, res) => {
             });
         }
         // Require RPC URL
-        const { ETH_TESTNET_RPC_URL } = await import('../config');
+        const { ETH_TESTNET_RPC_URL } = await Promise.resolve().then(() => __importStar(require('../config')));
         if (!ETH_TESTNET_RPC_URL) {
             return res.status(500).json({
                 error: 'ETH_TESTNET_RPC_URL not configured',
@@ -3950,7 +3990,7 @@ app.get('/api/portfolio/eth_testnet', maybeCheckAccess, async (req, res) => {
             });
         }
         // Require config
-        const { ETH_TESTNET_RPC_URL, REDACTED_ADDRESS_SEPOLIA, WETH_ADDRESS_SEPOLIA } = await import('../config');
+        const { ETH_TESTNET_RPC_URL, REDACTED_ADDRESS_SEPOLIA, WETH_ADDRESS_SEPOLIA } = await Promise.resolve().then(() => __importStar(require('../config')));
         if (!ETH_TESTNET_RPC_URL) {
             return res.status(500).json({
                 error: 'ETH_TESTNET_RPC_URL not configured',
@@ -3962,7 +4002,7 @@ app.get('/api/portfolio/eth_testnet', maybeCheckAccess, async (req, res) => {
             });
         }
         // Import RPC helpers
-        const { erc20_balanceOf } = await import('../executors/erc20Rpc');
+        const { erc20_balanceOf } = await Promise.resolve().then(() => __importStar(require('../executors/erc20Rpc')));
         // Fetch ETH balance
         const ethBalanceResponse = await fetch(ETH_TESTNET_RPC_URL, {
             method: 'POST',
@@ -4037,7 +4077,7 @@ app.get('/api/defi/aave/positions', maybeCheckAccess, async (req, res) => {
                 error: 'Invalid userAddress format',
             });
         }
-        const { readAavePositions } = await import('../defi/aave/positions');
+        const { readAavePositions } = await Promise.resolve().then(() => __importStar(require('../defi/aave/positions')));
         const positions = await readAavePositions(userAddress);
         // Ensure stable schema: always return positions array (empty if no positions)
         // Never return 500 for "no position" case - empty array is valid
@@ -4095,7 +4135,7 @@ app.get('/api/wallet/balances', maybeCheckAccess, async (req, res) => {
             });
         }
         // Get config
-        const { EXECUTION_MODE, ETH_TESTNET_RPC_URL, ETH_TESTNET_CHAIN_ID, DEMO_REDACTED_ADDRESS, DEMO_WETH_ADDRESS } = await import('../config');
+        const { EXECUTION_MODE, ETH_TESTNET_RPC_URL, ETH_TESTNET_CHAIN_ID, DEMO_REDACTED_ADDRESS, DEMO_WETH_ADDRESS } = await Promise.resolve().then(() => __importStar(require('../config')));
         // Handle SIM mode - only if explicitly allowed
         const ALLOW_SIM_MODE = process.env.ALLOW_SIM_MODE === 'true';
         if (EXECUTION_MODE === 'sim' && ALLOW_SIM_MODE) {
@@ -4174,7 +4214,7 @@ app.get('/api/wallet/balances', maybeCheckAccess, async (req, res) => {
         // Fetch demo token balances (if configured)
         if (DEMO_REDACTED_ADDRESS) {
             try {
-                const { erc20_balanceOf } = await import('../executors/erc20Rpc');
+                const { erc20_balanceOf } = await Promise.resolve().then(() => __importStar(require('../executors/erc20Rpc')));
                 const balance = await erc20_balanceOf(DEMO_REDACTED_ADDRESS, address);
                 tokens.push({
                     address: DEMO_REDACTED_ADDRESS,
@@ -4193,7 +4233,7 @@ app.get('/api/wallet/balances', maybeCheckAccess, async (req, res) => {
         }
         if (DEMO_WETH_ADDRESS) {
             try {
-                const { erc20_balanceOf } = await import('../executors/erc20Rpc');
+                const { erc20_balanceOf } = await Promise.resolve().then(() => __importStar(require('../executors/erc20Rpc')));
                 const balance = await erc20_balanceOf(DEMO_WETH_ADDRESS, address);
                 tokens.push({
                     address: DEMO_WETH_ADDRESS,
@@ -4239,7 +4279,7 @@ app.get('/api/wallet/balances', maybeCheckAccess, async (req, res) => {
  */
 app.post('/api/demo/faucet', maybeCheckAccess, async (req, res) => {
     try {
-        const { EXECUTION_MODE, DEMO_REDACTED_ADDRESS, DEMO_WETH_ADDRESS } = await import('../config');
+        const { EXECUTION_MODE, DEMO_REDACTED_ADDRESS, DEMO_WETH_ADDRESS } = await Promise.resolve().then(() => __importStar(require('../config')));
         // Only allow in testnet mode
         if (EXECUTION_MODE !== 'eth_testnet') {
             return res.status(400).json({
@@ -4267,7 +4307,7 @@ app.post('/api/demo/faucet', maybeCheckAccess, async (req, res) => {
         }
         console.log(`[api/demo/faucet] Minting tokens to ${userAddress}...`);
         // Import minting utility
-        const { mintDemoTokens } = await import('../utils/demoTokenMinter');
+        const { mintDemoTokens } = await Promise.resolve().then(() => __importStar(require('../utils/demoTokenMinter')));
         const result = await mintDemoTokens(userAddress);
         console.log(`[api/demo/faucet] Successfully minted tokens:`, result);
         res.json({
@@ -4290,7 +4330,7 @@ app.post('/api/demo/faucet', maybeCheckAccess, async (req, res) => {
  */
 app.get('/health', async (req, res) => {
     try {
-        const { EXECUTION_MODE, ETH_TESTNET_RPC_URL, EXECUTION_ROUTER_ADDRESS, } = await import('../config');
+        const { EXECUTION_MODE, ETH_TESTNET_RPC_URL, EXECUTION_ROUTER_ADDRESS, } = await Promise.resolve().then(() => __importStar(require('../config')));
         // Check API keys
         const hasGeminiKey = !!process.env.BLOSSOM_GEMINI_API_KEY;
         const hasOpenAIKey = !!process.env.BLOSSOM_OPENAI_API_KEY;
@@ -4377,7 +4417,7 @@ app.get('/api/health', (req, res) => {
  */
 app.get('/api/rpc/health', async (req, res) => {
     try {
-        const { getProviderHealthStatus } = await import('../providers/rpcProvider');
+        const { getProviderHealthStatus } = await Promise.resolve().then(() => __importStar(require('../providers/rpcProvider')));
         const status = getProviderHealthStatus();
         res.json({
             ok: true,
@@ -4401,7 +4441,7 @@ app.get('/api/rpc/health', async (req, res) => {
  */
 app.post('/api/rpc/reset', async (req, res) => {
     try {
-        const { resetAllCircuits } = await import('../providers/rpcProvider');
+        const { resetAllCircuits } = await Promise.resolve().then(() => __importStar(require('../providers/rpcProvider')));
         resetAllCircuits();
         res.json({ ok: true, message: 'All circuit breakers reset' });
     }
@@ -4417,7 +4457,7 @@ app.post('/api/rpc/reset', async (req, res) => {
  */
 app.get('/api/telemetry/summary', async (req, res) => {
     try {
-        const { getTelemetrySummary } = await import('../../telemetry/db');
+        const { getTelemetrySummary } = await Promise.resolve().then(() => __importStar(require('../../telemetry/db')));
         const summary = getTelemetrySummary();
         res.json({ ok: true, data: summary });
     }
@@ -4450,8 +4490,8 @@ app.get('/api/telemetry/summary', async (req, res) => {
  */
 app.get('/api/telemetry/devnet-stats', async (req, res) => {
     try {
-        const { getDevnetStats, getTrafficStats, migrateAddFeeColumns } = await import('../../telemetry/db');
-        const { BLOSSOM_FEE_BPS } = await import('../config');
+        const { getDevnetStats, getTrafficStats, migrateAddFeeColumns } = await Promise.resolve().then(() => __importStar(require('../../telemetry/db')));
+        const { BLOSSOM_FEE_BPS } = await Promise.resolve().then(() => __importStar(require('../config')));
         // Ensure fee columns exist (migration)
         migrateAddFeeColumns();
         const executionStats = getDevnetStats(BLOSSOM_FEE_BPS);
@@ -4513,7 +4553,7 @@ app.get('/api/telemetry/devnet-stats', async (req, res) => {
  */
 app.get('/api/telemetry/users', async (req, res) => {
     try {
-        const { getUsersWithSessionStatus } = await import('../../telemetry/db');
+        const { getUsersWithSessionStatus } = await Promise.resolve().then(() => __importStar(require('../../telemetry/db')));
         const users = getUsersWithSessionStatus();
         res.json({ ok: true, data: users });
     }
@@ -4526,7 +4566,7 @@ app.get('/api/telemetry/users', async (req, res) => {
  */
 app.get('/api/telemetry/executions', async (req, res) => {
     try {
-        const { listExecutions } = await import('../../telemetry/db');
+        const { listExecutions } = await Promise.resolve().then(() => __importStar(require('../../telemetry/db')));
         const limit = parseInt(req.query.limit || '50', 10);
         const offset = parseInt(req.query.offset || '0', 10);
         const executions = listExecutions(limit, offset);
@@ -4542,7 +4582,7 @@ app.get('/api/telemetry/executions', async (req, res) => {
  */
 app.get('/api/telemetry/runs', async (req, res) => {
     try {
-        const { listRuns, ensureRunsTable } = await import('../../telemetry/db');
+        const { listRuns, ensureRunsTable } = await Promise.resolve().then(() => __importStar(require('../../telemetry/db')));
         ensureRunsTable();
         const limit = parseInt(req.query.limit || '5', 10);
         const runs = listRuns(limit);
@@ -4559,7 +4599,7 @@ app.get('/api/telemetry/runs', async (req, res) => {
  */
 app.post('/api/telemetry/runs', async (req, res) => {
     try {
-        const { upsertRun, ensureRunsTable } = await import('../../telemetry/db');
+        const { upsertRun, ensureRunsTable } = await Promise.resolve().then(() => __importStar(require('../../telemetry/db')));
         ensureRunsTable();
         const { run_id, started_at, duration_secs, total_users, concurrency, total_requests, success_rate, p50_ms, p95_ms, http_5xx_count, top_error, } = req.body;
         if (!run_id) {
@@ -4595,7 +4635,7 @@ app.post('/api/telemetry/runs', async (req, res) => {
  */
 app.get('/api/telemetry/debug', async (req, res) => {
     try {
-        const { getDatabase, ensureRunsTable } = await import('../../telemetry/db');
+        const { getDatabase, ensureRunsTable } = await Promise.resolve().then(() => __importStar(require('../../telemetry/db')));
         const db = getDatabase();
         ensureRunsTable();
         // Get database path
@@ -4659,7 +4699,7 @@ const HOST = process.env.HOST || '0.0.0.0'; // Bind to all interfaces by default
 // Print startup banner with configuration status (Task C: Session config logging)
 (async () => {
     try {
-        const { EXECUTION_MODE, EXECUTION_AUTH_MODE, ETH_TESTNET_RPC_URL, EXECUTION_ROUTER_ADDRESS, RELAYER_PRIVATE_KEY, ETH_TESTNET_CHAIN_ID, } = await import('../config');
+        const { EXECUTION_MODE, EXECUTION_AUTH_MODE, ETH_TESTNET_RPC_URL, EXECUTION_ROUTER_ADDRESS, RELAYER_PRIVATE_KEY, ETH_TESTNET_CHAIN_ID, } = await Promise.resolve().then(() => __importStar(require('../config')));
         // Check API keys from process.env (not exported from config)
         const hasGeminiKey = !!process.env.BLOSSOM_GEMINI_API_KEY;
         const hasOpenAIKey = !!process.env.BLOSSOM_OPENAI_API_KEY;
@@ -4670,7 +4710,7 @@ const HOST = process.env.HOST || '0.0.0.0'; // Bind to all interfaces by default
             : 'not configured';
         // Task 3: Startup banner with chainId, router, adapter addresses
         if (EXECUTION_MODE === 'eth_testnet') {
-            const { MOCK_SWAP_ADAPTER_ADDRESS, UNISWAP_V3_ADAPTER_ADDRESS, UNISWAP_ADAPTER_ADDRESS, WETH_WRAP_ADAPTER_ADDRESS, ERC20_PULL_ADAPTER_ADDRESS, PROOF_ADAPTER_ADDRESS, } = await import('../config');
+            const { MOCK_SWAP_ADAPTER_ADDRESS, UNISWAP_V3_ADAPTER_ADDRESS, UNISWAP_ADAPTER_ADDRESS, WETH_WRAP_ADAPTER_ADDRESS, ERC20_PULL_ADAPTER_ADDRESS, PROOF_ADAPTER_ADDRESS, } = await Promise.resolve().then(() => __importStar(require('../config')));
             console.log(`\n🔧 ETH Testnet Execution Configuration`);
             console.log(`   Chain ID: ${ETH_TESTNET_CHAIN_ID || 'N/A'} (Sepolia: 11155111)`);
             console.log(`   Router Address: ${EXECUTION_ROUTER_ADDRESS ? `${EXECUTION_ROUTER_ADDRESS.substring(0, 10)}...${EXECUTION_ROUTER_ADDRESS.substring(EXECUTION_ROUTER_ADDRESS.length - 8)}` : 'NOT SET'}`);
@@ -4735,7 +4775,7 @@ const HOST = process.env.HOST || '0.0.0.0'; // Bind to all interfaces by default
         if (EXECUTION_MODE === 'eth_testnet') {
             // Task 4: Validate contract configuration on startup
             try {
-                const { validateEthTestnetConfig } = await import('../config');
+                const { validateEthTestnetConfig } = await Promise.resolve().then(() => __importStar(require('../config')));
                 await validateEthTestnetConfig();
                 console.log(`   ✓ ETH testnet configuration validated`);
             }
@@ -4755,8 +4795,8 @@ const HOST = process.env.HOST || '0.0.0.0'; // Bind to all interfaces by default
             // Initialize RPC provider with failover
             if (ETH_TESTNET_RPC_URL) {
                 try {
-                    const { initRpcProvider } = await import('../providers/rpcProvider');
-                    const { ETH_RPC_FALLBACK_URLS } = await import('../config');
+                    const { initRpcProvider } = await Promise.resolve().then(() => __importStar(require('../providers/rpcProvider')));
+                    const { ETH_RPC_FALLBACK_URLS } = await Promise.resolve().then(() => __importStar(require('../config')));
                     initRpcProvider(ETH_TESTNET_RPC_URL, ETH_RPC_FALLBACK_URLS);
                     if (ETH_RPC_FALLBACK_URLS.length > 0) {
                         console.log(`   ✓ RPC failover configured with ${ETH_RPC_FALLBACK_URLS.length} fallback(s)`);
@@ -4773,8 +4813,6 @@ const HOST = process.env.HOST || '0.0.0.0'; // Bind to all interfaces by default
         console.log(`🌸 Blossom Agent (config load skipped)`);
     }
 })();
-// Export app for Vercel serverless (must be before listen())
-export { app };
 // Only listen if not in serverless mode (Vercel sets VERCEL=1)
 if (!process.env.VERCEL) {
     app.listen(PORT, HOST, async () => {
@@ -4802,7 +4840,7 @@ if (!process.env.VERCEL) {
         console.log(`   - GET  /api/ledger/positions/recent`);
         // Start perp indexer if configured
         try {
-            const { startPerpIndexer } = await import('../indexer/perpIndexer');
+            const { startPerpIndexer } = await Promise.resolve().then(() => __importStar(require('../indexer/perpIndexer')));
             const rpcUrl = process.env.ETH_TESTNET_RPC_URL;
             const perpEngineAddress = process.env.DEMO_PERP_ENGINE_ADDRESS;
             if (rpcUrl && perpEngineAddress) {
@@ -4942,7 +4980,7 @@ app.get('/api/prices/simple', async (req, res) => {
  */
 app.get('/api/prices/eth', async (req, res) => {
     try {
-        const { getPrice } = await import('../services/prices');
+        const { getPrice } = await Promise.resolve().then(() => __importStar(require('../services/prices')));
         const priceSnapshot = await getPrice('ETH');
         res.json({
             symbol: 'ETH',
@@ -4971,7 +5009,7 @@ app.get('/api/debug/executions', (req, res) => {
                 error: 'Debug mode not enabled. Set DEBUG_EXECUTIONS=1',
             });
         }
-        const artifacts = getExecutionArtifacts();
+        const artifacts = (0, executionLogger_1.getExecutionArtifacts)();
         res.json({
             count: artifacts.length,
             artifacts,
@@ -5002,7 +5040,7 @@ app.get('/api/debug/routing-stats', async (req, res) => {
         return res.status(403).json({ error: 'Debug endpoint not available in production' });
     }
     try {
-        const { getRoutingStats, resetRoutingStats } = await import('../routing/routingService');
+        const { getRoutingStats, resetRoutingStats } = await Promise.resolve().then(() => __importStar(require('../routing/routingService')));
         // Support reset query param
         if (req.query.reset === 'true') {
             resetRoutingStats();
@@ -5033,13 +5071,13 @@ app.get('/api/debug/session-authority', async (req, res) => {
         if (!userAddress) {
             return res.status(400).json({ error: 'address query parameter required' });
         }
-        const { EXECUTION_ROUTER_ADDRESS, ETH_TESTNET_RPC_URL, UNISWAP_V3_ADAPTER_ADDRESS, WETH_WRAP_ADAPTER_ADDRESS, MOCK_SWAP_ADAPTER_ADDRESS, PROOF_ADAPTER_ADDRESS, ERC20_PULL_ADAPTER_ADDRESS, DEMO_LEND_ADAPTER_ADDRESS, } = await import('../config');
+        const { EXECUTION_ROUTER_ADDRESS, ETH_TESTNET_RPC_URL, UNISWAP_V3_ADAPTER_ADDRESS, WETH_WRAP_ADAPTER_ADDRESS, MOCK_SWAP_ADAPTER_ADDRESS, PROOF_ADAPTER_ADDRESS, ERC20_PULL_ADAPTER_ADDRESS, DEMO_LEND_ADAPTER_ADDRESS, } = await Promise.resolve().then(() => __importStar(require('../config')));
         // Get chain ID
         let chainId = 11155111; // Sepolia default
         if (ETH_TESTNET_RPC_URL) {
             try {
-                const { createPublicClient, http } = await import('viem');
-                const { sepolia } = await import('viem/chains');
+                const { createPublicClient, http } = await Promise.resolve().then(() => __importStar(require('viem')));
+                const { sepolia } = await Promise.resolve().then(() => __importStar(require('viem/chains')));
                 const publicClient = createPublicClient({
                     chain: sepolia,
                     transport: http(ETH_TESTNET_RPC_URL),
@@ -5055,8 +5093,8 @@ app.get('/api/debug/session-authority', async (req, res) => {
         try {
             const recentAttempt = relayedAttempts.find(a => a.userAddress.toLowerCase() === userAddress.toLowerCase());
             if (recentAttempt && ETH_TESTNET_RPC_URL && EXECUTION_ROUTER_ADDRESS) {
-                const { createPublicClient, http } = await import('viem');
-                const { sepolia } = await import('viem/chains');
+                const { createPublicClient, http } = await Promise.resolve().then(() => __importStar(require('viem')));
+                const { sepolia } = await Promise.resolve().then(() => __importStar(require('viem/chains')));
                 const publicClient = createPublicClient({
                     chain: sepolia,
                     transport: http(ETH_TESTNET_RPC_URL),
@@ -5168,7 +5206,7 @@ app.get('/api/debug/session-authority', async (req, res) => {
  */
 app.get('/api/debug/dflow-probe', async (req, res) => {
     try {
-        const { probeDflowEndpoints } = await import('../integrations/dflow/dflowClient');
+        const { probeDflowEndpoints } = await Promise.resolve().then(() => __importStar(require('../integrations/dflow/dflowClient')));
         const results = await probeDflowEndpoints();
         // Find working endpoints (status 200, 401, or 403 indicate endpoint exists)
         const workingQuoteEndpoints = results.quoteApi.filter(r => r.status >= 200 && r.status < 500);
@@ -5205,12 +5243,12 @@ app.get('/api/debug/dflow-probe', async (req, res) => {
  */
 app.get('/api/debug/session-recent', async (req, res) => {
     try {
-        const { EXECUTION_ROUTER_ADDRESS, ETH_TESTNET_RPC_URL } = await import('../config');
+        const { EXECUTION_ROUTER_ADDRESS, ETH_TESTNET_RPC_URL } = await Promise.resolve().then(() => __importStar(require('../config')));
         if (!ETH_TESTNET_RPC_URL || !EXECUTION_ROUTER_ADDRESS) {
             return res.status(500).json({ error: 'ETH_TESTNET_RPC_URL or EXECUTION_ROUTER_ADDRESS not configured' });
         }
-        const { createPublicClient, http } = await import('viem');
-        const { sepolia } = await import('viem/chains');
+        const { createPublicClient, http } = await Promise.resolve().then(() => __importStar(require('viem')));
+        const { sepolia } = await Promise.resolve().then(() => __importStar(require('viem/chains')));
         const publicClient = createPublicClient({
             chain: sepolia,
             transport: http(ETH_TESTNET_RPC_URL),
@@ -5271,14 +5309,14 @@ app.get('/api/debug/session-diagnose', async (req, res) => {
                 error: 'txHash query parameter is required',
             });
         }
-        const { EXECUTION_ROUTER_ADDRESS, ETH_TESTNET_RPC_URL, } = await import('../config');
+        const { EXECUTION_ROUTER_ADDRESS, ETH_TESTNET_RPC_URL, } = await Promise.resolve().then(() => __importStar(require('../config')));
         if (!ETH_TESTNET_RPC_URL || !EXECUTION_ROUTER_ADDRESS) {
             return res.status(500).json({
                 error: 'ETH_TESTNET_RPC_URL or EXECUTION_ROUTER_ADDRESS not configured',
             });
         }
-        const { createPublicClient, http, decodeEventLog } = await import('viem');
-        const { sepolia } = await import('viem/chains');
+        const { createPublicClient, http, decodeEventLog } = await Promise.resolve().then(() => __importStar(require('viem')));
+        const { sepolia } = await Promise.resolve().then(() => __importStar(require('viem/chains')));
         const publicClient = createPublicClient({
             chain: sepolia,
             transport: http(ETH_TESTNET_RPC_URL),
@@ -5404,7 +5442,7 @@ function checkLedgerSecret(req, res, next) {
  */
 app.get('/api/ledger/summary', checkLedgerSecret, async (req, res) => {
     try {
-        const { getLedgerSummary } = await import('../../execution-ledger/db');
+        const { getLedgerSummary } = await Promise.resolve().then(() => __importStar(require('../../execution-ledger/db')));
         const summary = getLedgerSummary();
         res.json({ ok: true, data: summary });
     }
@@ -5432,7 +5470,7 @@ app.get('/api/ledger/summary', checkLedgerSecret, async (req, res) => {
  */
 app.get('/api/ledger/executions', checkLedgerSecret, async (req, res) => {
     try {
-        const { listExecutionsWithMeta } = await import('../../execution-ledger/db');
+        const { listExecutionsWithMeta } = await Promise.resolve().then(() => __importStar(require('../../execution-ledger/db')));
         const limit = parseInt(req.query.limit) || 50;
         const offset = parseInt(req.query.offset) || 0;
         const chain = req.query.chain;
@@ -5451,7 +5489,7 @@ app.get('/api/ledger/executions', checkLedgerSecret, async (req, res) => {
  */
 app.get('/api/ledger/sessions', checkLedgerSecret, async (req, res) => {
     try {
-        const { listSessionsWithMeta } = await import('../../execution-ledger/db');
+        const { listSessionsWithMeta } = await Promise.resolve().then(() => __importStar(require('../../execution-ledger/db')));
         const limit = parseInt(req.query.limit) || 50;
         const chain = req.query.chain;
         const network = req.query.network;
@@ -5469,7 +5507,7 @@ app.get('/api/ledger/sessions', checkLedgerSecret, async (req, res) => {
  */
 app.get('/api/ledger/assets', checkLedgerSecret, async (req, res) => {
     try {
-        const { listAssetsWithMeta } = await import('../../execution-ledger/db');
+        const { listAssetsWithMeta } = await Promise.resolve().then(() => __importStar(require('../../execution-ledger/db')));
         const limit = parseInt(req.query.limit) || 100;
         const chain = req.query.chain;
         const network = req.query.network;
@@ -5487,7 +5525,7 @@ app.get('/api/ledger/assets', checkLedgerSecret, async (req, res) => {
  */
 app.get('/api/ledger/proofs', checkLedgerSecret, async (req, res) => {
     try {
-        const { getProofBundle } = await import('../../execution-ledger/db');
+        const { getProofBundle } = await Promise.resolve().then(() => __importStar(require('../../execution-ledger/db')));
         const proofs = getProofBundle();
         res.json({ ok: true, data: proofs });
     }
@@ -5505,7 +5543,7 @@ app.get('/api/ledger/proofs', checkLedgerSecret, async (req, res) => {
  */
 app.get('/api/ledger/wallets', checkLedgerSecret, async (req, res) => {
     try {
-        const { listWallets } = await import('../../execution-ledger/db');
+        const { listWallets } = await Promise.resolve().then(() => __importStar(require('../../execution-ledger/db')));
         const chain = req.query.chain;
         const network = req.query.network;
         const wallets = listWallets({ chain, network });
@@ -5521,7 +5559,7 @@ app.get('/api/ledger/wallets', checkLedgerSecret, async (req, res) => {
  */
 app.get('/api/ledger/stats/summary', checkLedgerSecret, async (req, res) => {
     try {
-        const { getSummaryStats } = await import('../../execution-ledger/db');
+        const { getSummaryStats } = await Promise.resolve().then(() => __importStar(require('../../execution-ledger/db')));
         const stats = getSummaryStats();
         res.json({ ok: true, data: stats });
     }
@@ -5540,7 +5578,7 @@ app.get('/api/ledger/stats/summary', checkLedgerSecret, async (req, res) => {
  */
 app.get('/api/ledger/stats/recent', checkLedgerSecret, async (req, res) => {
     try {
-        const { getRecentExecutions } = await import('../../execution-ledger/db');
+        const { getRecentExecutions } = await Promise.resolve().then(() => __importStar(require('../../execution-ledger/db')));
         const limit = parseInt(req.query.limit) || 20;
         const executions = getRecentExecutions(Math.min(limit, 100)); // Cap at 100
         res.json({ ok: true, data: executions });
@@ -5556,7 +5594,7 @@ app.get('/api/ledger/stats/recent', checkLedgerSecret, async (req, res) => {
  */
 app.get('/api/ledger/executions/:id', checkLedgerSecret, async (req, res) => {
     try {
-        const { getExecution } = await import('../../execution-ledger/db');
+        const { getExecution } = await Promise.resolve().then(() => __importStar(require('../../execution-ledger/db')));
         const execution = getExecution(req.params.id);
         if (!execution) {
             return res.status(404).json({ ok: false, error: 'Execution not found', data: null });
@@ -5574,7 +5612,7 @@ app.get('/api/ledger/executions/:id', checkLedgerSecret, async (req, res) => {
  */
 app.get('/api/ledger/executions/:id/steps', checkLedgerSecret, async (req, res) => {
     try {
-        const { getExecutionSteps, getExecution } = await import('../../execution-ledger/db');
+        const { getExecutionSteps, getExecution } = await Promise.resolve().then(() => __importStar(require('../../execution-ledger/db')));
         // Verify execution exists
         const execution = getExecution(req.params.id);
         if (!execution) {
@@ -5597,7 +5635,7 @@ app.get('/api/ledger/executions/:id/steps', checkLedgerSecret, async (req, res) 
  */
 app.get('/api/ledger/intents/recent', checkLedgerSecret, async (req, res) => {
     try {
-        const { getRecentIntents } = await import('../../execution-ledger/db');
+        const { getRecentIntents } = await Promise.resolve().then(() => __importStar(require('../../execution-ledger/db')));
         const limit = parseInt(req.query.limit) || 50;
         const intents = getRecentIntents(Math.min(limit, 100));
         res.json({ ok: true, data: intents });
@@ -5613,7 +5651,7 @@ app.get('/api/ledger/intents/recent', checkLedgerSecret, async (req, res) => {
  */
 app.get('/api/ledger/intents/:id', checkLedgerSecret, async (req, res) => {
     try {
-        const { getIntent, getExecutionsForIntent } = await import('../../execution-ledger/db');
+        const { getIntent, getExecutionsForIntent } = await Promise.resolve().then(() => __importStar(require('../../execution-ledger/db')));
         const intent = getIntent(req.params.id);
         if (!intent) {
             return res.status(404).json({ ok: false, error: 'Intent not found', data: null });
@@ -5639,7 +5677,7 @@ app.get('/api/ledger/intents/:id', checkLedgerSecret, async (req, res) => {
  */
 app.get('/api/ledger/stats/intents', checkLedgerSecret, async (req, res) => {
     try {
-        const { getIntentStatsSummary } = await import('../../execution-ledger/db');
+        const { getIntentStatsSummary } = await Promise.resolve().then(() => __importStar(require('../../execution-ledger/db')));
         const stats = getIntentStatsSummary();
         res.json({ ok: true, data: stats });
     }
@@ -5668,7 +5706,7 @@ app.get('/api/ledger/stats/intents', checkLedgerSecret, async (req, res) => {
  */
 app.get('/api/ledger/intents/:id/executions', checkLedgerSecret, async (req, res) => {
     try {
-        const { getIntent, getExecutionsForIntent } = await import('../../execution-ledger/db');
+        const { getIntent, getExecutionsForIntent } = await Promise.resolve().then(() => __importStar(require('../../execution-ledger/db')));
         // Verify intent exists
         const intent = getIntent(req.params.id);
         if (!intent) {
@@ -5696,7 +5734,7 @@ app.post('/api/ledger/intents/execute', checkLedgerSecret, async (req, res) => {
     try {
         const { intentText, chain = 'ethereum', planOnly = false, intentId, metadata } = req.body;
         // Import the intent runner functions
-        const { runIntent, executeIntentById, recordFailedIntent } = await import('../intent/intentRunner');
+        const { runIntent, executeIntentById, recordFailedIntent } = await Promise.resolve().then(() => __importStar(require('../intent/intentRunner')));
         // If intentId is provided, execute the existing planned intent
         if (intentId && typeof intentId === 'string') {
             const result = await executeIntentById(intentId);
@@ -5758,7 +5796,7 @@ app.post('/api/ledger/intents/execute', checkLedgerSecret, async (req, res) => {
  */
 app.get('/api/ledger/positions/recent', checkLedgerSecret, async (req, res) => {
     try {
-        const { getRecentPositions } = await import('../../execution-ledger/db');
+        const { getRecentPositions } = await Promise.resolve().then(() => __importStar(require('../../execution-ledger/db')));
         const limit = parseInt(req.query.limit) || 20;
         const positions = getRecentPositions(Math.min(limit, 100));
         res.json({ ok: true, positions });
@@ -5773,7 +5811,7 @@ app.get('/api/ledger/positions/recent', checkLedgerSecret, async (req, res) => {
  */
 app.get('/api/ledger/positions', checkLedgerSecret, async (req, res) => {
     try {
-        const { getOpenPositions, getPositionsByStatus } = await import('../../execution-ledger/db');
+        const { getOpenPositions, getPositionsByStatus } = await Promise.resolve().then(() => __importStar(require('../../execution-ledger/db')));
         const status = req.query.status;
         const chain = req.query.chain;
         const network = req.query.network;
@@ -5802,7 +5840,7 @@ app.get('/api/ledger/positions', checkLedgerSecret, async (req, res) => {
  */
 app.get('/api/ledger/positions/:id', checkLedgerSecret, async (req, res) => {
     try {
-        const { getPosition } = await import('../../execution-ledger/db');
+        const { getPosition } = await Promise.resolve().then(() => __importStar(require('../../execution-ledger/db')));
         const position = getPosition(req.params.id);
         if (!position) {
             return res.status(404).json({ ok: false, error: 'Position not found' });
@@ -5819,7 +5857,7 @@ app.get('/api/ledger/positions/:id', checkLedgerSecret, async (req, res) => {
  */
 app.get('/api/ledger/positions/stats', checkLedgerSecret, async (req, res) => {
     try {
-        const { getPositionStats } = await import('../../execution-ledger/db');
+        const { getPositionStats } = await Promise.resolve().then(() => __importStar(require('../../execution-ledger/db')));
         const stats = getPositionStats();
         res.json({ ok: true, stats });
     }
@@ -5840,7 +5878,7 @@ app.post('/api/access/validate', async (req, res) => {
         if (!code) {
             return res.json({ ok: true, valid: false, error: 'Access code required' });
         }
-        const result = validateAccessCode(code, walletAddress);
+        const result = (0, accessGate_1.validateAccessCode)(code, walletAddress);
         res.json({ ok: true, valid: result.valid, error: result.error });
     }
     catch (error) {
@@ -5873,7 +5911,7 @@ app.post('/api/waitlist/join', async (req, res) => {
         }
         // Store in database (using execution ledger DB)
         try {
-            const { addToWaitlist } = await import('../../execution-ledger/db');
+            const { addToWaitlist } = await Promise.resolve().then(() => __importStar(require('../../execution-ledger/db')));
             const id = addToWaitlist({ email, walletAddress, source: source || 'landing' });
             // Don't log actual email/wallet for privacy
             console.log(`[waitlist] New signup from ${source || 'landing'}: ${id.slice(0, 8)}...`);
@@ -5906,7 +5944,7 @@ app.post('/api/waitlist/join', async (req, res) => {
  */
 app.get('/api/stats/public', async (req, res) => {
     try {
-        const { getStatsSummary, getIntentStats } = await import('../../execution-ledger/db');
+        const { getStatsSummary, getIntentStats } = await Promise.resolve().then(() => __importStar(require('../../execution-ledger/db')));
         // Return limited public stats
         const summary = getStatsSummary();
         const intentStats = getIntentStats();
