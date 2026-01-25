@@ -13,7 +13,8 @@ async function getApp() {
   if (!app) {
     // Set Vercel environment flag before importing
     process.env.VERCEL = '1';
-    
+
+    // Import from pre-compiled dist directory
     const httpModule = await import('../agent/dist/src/server/http.js');
     app = httpModule.app;
     appInitialized = true;
