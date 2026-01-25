@@ -6069,6 +6069,13 @@ app.get('/api/debug/session-diagnose', async (req, res) => {
 
 const DEV_LEDGER_SECRET = process.env.DEV_LEDGER_SECRET || '';
 
+// Safe hash helper for debug logging (never logs raw secrets)
+function safeHash(value: string): string {
+  if (!value) return 'empty';
+  const crypto = require('crypto');
+  return crypto.createHash('sha256').update(value).digest('hex').slice(0, 6);
+}
+
 /**
  * Middleware to check ledger secret
  * BULLETPROOF GATING:
@@ -6077,8 +6084,13 @@ const DEV_LEDGER_SECRET = process.env.DEV_LEDGER_SECRET || '';
  * - No fallbacks, no exceptions
  */
 function checkLedgerSecret(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const authDebug = process.env.AUTH_DEBUG === '1';
+
   // HARD REQUIREMENT: DEV_LEDGER_SECRET must be configured
   if (!DEV_LEDGER_SECRET) {
+    if (authDebug) {
+      console.warn('[ledger-auth] hasEnvSecret=false, envSecretHashPrefix=empty');
+    }
     console.warn('[ledger] DEV_LEDGER_SECRET not configured - blocking all ledger API access');
     return res.status(403).json({
       ok: false,
@@ -6088,6 +6100,12 @@ function checkLedgerSecret(req: express.Request, res: express.Response, next: ex
 
   // ONLY accept header-based auth (query params leak to logs/browser history)
   const providedSecret = req.headers['x-ledger-secret'] as string;
+
+  if (authDebug) {
+    console.log('[ledger-auth] hasEnvSecret=true, envSecretHashPrefix=' + safeHash(DEV_LEDGER_SECRET));
+    console.log('[ledger-auth] hasHeaderSecret=' + !!providedSecret + ', headerSecretHashPrefix=' + safeHash(providedSecret || ''));
+    console.log('[ledger-auth] comparisonResult=' + (providedSecret === DEV_LEDGER_SECRET ? 'match' : 'mismatch'));
+  }
 
   // Warn if query param was used (deprecated)
   if (req.query.secret) {
