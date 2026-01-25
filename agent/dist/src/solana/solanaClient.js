@@ -1,0 +1,159 @@
+/**
+ * Solana Devnet Client
+ * Minimal RPC client for Solana devnet execution
+ *
+ * No external dependencies - uses native fetch for RPC calls
+ */
+const DEFAULT_DEVNET_RPC = 'https://api.devnet.solana.com';
+/**
+ * Solana RPC client for devnet operations
+ */
+export class SolanaClient {
+    rpcUrl;
+    constructor(config = {}) {
+        this.rpcUrl = config.rpcUrl || process.env.SOLANA_RPC_URL || DEFAULT_DEVNET_RPC;
+    }
+    /**
+     * Make an RPC call to Solana
+     */
+    async rpcCall(method, params = []) {
+        const response = await fetch(this.rpcUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                jsonrpc: '2.0',
+                id: 1,
+                method,
+                params,
+            }),
+        });
+        const data = await response.json();
+        if (data.error) {
+            throw new Error(`Solana RPC error: ${data.error.message}`);
+        }
+        return data.result;
+    }
+    /**
+     * Get SOL balance for a public key
+     */
+    async getBalance(pubkey) {
+        const result = await this.rpcCall('getBalance', [pubkey]);
+        const lamports = result.value;
+        return {
+            lamports,
+            sol: lamports / 1_000_000_000, // Convert lamports to SOL
+        };
+    }
+    /**
+     * Get recent blockhash for transaction signing
+     */
+    async getRecentBlockhash() {
+        const result = await this.rpcCall('getLatestBlockhash', [{ commitment: 'finalized' }]);
+        return result.value;
+    }
+    /**
+     * Send a signed transaction (base64 encoded)
+     */
+    async sendTransaction(signedTx, options = {}) {
+        const { encoding = 'base64', skipPreflight = false } = options;
+        const signature = await this.rpcCall('sendTransaction', [
+            signedTx,
+            {
+                encoding,
+                skipPreflight,
+                preflightCommitment: 'confirmed',
+            },
+        ]);
+        return signature;
+    }
+    /**
+     * Get transaction status
+     */
+    async getSignatureStatuses(signatures) {
+        const result = await this.rpcCall('getSignatureStatuses', [signatures, { searchTransactionHistory: true }]);
+        return result.value;
+    }
+    /**
+     * Confirm a transaction with timeout
+     */
+    async confirmTransaction(signature, commitment = 'confirmed', timeoutMs = 30000) {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+            const statuses = await this.getSignatureStatuses([signature]);
+            const status = statuses[0];
+            if (status) {
+                if (status.err) {
+                    throw new Error(`Transaction failed: ${JSON.stringify(status.err)}`);
+                }
+                const commitmentLevels = ['processed', 'confirmed', 'finalized'];
+                const targetLevel = commitmentLevels.indexOf(commitment);
+                const currentLevel = status.confirmationStatus
+                    ? commitmentLevels.indexOf(status.confirmationStatus)
+                    : -1;
+                if (currentLevel >= targetLevel) {
+                    return {
+                        signature,
+                        slot: status.slot,
+                        confirmationStatus: status.confirmationStatus || undefined,
+                    };
+                }
+            }
+            // Wait 1 second before checking again
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+        throw new Error(`Transaction confirmation timeout after ${timeoutMs}ms`);
+    }
+    /**
+     * Request airdrop (devnet only)
+     */
+    async requestAirdrop(pubkey, lamports = 1_000_000_000) {
+        const signature = await this.rpcCall('requestAirdrop', [pubkey, lamports]);
+        return signature;
+    }
+    /**
+     * Get account info
+     */
+    async getAccountInfo(pubkey) {
+        const result = await this.rpcCall('getAccountInfo', [pubkey, { encoding: 'base64' }]);
+        if (!result.value)
+            return null;
+        return {
+            lamports: result.value.lamports,
+            owner: result.value.owner,
+            data: result.value.data[0],
+            executable: result.value.executable,
+        };
+    }
+    /**
+     * Get cluster info
+     */
+    async getClusterNodes() {
+        return this.rpcCall('getClusterNodes', []);
+    }
+    /**
+     * Get slot
+     */
+    async getSlot() {
+        return this.rpcCall('getSlot', []);
+    }
+    /**
+     * Health check
+     */
+    async isHealthy() {
+        try {
+            await this.getSlot();
+            return true;
+        }
+        catch {
+            return false;
+        }
+    }
+}
+/**
+ * Create a Solana devnet client
+ */
+export function createSolanaClient(rpcUrl) {
+    return new SolanaClient({ rpcUrl });
+}
+export default SolanaClient;
+//# sourceMappingURL=solanaClient.js.map
