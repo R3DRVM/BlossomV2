@@ -1,5 +1,11 @@
 var __defProp = Object.defineProperty;
 var __getOwnPropNames = Object.getOwnPropertyNames;
+var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
+  get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
+}) : x)(function(x) {
+  if (typeof require !== "undefined") return require.apply(this, arguments);
+  throw Error('Dynamic require of "' + x + '" is not supported');
+});
 var __esm = (fn, res) => function __init() {
   return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
 };
@@ -15582,8 +15588,17 @@ app.get("/api/debug/session-diagnose", async (req, res) => {
   }
 });
 var DEV_LEDGER_SECRET = process.env.DEV_LEDGER_SECRET || "";
+function safeHash(value) {
+  if (!value) return "empty";
+  const crypto2 = __require("crypto");
+  return crypto2.createHash("sha256").update(value).digest("hex").slice(0, 6);
+}
 function checkLedgerSecret(req, res, next) {
+  const authDebug = process.env.AUTH_DEBUG === "1";
   if (!DEV_LEDGER_SECRET) {
+    if (authDebug) {
+      console.warn("[ledger-auth] hasEnvSecret=false, envSecretHashPrefix=empty");
+    }
     console.warn("[ledger] DEV_LEDGER_SECRET not configured - blocking all ledger API access");
     return res.status(403).json({
       ok: false,
@@ -15591,6 +15606,11 @@ function checkLedgerSecret(req, res, next) {
     });
   }
   const providedSecret = req.headers["x-ledger-secret"];
+  if (authDebug) {
+    console.log("[ledger-auth] hasEnvSecret=true, envSecretHashPrefix=" + safeHash(DEV_LEDGER_SECRET));
+    console.log("[ledger-auth] hasHeaderSecret=" + !!providedSecret + ", headerSecretHashPrefix=" + safeHash(providedSecret || ""));
+    console.log("[ledger-auth] comparisonResult=" + (providedSecret === DEV_LEDGER_SECRET ? "match" : "mismatch"));
+  }
   if (req.query.secret) {
     console.warn("[ledger] Query param ?secret= is deprecated and ignored. Use X-Ledger-Secret header.");
   }
