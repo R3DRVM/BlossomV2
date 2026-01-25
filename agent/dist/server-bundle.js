@@ -7167,14 +7167,16 @@ function getWaitlistCount() {
   const row = db3.prepare("SELECT COUNT(*) as count FROM waitlist").get();
   return row?.count || 0;
 }
-var __filename4, __dirname4, DB_PATH2, db2, dbType, getStatsSummary, getIntentStats;
+var __filename4, __dirname4, isVercel, defaultPath, DB_PATH2, db2, dbType, getStatsSummary, getIntentStats;
 var init_db2 = __esm({
   "agent/execution-ledger/db.ts"() {
     "use strict";
     init_db_factory();
     __filename4 = fileURLToPath4(import.meta.url);
     __dirname4 = dirname6(__filename4);
-    DB_PATH2 = process.env.EXECUTION_LEDGER_DB_PATH || path2.join(__dirname4, "ledger.db");
+    isVercel = process.env.VERCEL === "1";
+    defaultPath = isVercel ? "/tmp/ledger.db" : path2.join(__dirname4, "ledger.db");
+    DB_PATH2 = process.env.EXECUTION_LEDGER_DB_PATH || defaultPath;
     db2 = null;
     dbType = detectDatabaseType();
     logDatabaseInfo();
