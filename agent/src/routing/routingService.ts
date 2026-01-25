@@ -23,6 +23,7 @@ import {
   DflowSwapQuote,
   DflowEventMarket,
 } from '../integrations/dflow/dflowClient';
+import { makeCorrelationId } from '../utils/correlationId';
 
 // DEV-ONLY: Force dFlow failure/timeout for testing
 const DFLOW_FORCE_FAIL = process.env.DFLOW_FORCE_FAIL === 'true' && process.env.NODE_ENV !== 'production';
@@ -185,6 +186,8 @@ export async function getSwapQuoteRouted(params: {
           ok: false,
           reason: 'dFlow not configured or swapsQuotes capability unavailable',
           latencyMs,
+          mode: ROUTING_MODE as 'deterministic' | 'hybrid' | 'dflow',
+          correlationId,
         },
         error: {
           code: 'DFLOW_REQUIRED',
@@ -520,6 +523,8 @@ export async function getEventMarketsRouted(params: {
           ok: false,
           reason: 'dFlow not configured or eventsMarkets capability unavailable',
           latencyMs,
+          mode: ROUTING_MODE as 'deterministic' | 'hybrid' | 'dflow',
+          correlationId,
         },
         error: {
           code: 'DFLOW_REQUIRED',
