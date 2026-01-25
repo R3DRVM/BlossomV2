@@ -13,6 +13,23 @@ await esbuild.build({
   format: 'esm',
   outfile: 'agent/dist/server-bundle.js',
   external: [
+    // Node.js built-ins
+    'stream',
+    'crypto',
+    'fs',
+    'path',
+    'os',
+    'http',
+    'https',
+    'zlib',
+    'buffer',
+    'util',
+    'url',
+    'events',
+    'net',
+    'tls',
+    'querystring',
+    'child_process',
     // Keep these as external - will be in node_modules
     'viem',
     'ethers',
