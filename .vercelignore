@@ -1,0 +1,56 @@
+# Vercel deployment ignore
+# Large local development files
+
+# Node modules (installed during build)
+node_modules
+agent/node_modules
+
+# Local databases
+agent/telemetry/telemetry.db
+agent/telemetry/telemetry.db-shm
+agent/telemetry/telemetry.db-wal
+agent/execution-ledger/ledger.db
+agent/execution-ledger/ledger.db-shm
+agent/execution-ledger/ledger.db-wal
+agent/execution-ledger/*.backup*
+
+# Logs
+logs
+*.log
+
+# Environment files (use Vercel env vars instead)
+.env
+.env.*
+!.env.example
+
+# Build artifacts (will be regenerated)
+dist
+dist-ssr
+.vercel
+
+# Access codes (never deploy)
+ACCESS_CODES_LOCAL.*
+access-codes-*.txt
+
+# Test and development files
+*.test.ts
+*.test.tsx
+__tests__
+test
+
+# Documentation (not needed for runtime)
+docs
+*.md
+!README.md
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Editor
+.vscode
+.idea
+*.swp
+*.swo
+.DS_Store
