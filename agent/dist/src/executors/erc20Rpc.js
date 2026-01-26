@@ -1,45 +1,8 @@
-"use strict";
 /**
  * ERC20 RPC Helpers
  * Read ERC20 token balance and allowance via JSON-RPC eth_call
  */
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.erc20_balanceOf = erc20_balanceOf;
-exports.erc20_allowance = erc20_allowance;
-const config_1 = require("../config");
+import { ETH_TESTNET_RPC_URL } from '../config';
 /**
  * ERC20 ABI for balanceOf and allowance
  */
@@ -77,11 +40,11 @@ function decodeUint256(hex) {
  * @param owner Owner address
  * @returns Token balance as bigint
  */
-async function erc20_balanceOf(token, owner) {
-    if (!config_1.ETH_TESTNET_RPC_URL) {
+export async function erc20_balanceOf(token, owner) {
+    if (!ETH_TESTNET_RPC_URL) {
         throw new Error('ETH_TESTNET_RPC_URL not configured');
     }
-    const { encodeFunctionData } = await Promise.resolve().then(() => __importStar(require('viem')));
+    const { encodeFunctionData } = await import('viem');
     const to = token.toLowerCase();
     const ownerAddr = owner.toLowerCase();
     const data = encodeFunctionData({
@@ -92,7 +55,7 @@ async function erc20_balanceOf(token, owner) {
     // Debug log (no secrets)
     console.log(`[erc20Rpc] balanceOf: token=${to.substring(0, 10)}..., owner=${ownerAddr.substring(0, 10)}..., data=${data.substring(0, 10)}...`);
     try {
-        const response = await fetch(config_1.ETH_TESTNET_RPC_URL, {
+        const response = await fetch(ETH_TESTNET_RPC_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -128,11 +91,11 @@ async function erc20_balanceOf(token, owner) {
  * @param spender Spender address
  * @returns Token allowance as bigint
  */
-async function erc20_allowance(token, owner, spender) {
-    if (!config_1.ETH_TESTNET_RPC_URL) {
+export async function erc20_allowance(token, owner, spender) {
+    if (!ETH_TESTNET_RPC_URL) {
         throw new Error('ETH_TESTNET_RPC_URL not configured');
     }
-    const { encodeFunctionData } = await Promise.resolve().then(() => __importStar(require('viem')));
+    const { encodeFunctionData } = await import('viem');
     const to = token.toLowerCase();
     const ownerAddr = owner.toLowerCase();
     const spenderAddr = spender.toLowerCase();
@@ -144,7 +107,7 @@ async function erc20_allowance(token, owner, spender) {
     // Debug log (no secrets)
     console.log(`[erc20Rpc] allowance: token=${to.substring(0, 10)}..., owner=${ownerAddr.substring(0, 10)}..., spender=${spenderAddr.substring(0, 10)}..., data=${data.substring(0, 10)}...`);
     try {
-        const response = await fetch(config_1.ETH_TESTNET_RPC_URL, {
+        const response = await fetch(ETH_TESTNET_RPC_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({

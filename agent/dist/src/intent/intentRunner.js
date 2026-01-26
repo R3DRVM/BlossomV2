@@ -1,4 +1,3 @@
-"use strict";
 // @ts-nocheck
 /**
  * Intent Runner Orchestrator
@@ -13,46 +12,6 @@
  *
  * This orchestrator is honest about what's implemented vs. not.
  */
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.parseIntent = parseIntent;
-exports.routeIntent = routeIntent;
-exports.runIntent = runIntent;
-exports.executeIntentById = executeIntentById;
-exports.runIntentBatch = runIntentBatch;
-exports.recordFailedIntent = recordFailedIntent;
 /**
  * Helper to merge new metadata with existing metadata, preserving caller info (source, domain, runId).
  * This ensures that source tracking persists through all status updates.
@@ -139,7 +98,7 @@ const INTENT_PATTERNS = {
 /**
  * Parse a natural language intent into structured format
  */
-function parseIntent(intentText) {
+export function parseIntent(intentText) {
     const text = intentText.toLowerCase().trim();
     const rawParams = { original: intentText };
     // Check for hedge/portfolio protection intent FIRST (before other patterns)
@@ -277,7 +236,7 @@ function parseIntent(intentText) {
 /**
  * Determine execution route for a parsed intent
  */
-function routeIntent(parsed, preferredChain) {
+export function routeIntent(parsed, preferredChain) {
     const { kind, venue, sourceChain, destChain, rawParams } = parsed;
     // Determine target chain
     let targetChain = 'ethereum';
@@ -497,9 +456,10 @@ function estimateIntentUsd(parsed) {
  * - planOnly: Stop after routing, return plan without executing (for confirm mode)
  * - intentId: Execute a previously planned intent (skip parse/route)
  */
-async function runIntent(intentText, options = {}) {
+export async function runIntent(intentText, options = {}) {
     // Dynamic imports for ledger (avoids path issues)
-    const { createIntent, updateIntentStatus, createExecution, updateExecution, createExecutionStep, updateExecutionStep, linkExecutionToIntent, } = await Promise.resolve().then(() => __importStar(require('../../execution-ledger/db')));
+    // Use async versions for Postgres support
+    const { createIntentAsync: createIntent, updateIntentStatusAsync: updateIntentStatus, createExecutionAsync: createExecution, updateExecutionAsync: updateExecution, createExecutionStepAsync: createExecutionStep, updateExecutionStepAsync: updateExecutionStep, linkExecutionToIntentAsync: linkExecutionToIntent, } = await import('../../execution-ledger/db');
     const now = Math.floor(Date.now() / 1000);
     // Step 1: Parse intent
     const parsed = parseIntent(intentText);
@@ -514,7 +474,7 @@ async function runIntent(intentText, options = {}) {
         ...extra,
     });
     // Step 2: Create intent record
-    const intent = createIntent({
+    const intent = await createIntent({
         intentText,
         intentKind: parsed.kind,
         requestedVenue: parsed.venue,
@@ -523,7 +483,7 @@ async function runIntent(intentText, options = {}) {
     });
     try {
         // Step 3: Route intent
-        updateIntentStatus(intent.id, {
+        await updateIntentStatus(intent.id, {
             status: 'planned',
             plannedAt: now,
             metadataJson: buildMetadata({ options: { ...options, metadata: undefined } }),
@@ -531,7 +491,7 @@ async function runIntent(intentText, options = {}) {
         const route = routeIntent(parsed, options.chain);
         // Check for routing error
         if ('error' in route) {
-            updateIntentStatus(intent.id, {
+            await updateIntentStatus(intent.id, {
                 status: 'failed',
                 failureStage: route.error.stage,
                 errorCode: route.error.code,
@@ -544,7 +504,7 @@ async function runIntent(intentText, options = {}) {
                 error: route.error,
             };
         }
-        updateIntentStatus(intent.id, {
+        await updateIntentStatus(intent.id, {
             status: 'routed',
             requestedChain: route.chain,
             requestedVenue: route.venue,
@@ -556,13 +516,13 @@ async function runIntent(intentText, options = {}) {
             return bridgeResult;
         }
         // Step 5: Execute based on chain and type
-        updateIntentStatus(intent.id, {
+        await updateIntentStatus(intent.id, {
             status: 'executing',
             executedAt: now,
         });
         // For planOnly mode (confirm flow), stop after routing and return plan
         if (options.planOnly || options.dryRun) {
-            updateIntentStatus(intent.id, {
+            await updateIntentStatus(intent.id, {
                 status: 'planned',
                 plannedAt: now,
                 metadataJson: buildMetadata({
@@ -602,7 +562,7 @@ async function runIntent(intentText, options = {}) {
     }
     catch (error) {
         // Catch-all error handler
-        updateIntentStatus(intent.id, {
+        await updateIntentStatus(intent.id, {
             status: 'failed',
             failureStage: 'execute',
             errorCode: 'EXECUTION_ERROR',
@@ -624,8 +584,8 @@ async function runIntent(intentText, options = {}) {
  * Execute a previously planned intent by ID
  * Used for confirm-mode flow where user reviews plan first
  */
-async function executeIntentById(intentId) {
-    const { getIntent, updateIntentStatus, } = await Promise.resolve().then(() => __importStar(require('../../execution-ledger/db')));
+export async function executeIntentById(intentId) {
+    const { getIntent, updateIntentStatus, } = await import('../../execution-ledger/db');
     const now = Math.floor(Date.now() / 1000);
     // Get the intent
     const intent = getIntent(intentId);
@@ -672,7 +632,7 @@ async function executeIntentById(intentId) {
             };
         }
         // Update status to executing
-        updateIntentStatus(intentId, {
+        await updateIntentStatus(intentId, {
             status: 'executing',
             executedAt: now,
         });
@@ -686,7 +646,7 @@ async function executeIntentById(intentId) {
         return execResult;
     }
     catch (error) {
-        updateIntentStatus(intentId, {
+        await updateIntentStatus(intentId, {
             status: 'failed',
             failureStage: 'execute',
             errorCode: 'EXECUTION_ERROR',
@@ -709,9 +669,9 @@ async function executeIntentById(intentId) {
  * Produces proof txs on both chains to record the bridge intent attempt
  */
 async function handleBridgeIntent(intentId, parsed, route) {
-    const { updateIntentStatus, createExecution, updateExecution, linkExecutionToIntent, } = await Promise.resolve().then(() => __importStar(require('../../execution-ledger/db')));
-    const { buildExplorerUrl } = await Promise.resolve().then(() => __importStar(require('../ledger/ledger')));
-    const { getLiFiQuote } = await Promise.resolve().then(() => __importStar(require('../bridge/lifi')));
+    const { updateIntentStatus, createExecution, updateExecution, linkExecutionToIntent, } = await import('../../execution-ledger/db');
+    const { buildExplorerUrl } = await import('../ledger/ledger');
+    const { getLiFiQuote } = await import('../bridge/lifi');
     const now = Math.floor(Date.now() / 1000);
     // Attempt LiFi quote
     const quoteResult = await getLiFiQuote({
@@ -765,7 +725,7 @@ async function handleBridgeIntent(intentId, parsed, route) {
     }
     // Final status depends on proof txs
     if (sourceProofResult.ok) {
-        updateIntentStatus(intentId, {
+        await updateIntentStatus(intentId, {
             status: 'confirmed',
             confirmedAt: Math.floor(Date.now() / 1000),
             metadataJson: JSON.stringify({
@@ -808,7 +768,7 @@ async function handleBridgeIntent(intentId, parsed, route) {
  * Execute intent on the appropriate chain
  */
 async function executeOnChain(intentId, parsed, route) {
-    const { updateIntentStatus, createExecution, updateExecution, linkExecutionToIntent, } = await Promise.resolve().then(() => __importStar(require('../../execution-ledger/db')));
+    const { updateIntentStatus, createExecution, updateExecution, linkExecutionToIntent, } = await import('../../execution-ledger/db');
     const now = Math.floor(Date.now() / 1000);
     // For offchain analytics executions (no on-chain tx needed)
     if (route.executionType === 'offchain') {
@@ -834,11 +794,11 @@ async function executeOnChain(intentId, parsed, route) {
  * Execute offchain analytics intent - records to ledger without on-chain tx
  */
 async function executeOffchain(intentId, parsed, route) {
-    const { updateIntentStatus, createExecution, linkExecutionToIntent, } = await Promise.resolve().then(() => __importStar(require('../../execution-ledger/db')));
+    const { updateIntentStatus, createExecution, linkExecutionToIntent, } = await import('../../execution-ledger/db');
     const now = Math.floor(Date.now() / 1000);
     const analyticsType = parsed.rawParams?.analyticsType || 'general';
     // Create execution record (offchain type)
-    const execution = createExecution({
+    const execution = await createExecution({
         chain: route.chain,
         network: route.network,
         kind: 'proof', // Use 'proof' kind but mark as offchain in metadata
@@ -849,9 +809,9 @@ async function executeOffchain(intentId, parsed, route) {
         usdEstimate: 0,
         usdEstimateIsEstimate: true,
     });
-    linkExecutionToIntent(execution.id, intentId);
+    await linkExecutionToIntent(execution.id, intentId);
     // Mark as confirmed immediately (no tx to wait for)
-    updateIntentStatus(intentId, {
+    await updateIntentStatus(intentId, {
         status: 'confirmed',
         confirmedAt: now,
         metadataJson: JSON.stringify({
@@ -882,18 +842,18 @@ async function executeOffchain(intentId, parsed, route) {
  * Real on-chain execution with margin deposit and position opening
  */
 async function executePerpEthereum(intentId, parsed, route) {
-    const { getIntent, updateIntentStatus, createExecution, updateExecution, linkExecutionToIntent, } = await Promise.resolve().then(() => __importStar(require('../../execution-ledger/db')));
-    const { buildExplorerUrl } = await Promise.resolve().then(() => __importStar(require('../ledger/ledger')));
+    const { getIntent, updateIntentStatus, createExecution, updateExecution, linkExecutionToIntent, } = await import('../../execution-ledger/db');
+    const { buildExplorerUrl } = await import('../ledger/ledger');
     const now = Math.floor(Date.now() / 1000);
     const startTime = Date.now();
     // Get intent's existing metadata to preserve caller info (source, domain, runId)
     const intent = getIntent(intentId);
     const existingMetadataJson = intent?.metadata_json;
     // Import config
-    const { RELAYER_PRIVATE_KEY, ETH_TESTNET_RPC_URL, DEMO_PERP_ADAPTER_ADDRESS, DEMO_USDC_ADDRESS, EXECUTION_ROUTER_ADDRESS, ERC20_PULL_ADAPTER_ADDRESS, } = await Promise.resolve().then(() => __importStar(require('../config')));
+    const { RELAYER_PRIVATE_KEY, ETH_TESTNET_RPC_URL, DEMO_PERP_ADAPTER_ADDRESS, DEMO_USDC_ADDRESS, EXECUTION_ROUTER_ADDRESS, ERC20_PULL_ADAPTER_ADDRESS, } = await import('../config');
     // Validate required config
     if (!RELAYER_PRIVATE_KEY || !ETH_TESTNET_RPC_URL) {
-        updateIntentStatus(intentId, {
+        await updateIntentStatus(intentId, {
             status: 'failed',
             failureStage: 'execute',
             errorCode: 'CONFIG_MISSING',
@@ -911,7 +871,7 @@ async function executePerpEthereum(intentId, parsed, route) {
         };
     }
     if (!DEMO_PERP_ADAPTER_ADDRESS || !DEMO_USDC_ADDRESS || !EXECUTION_ROUTER_ADDRESS) {
-        updateIntentStatus(intentId, {
+        await updateIntentStatus(intentId, {
             status: 'failed',
             failureStage: 'execute',
             errorCode: 'PERP_CONFIG_MISSING',
@@ -930,16 +890,16 @@ async function executePerpEthereum(intentId, parsed, route) {
     }
     try {
         // Import viem for transaction
-        const { encodeFunctionData, parseAbi } = await Promise.resolve().then(() => __importStar(require('viem')));
-        const { privateKeyToAccount } = await Promise.resolve().then(() => __importStar(require('viem/accounts')));
+        const { encodeFunctionData, parseAbi } = await import('viem');
+        const { privateKeyToAccount } = await import('viem/accounts');
         // Use failover RPC clients for reliability
-        const { createFailoverPublicClient, createFailoverWalletClient, executeWithFailover, } = await Promise.resolve().then(() => __importStar(require('../providers/rpcProvider')));
+        const { createFailoverPublicClient, createFailoverWalletClient, executeWithFailover, } = await import('../providers/rpcProvider');
         const account = privateKeyToAccount(RELAYER_PRIVATE_KEY);
         // Create clients with failover support (includes retry and circuit breaker)
         const publicClient = createFailoverPublicClient();
         const walletClient = createFailoverWalletClient(account);
         // Create execution record
-        const execution = createExecution({
+        const execution = await createExecution({
             chain: 'ethereum',
             network: 'sepolia',
             kind: 'perp',
@@ -952,7 +912,7 @@ async function executePerpEthereum(intentId, parsed, route) {
             usdEstimate: estimateIntentUsd(parsed),
             usdEstimateIsEstimate: true,
         });
-        linkExecutionToIntent(execution.id, intentId);
+        await linkExecutionToIntent(execution.id, intentId);
         // Map market string to enum value
         const marketMap = {
             'BTC': 0,
@@ -986,7 +946,7 @@ async function executePerpEthereum(intentId, parsed, route) {
         }).slice(10); // Remove function selector, we just want the encoded params
         // Actually, we need to encode the params directly without a function signature
         // Use encodeAbiParameters instead
-        const { encodeAbiParameters, parseAbiParameters } = await Promise.resolve().then(() => __importStar(require('viem')));
+        const { encodeAbiParameters, parseAbiParameters } = await import('viem');
         const encodedInnerData = encodeAbiParameters(parseAbiParameters('uint8, address, uint8, uint8, uint256, uint256'), [ACTION_OPEN, account.address, market, side, marginAmount, BigInt(leverage)]);
         // Before executing perp, we need DEMO_USDC balance
         // For testnet demo, we'll mint DEMO_USDC to the relayer first (if it's mintable)
@@ -1011,12 +971,12 @@ async function executePerpEthereum(intentId, parsed, route) {
             args: [account.address],
         });
         if (balance < marginAmount) {
-            updateExecution(execution.id, {
+            await updateExecution(execution.id, {
                 status: 'failed',
                 errorCode: 'INSUFFICIENT_BALANCE',
                 errorMessage: `Insufficient DEMO_USDC balance: have ${balance}, need ${marginAmount}`,
             });
-            updateIntentStatus(intentId, {
+            await updateIntentStatus(intentId, {
                 status: 'failed',
                 failureStage: 'execute',
                 errorCode: 'INSUFFICIENT_BALANCE',
@@ -1071,22 +1031,22 @@ async function executePerpEthereum(intentId, parsed, route) {
         const explorerUrl = buildExplorerUrl('ethereum', 'sepolia', txHash);
         if (receipt.status === 'success') {
             // Import position and step functions
-            const { createPosition, createExecutionStep, updateExecutionStep } = await Promise.resolve().then(() => __importStar(require('../../execution-ledger/db')));
+            const { createPosition, createExecutionStep, updateExecutionStep } = await import('../../execution-ledger/db');
             // Create execution steps for tracking
-            const routeStep = createExecutionStep({
+            const routeStep = await createExecutionStep({
                 executionId: execution.id,
                 stepIndex: 0,
                 action: 'route',
                 stage: 'route',
             });
-            updateExecutionStep(routeStep.id, { status: 'confirmed' });
-            const executeStep = createExecutionStep({
+            await updateExecutionStep(routeStep.id, { status: 'confirmed' });
+            const executeStep = await createExecutionStep({
                 executionId: execution.id,
                 stepIndex: 1,
                 action: 'open_position',
                 stage: 'execute',
             });
-            updateExecutionStep(executeStep.id, {
+            await updateExecutionStep(executeStep.id, {
                 status: 'confirmed',
                 txHash: txHash,
                 explorerUrl: explorerUrl,
@@ -1129,31 +1089,35 @@ async function executePerpEthereum(intentId, parsed, route) {
                 intent_id: intentId,
                 execution_id: execution.id,
             });
-            updateExecution(execution.id, {
-                status: 'confirmed',
-                txHash,
-                explorerUrl,
-                blockNumber: Number(receipt.blockNumber),
-                gasUsed: receipt.gasUsed.toString(),
-                latencyMs,
-            });
-            updateIntentStatus(intentId, {
-                status: 'confirmed',
-                confirmedAt: Math.floor(Date.now() / 1000),
-                metadataJson: mergeMetadata(existingMetadataJson, {
-                    parsed,
-                    route,
-                    executedKind: 'real',
-                    executionId: execution.id,
+            // Use durable transaction wrapper to ensure confirm-stage writes persist
+            const { confirmIntentWithExecution } = await import('../../execution-ledger/db-pg.js');
+            await confirmIntentWithExecution(intentId, execution.id, {
+                executionStatus: {
+                    status: 'confirmed',
                     txHash,
                     explorerUrl,
-                    perpDetails: {
-                        market: marketName,
-                        side: positionSide,
-                        margin: marginAmount.toString(),
-                        leverage,
-                    },
-                }),
+                    blockNumber: Number(receipt.blockNumber),
+                    gasUsed: receipt.gasUsed.toString(),
+                    latencyMs,
+                },
+                intentStatus: {
+                    status: 'confirmed',
+                    confirmedAt: Math.floor(Date.now() / 1000),
+                    metadataJson: mergeMetadata(existingMetadataJson, {
+                        parsed,
+                        route,
+                        executedKind: 'real',
+                        executionId: execution.id,
+                        txHash,
+                        explorerUrl,
+                        perpDetails: {
+                            market: marketName,
+                            side: positionSide,
+                            margin: marginAmount.toString(),
+                            leverage,
+                        },
+                    }),
+                },
             });
             return {
                 ok: true,
@@ -1173,14 +1137,14 @@ async function executePerpEthereum(intentId, parsed, route) {
             };
         }
         else {
-            updateExecution(execution.id, {
+            await updateExecution(execution.id, {
                 status: 'failed',
                 txHash,
                 explorerUrl,
                 errorCode: 'TX_REVERTED',
                 errorMessage: 'Perp position transaction reverted',
             });
-            updateIntentStatus(intentId, {
+            await updateIntentStatus(intentId, {
                 status: 'failed',
                 failureStage: 'confirm',
                 errorCode: 'TX_REVERTED',
@@ -1202,7 +1166,7 @@ async function executePerpEthereum(intentId, parsed, route) {
         }
     }
     catch (error) {
-        updateIntentStatus(intentId, {
+        await updateIntentStatus(intentId, {
             status: 'failed',
             failureStage: 'execute',
             errorCode: 'PERP_EXECUTION_ERROR',
@@ -1225,8 +1189,8 @@ async function executePerpEthereum(intentId, parsed, route) {
  * Records intent on-chain with txHash and explorerUrl
  */
 async function executeProofOnly(intentId, parsed, route) {
-    const { getIntent, updateIntentStatus, createExecution, updateExecution, linkExecutionToIntent, } = await Promise.resolve().then(() => __importStar(require('../../execution-ledger/db')));
-    const { buildExplorerUrl } = await Promise.resolve().then(() => __importStar(require('../ledger/ledger')));
+    const { getIntent, updateIntentStatus, createExecution, updateExecution, linkExecutionToIntent, } = await import('../../execution-ledger/db');
+    const { buildExplorerUrl } = await import('../ledger/ledger');
     // Get intent's existing metadata to preserve caller info (source, domain, runId)
     const intent = getIntent(intentId);
     const existingMetadataJson = intent?.metadata_json;
@@ -1237,9 +1201,9 @@ async function executeProofOnly(intentId, parsed, route) {
         return await executeProofOnlySolana(intentId, parsed, route);
     }
     // Default: Ethereum Sepolia proof tx
-    const { RELAYER_PRIVATE_KEY, ETH_TESTNET_RPC_URL, } = await Promise.resolve().then(() => __importStar(require('../config')));
+    const { RELAYER_PRIVATE_KEY, ETH_TESTNET_RPC_URL, } = await import('../config');
     if (!RELAYER_PRIVATE_KEY || !ETH_TESTNET_RPC_URL) {
-        updateIntentStatus(intentId, {
+        await updateIntentStatus(intentId, {
             status: 'failed',
             failureStage: 'execute',
             errorCode: 'CONFIG_MISSING',
@@ -1258,9 +1222,9 @@ async function executeProofOnly(intentId, parsed, route) {
     }
     try {
         // Import viem for transaction
-        const { createPublicClient, createWalletClient, http, toHex } = await Promise.resolve().then(() => __importStar(require('viem')));
-        const { sepolia } = await Promise.resolve().then(() => __importStar(require('viem/chains')));
-        const { privateKeyToAccount } = await Promise.resolve().then(() => __importStar(require('viem/accounts')));
+        const { createPublicClient, createWalletClient, http, toHex } = await import('viem');
+        const { sepolia } = await import('viem/chains');
+        const { privateKeyToAccount } = await import('viem/accounts');
         const account = privateKeyToAccount(RELAYER_PRIVATE_KEY);
         const publicClient = createPublicClient({
             chain: sepolia,
@@ -1272,7 +1236,7 @@ async function executeProofOnly(intentId, parsed, route) {
             transport: http(ETH_TESTNET_RPC_URL),
         });
         // Create execution record
-        const execution = createExecution({
+        const execution = await createExecution({
             chain: 'ethereum',
             network: 'sepolia',
             kind: 'proof',
@@ -1284,7 +1248,7 @@ async function executeProofOnly(intentId, parsed, route) {
             usdEstimate: estimateIntentUsd(parsed),
             usdEstimateIsEstimate: true,
         });
-        linkExecutionToIntent(execution.id, intentId);
+        await linkExecutionToIntent(execution.id, intentId);
         // Build proof metadata for calldata
         const proofData = {
             type: 'BLOSSOM_INTENT_PROOF',
@@ -1310,7 +1274,7 @@ async function executeProofOnly(intentId, parsed, route) {
         const latencyMs = Date.now() - startTime;
         const explorerUrl = buildExplorerUrl('ethereum', 'sepolia', txHash);
         if (receipt.status === 'success') {
-            updateExecution(execution.id, {
+            await updateExecution(execution.id, {
                 status: 'confirmed',
                 txHash,
                 explorerUrl,
@@ -1318,7 +1282,7 @@ async function executeProofOnly(intentId, parsed, route) {
                 gasUsed: receipt.gasUsed.toString(),
                 latencyMs,
             });
-            updateIntentStatus(intentId, {
+            await updateIntentStatus(intentId, {
                 status: 'confirmed',
                 confirmedAt: Math.floor(Date.now() / 1000),
                 metadataJson: mergeMetadata(existingMetadataJson, {
@@ -1345,14 +1309,14 @@ async function executeProofOnly(intentId, parsed, route) {
             };
         }
         else {
-            updateExecution(execution.id, {
+            await updateExecution(execution.id, {
                 status: 'failed',
                 txHash,
                 explorerUrl,
                 errorCode: 'TX_REVERTED',
                 errorMessage: 'Proof transaction reverted',
             });
-            updateIntentStatus(intentId, {
+            await updateIntentStatus(intentId, {
                 status: 'failed',
                 failureStage: 'confirm',
                 errorCode: 'TX_REVERTED',
@@ -1374,7 +1338,7 @@ async function executeProofOnly(intentId, parsed, route) {
         }
     }
     catch (error) {
-        updateIntentStatus(intentId, {
+        await updateIntentStatus(intentId, {
             status: 'failed',
             failureStage: 'execute',
             errorCode: 'PROOF_TX_FAILED',
@@ -1396,8 +1360,8 @@ async function executeProofOnly(intentId, parsed, route) {
  * Execute proof-only transaction on Solana devnet
  */
 async function executeProofOnlySolana(intentId, parsed, route) {
-    const { getIntent, updateIntentStatus, createExecution, updateExecution, linkExecutionToIntent, } = await Promise.resolve().then(() => __importStar(require('../../execution-ledger/db')));
-    const { buildExplorerUrl } = await Promise.resolve().then(() => __importStar(require('../ledger/ledger')));
+    const { getIntent, updateIntentStatus, createExecution, updateExecution, linkExecutionToIntent, } = await import('../../execution-ledger/db');
+    const { buildExplorerUrl } = await import('../ledger/ledger');
     // Get intent's existing metadata to preserve caller info (source, domain, runId)
     const intent = getIntent(intentId);
     const existingMetadataJson = intent?.metadata_json;
@@ -1406,7 +1370,7 @@ async function executeProofOnlySolana(intentId, parsed, route) {
     // Check for Solana private key
     const solanaPrivateKey = process.env.SOLANA_PRIVATE_KEY;
     if (!solanaPrivateKey) {
-        updateIntentStatus(intentId, {
+        await updateIntentStatus(intentId, {
             status: 'failed',
             failureStage: 'execute',
             errorCode: 'CONFIG_MISSING',
@@ -1425,8 +1389,8 @@ async function executeProofOnlySolana(intentId, parsed, route) {
     }
     try {
         // Use the existing Solana proof tx logic from solana-ledger-smoke
-        const { SolanaClient } = await Promise.resolve().then(() => __importStar(require('../solana/solanaClient')));
-        const crypto = await Promise.resolve().then(() => __importStar(require('crypto')));
+        const { SolanaClient } = await import('../solana/solanaClient');
+        const crypto = await import('crypto');
         // Base58 helpers
         const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
         function base58Decode(str) {
@@ -1484,7 +1448,7 @@ async function executeProofOnlySolana(intentId, parsed, route) {
         const publicKey = secretKey.slice(32, 64);
         const senderPubkey = base58Encode(publicKey);
         // Create execution record
-        const execution = createExecution({
+        const execution = await createExecution({
             chain: 'solana',
             network: 'devnet',
             kind: 'proof',
@@ -1496,7 +1460,7 @@ async function executeProofOnlySolana(intentId, parsed, route) {
             usdEstimate: estimateIntentUsd(parsed),
             usdEstimateIsEstimate: true,
         });
-        linkExecutionToIntent(execution.id, intentId);
+        await linkExecutionToIntent(execution.id, intentId);
         // Use SolanaClient to send a small transfer as proof
         const client = new SolanaClient();
         const DEVNET_RPC = 'https://api.devnet.solana.com';
@@ -1554,14 +1518,14 @@ async function executeProofOnlySolana(intentId, parsed, route) {
         const result = await client.confirmTransaction(txSignature, 'confirmed', 60000);
         const latencyMs = Date.now() - startTime;
         const explorerUrl = buildExplorerUrl('solana', 'devnet', txSignature);
-        updateExecution(execution.id, {
+        await updateExecution(execution.id, {
             status: 'confirmed',
             txHash: txSignature,
             explorerUrl,
             blockNumber: result.slot,
             latencyMs,
         });
-        updateIntentStatus(intentId, {
+        await updateIntentStatus(intentId, {
             status: 'confirmed',
             confirmedAt: Math.floor(Date.now() / 1000),
             metadataJson: mergeMetadata(existingMetadataJson, {
@@ -1588,7 +1552,7 @@ async function executeProofOnlySolana(intentId, parsed, route) {
         };
     }
     catch (error) {
-        updateIntentStatus(intentId, {
+        await updateIntentStatus(intentId, {
             status: 'failed',
             failureStage: 'execute',
             errorCode: 'SOLANA_PROOF_TX_FAILED',
@@ -1610,15 +1574,15 @@ async function executeProofOnlySolana(intentId, parsed, route) {
  * Execute on Ethereum Sepolia
  */
 async function executeEthereum(intentId, parsed, route) {
-    const { getIntent, updateIntentStatus, createExecution, updateExecution, linkExecutionToIntent, } = await Promise.resolve().then(() => __importStar(require('../../execution-ledger/db')));
+    const { getIntent, updateIntentStatus, createExecution, updateExecution, linkExecutionToIntent, } = await import('../../execution-ledger/db');
     // Get intent's existing metadata to preserve caller info (source, domain, runId)
     const intent = getIntent(intentId);
     const existingMetadataJson = intent?.metadata_json;
     const now = Math.floor(Date.now() / 1000);
     // Check config
-    const { RELAYER_PRIVATE_KEY, ETH_TESTNET_RPC_URL, } = await Promise.resolve().then(() => __importStar(require('../config')));
+    const { RELAYER_PRIVATE_KEY, ETH_TESTNET_RPC_URL, } = await import('../config');
     if (!RELAYER_PRIVATE_KEY || !ETH_TESTNET_RPC_URL) {
-        updateIntentStatus(intentId, {
+        await updateIntentStatus(intentId, {
             status: 'failed',
             failureStage: 'execute',
             errorCode: 'CONFIG_MISSING',
@@ -1637,7 +1601,7 @@ async function executeEthereum(intentId, parsed, route) {
     }
     // Create execution record
     const mappedKind = parsed.kind === 'unknown' ? 'proof' : parsed.kind;
-    const execution = createExecution({
+    const execution = await createExecution({
         chain: 'ethereum',
         network: 'sepolia',
         kind: mappedKind,
@@ -1650,12 +1614,12 @@ async function executeEthereum(intentId, parsed, route) {
         usdEstimate: estimateIntentUsd(parsed),
         usdEstimateIsEstimate: true,
     });
-    linkExecutionToIntent(execution.id, intentId);
+    await linkExecutionToIntent(execution.id, intentId);
     try {
         // Attempt real execution via viem
-        const { createPublicClient, createWalletClient, http } = await Promise.resolve().then(() => __importStar(require('viem')));
-        const { sepolia } = await Promise.resolve().then(() => __importStar(require('viem/chains')));
-        const { privateKeyToAccount } = await Promise.resolve().then(() => __importStar(require('viem/accounts')));
+        const { createPublicClient, createWalletClient, http } = await import('viem');
+        const { sepolia } = await import('viem/chains');
+        const { privateKeyToAccount } = await import('viem/accounts');
         const account = privateKeyToAccount(RELAYER_PRIVATE_KEY);
         const publicClient = createPublicClient({
             chain: sepolia,
@@ -1679,26 +1643,30 @@ async function executeEthereum(intentId, parsed, route) {
         });
         const explorerUrl = `https://sepolia.etherscan.io/tx/${txHash}`;
         const latencyMs = Date.now() - (now * 1000);
-        updateExecution(execution.id, {
-            status: receipt.status === 'success' ? 'confirmed' : 'failed',
-            txHash,
-            explorerUrl,
-            blockNumber: Number(receipt.blockNumber),
-            gasUsed: receipt.gasUsed.toString(),
-            latencyMs,
-        });
         if (receipt.status === 'success') {
-            updateIntentStatus(intentId, {
-                status: 'confirmed',
-                confirmedAt: Math.floor(Date.now() / 1000),
-                metadataJson: mergeMetadata(existingMetadataJson, {
-                    parsed,
-                    route,
-                    executedKind: 'real',
-                    executionId: execution.id,
+            // Use durable transaction wrapper to ensure confirm-stage writes persist
+            const { confirmIntentWithExecution } = await import('../../execution-ledger/db-pg.js');
+            await confirmIntentWithExecution(intentId, execution.id, {
+                executionStatus: {
+                    status: 'confirmed',
                     txHash,
                     explorerUrl,
-                }),
+                    blockNumber: Number(receipt.blockNumber),
+                    gasUsed: receipt.gasUsed.toString(),
+                    latencyMs,
+                },
+                intentStatus: {
+                    status: 'confirmed',
+                    confirmedAt: Math.floor(Date.now() / 1000),
+                    metadataJson: mergeMetadata(existingMetadataJson, {
+                        parsed,
+                        route,
+                        executedKind: 'real',
+                        executionId: execution.id,
+                        txHash,
+                        explorerUrl,
+                    }),
+                },
             });
             return {
                 ok: true,
@@ -1713,7 +1681,14 @@ async function executeEthereum(intentId, parsed, route) {
             };
         }
         else {
-            updateIntentStatus(intentId, {
+            // Transaction failed - update both execution and intent
+            await updateExecution(execution.id, {
+                status: 'failed',
+                txHash,
+                explorerUrl,
+                blockNumber: Number(receipt.blockNumber),
+            });
+            await updateIntentStatus(intentId, {
                 status: 'failed',
                 failureStage: 'confirm',
                 errorCode: 'TX_REVERTED',
@@ -1735,12 +1710,12 @@ async function executeEthereum(intentId, parsed, route) {
         }
     }
     catch (error) {
-        updateExecution(execution.id, {
+        await updateExecution(execution.id, {
             status: 'failed',
             errorCode: 'EXECUTION_ERROR',
             errorMessage: error.message?.slice(0, 200),
         });
-        updateIntentStatus(intentId, {
+        await updateIntentStatus(intentId, {
             status: 'failed',
             failureStage: 'execute',
             errorCode: 'EXECUTION_ERROR',
@@ -1763,7 +1738,7 @@ async function executeEthereum(intentId, parsed, route) {
  * Execute on Solana Devnet
  */
 async function executeSolana(intentId, parsed, route) {
-    const { getIntent, updateIntentStatus, createExecution, updateExecution, linkExecutionToIntent, } = await Promise.resolve().then(() => __importStar(require('../../execution-ledger/db')));
+    const { getIntent, updateIntentStatus, createExecution, updateExecution, linkExecutionToIntent, } = await import('../../execution-ledger/db');
     // Get intent's existing metadata to preserve caller info (source, domain, runId)
     const existingIntent = getIntent(intentId);
     const existingMetadataJson = existingIntent?.metadata_json;
@@ -1771,7 +1746,7 @@ async function executeSolana(intentId, parsed, route) {
     // Check for Solana private key
     const solanaPrivateKey = process.env.SOLANA_PRIVATE_KEY;
     if (!solanaPrivateKey) {
-        updateIntentStatus(intentId, {
+        await updateIntentStatus(intentId, {
             status: 'failed',
             failureStage: 'execute',
             errorCode: 'CONFIG_MISSING',
@@ -1790,7 +1765,7 @@ async function executeSolana(intentId, parsed, route) {
     }
     // Create execution record
     const solanaKind = parsed.kind === 'unknown' ? 'proof' : parsed.kind;
-    const execution = createExecution({
+    const execution = await createExecution({
         chain: 'solana',
         network: 'devnet',
         kind: solanaKind,
@@ -1802,14 +1777,14 @@ async function executeSolana(intentId, parsed, route) {
         usdEstimate: estimateIntentUsd(parsed),
         usdEstimateIsEstimate: true,
     });
-    linkExecutionToIntent(execution.id, intentId);
+    await linkExecutionToIntent(execution.id, intentId);
     // For MVP: Mark as confirmed without actual execution
     // Full Solana execution would use the SolanaClient
-    updateExecution(execution.id, {
+    await updateExecution(execution.id, {
         status: 'confirmed',
         latencyMs: 100,
     });
-    updateIntentStatus(intentId, {
+    await updateIntentStatus(intentId, {
         status: 'confirmed',
         confirmedAt: Math.floor(Date.now() / 1000),
         metadataJson: mergeMetadata(existingMetadataJson, {
@@ -1834,7 +1809,7 @@ async function executeSolana(intentId, parsed, route) {
 /**
  * Run multiple intents in batch
  */
-async function runIntentBatch(intents, options = {}) {
+export async function runIntentBatch(intents, options = {}) {
     if (options.parallel) {
         return Promise.all(intents.map(intent => runIntent(intent, options)));
     }
@@ -1849,17 +1824,17 @@ async function runIntentBatch(intents, options = {}) {
  * Record a failed intent for tracking purposes
  * This ensures ALL attempts (even validation failures) appear in stats
  */
-async function recordFailedIntent(params) {
-    const { createIntent, updateIntentStatus } = await Promise.resolve().then(() => __importStar(require('../../execution-ledger/db')));
+export async function recordFailedIntent(params) {
+    const { createIntent, updateIntentStatus } = await import('../../execution-ledger/db');
     const now = Math.floor(Date.now() / 1000);
     // Create intent record even for failures
-    const intent = createIntent({
+    const intent = await createIntent({
         intentText: params.intentText || '[empty]',
         intentKind: 'unknown',
         metadataJson: JSON.stringify(params.metadata || {}),
     });
     // Immediately mark as failed
-    updateIntentStatus(intent.id, {
+    await updateIntentStatus(intent.id, {
         status: 'failed',
         failureStage: params.failureStage,
         errorCode: params.errorCode,

@@ -1,4 +1,3 @@
-"use strict";
 /**
  * Bloom Execution Ledger Database
  * Supports both SQLite (local dev) and Postgres (production)
@@ -11,117 +10,30 @@
  * For Postgres support in production, use the async helpers or
  * run setup-neon-db.ts to initialize the Postgres schema.
  */
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.getIntentStats = exports.getStatsSummary = void 0;
-exports.initDatabase = initDatabase;
-exports.getDatabase = getDatabase;
-exports.closeDatabase = closeDatabase;
-exports.createExecution = createExecution;
-exports.updateExecution = updateExecution;
-exports.getExecution = getExecution;
-exports.getExecutionByTxHash = getExecutionByTxHash;
-exports.countExecutions = countExecutions;
-exports.listExecutions = listExecutions;
-exports.listExecutionsWithMeta = listExecutionsWithMeta;
-exports.createRoute = createRoute;
-exports.getRoutesForExecution = getRoutesForExecution;
-exports.updateRoute = updateRoute;
-exports.upsertSession = upsertSession;
-exports.countSessions = countSessions;
-exports.listSessions = listSessions;
-exports.listSessionsWithMeta = listSessionsWithMeta;
-exports.upsertAsset = upsertAsset;
-exports.countAssets = countAssets;
-exports.listAssets = listAssets;
-exports.listAssetsWithMeta = listAssetsWithMeta;
-exports.registerWallet = registerWallet;
-exports.getPrimaryWallet = getPrimaryWallet;
-exports.listWallets = listWallets;
-exports.getLedgerSummary = getLedgerSummary;
-exports.getProofBundle = getProofBundle;
-exports.createExecutionStep = createExecutionStep;
-exports.updateExecutionStep = updateExecutionStep;
-exports.getExecutionSteps = getExecutionSteps;
-exports.getSummaryStats = getSummaryStats;
-exports.getRecentExecutions = getRecentExecutions;
-exports.createIntent = createIntent;
-exports.updateIntentStatus = updateIntentStatus;
-exports.getIntent = getIntent;
-exports.getRecentIntents = getRecentIntents;
-exports.getIntentStatsSummary = getIntentStatsSummary;
-exports.linkExecutionToIntent = linkExecutionToIntent;
-exports.getExecutionsForIntent = getExecutionsForIntent;
-exports.getSummaryStatsWithIntents = getSummaryStatsWithIntents;
-exports.createPosition = createPosition;
-exports.getPosition = getPosition;
-exports.getPositionByOnChainId = getPositionByOnChainId;
-exports.updatePosition = updatePosition;
-exports.closePosition = closePosition;
-exports.getOpenPositions = getOpenPositions;
-exports.getRecentPositions = getRecentPositions;
-exports.getPositionsByStatus = getPositionsByStatus;
-exports.getPositionStats = getPositionStats;
-exports.getIndexerState = getIndexerState;
-exports.upsertIndexerState = upsertIndexerState;
-exports.addToWaitlist = addToWaitlist;
-exports.getWaitlistEntries = getWaitlistEntries;
-exports.getWaitlistCount = getWaitlistCount;
-const better_sqlite3_1 = __importDefault(require("better-sqlite3"));
-const crypto_1 = require("crypto");
-const path = __importStar(require("path"));
-const fs = __importStar(require("fs"));
-const url_1 = require("url");
-const path_1 = require("path");
-const db_factory_js_1 = require("./db-factory.js");
+import Database from 'better-sqlite3';
+import { randomUUID } from 'crypto';
+import * as path from 'path';
+import * as fs from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+import { detectDatabaseType, logDatabaseInfo } from './db-factory.js';
+import { SCHEMA_SQL } from './schema-const.js';
 // ESM-safe __dirname
-const __filename = (0, url_1.fileURLToPath)(import.meta.url);
-const __dirname = (0, path_1.dirname)(__filename);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 // Database file path (in agent/execution-ledger directory)
-const DB_PATH = process.env.EXECUTION_LEDGER_DB_PATH || path.join(__dirname, 'ledger.db');
+// In serverless environments (Vercel), use /tmp which is writable
+const isVercel = process.env.VERCEL === '1';
+const defaultPath = isVercel ? '/tmp/ledger.db' : path.join(__dirname, 'ledger.db');
+const DB_PATH = process.env.EXECUTION_LEDGER_DB_PATH || defaultPath;
 let db = null;
-const dbType = (0, db_factory_js_1.detectDatabaseType)();
+const dbType = detectDatabaseType();
 // Log database info on module load
-(0, db_factory_js_1.logDatabaseInfo)();
+logDatabaseInfo();
 /**
  * Initialize the database connection and run migrations
  */
-function initDatabase() {
+export function initDatabase() {
     if (db)
         return db;
     // Postgres mode check
@@ -136,7 +48,7 @@ function initDatabase() {
     if (!fs.existsSync(dbDir)) {
         fs.mkdirSync(dbDir, { recursive: true });
     }
-    db = new better_sqlite3_1.default(DB_PATH);
+    db = new Database(DB_PATH);
     db.pragma('journal_mode = WAL');
     db.pragma('foreign_keys = ON');
     // Run schema
@@ -146,7 +58,7 @@ function initDatabase() {
 /**
  * Get the database instance (initializes if needed)
  */
-function getDatabase() {
+export function getDatabase() {
     if (!db) {
         return initDatabase();
     }
@@ -155,7 +67,7 @@ function getDatabase() {
 /**
  * Close the database connection
  */
-function closeDatabase() {
+export function closeDatabase() {
     if (db) {
         db.close();
         db = null;
@@ -165,9 +77,8 @@ function closeDatabase() {
  * Run schema migrations
  */
 function runMigrations(database) {
-    const schemaPath = path.join(__dirname, 'schema.sql');
-    const schema = fs.readFileSync(schemaPath, 'utf-8');
-    database.exec(schema);
+    // Use inlined schema constant (works in bundled serverless environments)
+    database.exec(SCHEMA_SQL);
     // Run column migrations for existing databases
     runColumnMigrations(database);
 }
@@ -204,9 +115,9 @@ function runColumnMigrations(database) {
 // ============================================
 // Execution Operations
 // ============================================
-function createExecution(params) {
+export function createExecution(params) {
     const db = getDatabase();
-    const id = (0, crypto_1.randomUUID)();
+    const id = randomUUID();
     const now = Math.floor(Date.now() / 1000);
     db.prepare(`
     INSERT INTO executions (
@@ -238,7 +149,7 @@ function createExecution(params) {
         updated_at: now,
     };
 }
-function updateExecution(id, updates) {
+export function updateExecution(id, updates) {
     const db = getDatabase();
     const now = Math.floor(Date.now() / 1000);
     const sets = ['updated_at = ?'];
@@ -302,15 +213,15 @@ function updateExecution(id, updates) {
     values.push(id);
     db.prepare(`UPDATE executions SET ${sets.join(', ')} WHERE id = ?`).run(...values);
 }
-function getExecution(id) {
+export function getExecution(id) {
     const db = getDatabase();
     return db.prepare('SELECT * FROM executions WHERE id = ?').get(id);
 }
-function getExecutionByTxHash(txHash) {
+export function getExecutionByTxHash(txHash) {
     const db = getDatabase();
     return db.prepare('SELECT * FROM executions WHERE tx_hash = ?').get(txHash);
 }
-function countExecutions(params) {
+export function countExecutions(params) {
     const db = getDatabase();
     let query = 'SELECT COUNT(*) as count FROM executions WHERE 1=1';
     const values = [];
@@ -328,7 +239,7 @@ function countExecutions(params) {
     }
     return db.prepare(query).get(...values).count;
 }
-function listExecutions(params) {
+export function listExecutions(params) {
     const db = getDatabase();
     const limit = params?.limit ?? 50;
     const offset = params?.offset ?? 0;
@@ -350,7 +261,7 @@ function listExecutions(params) {
     values.push(limit, offset);
     return db.prepare(query).all(...values);
 }
-function listExecutionsWithMeta(params) {
+export function listExecutionsWithMeta(params) {
     const limit = params?.limit ?? 50;
     const offset = params?.offset ?? 0;
     const totalInDb = countExecutions(params);
@@ -363,9 +274,9 @@ function listExecutionsWithMeta(params) {
 // ============================================
 // Route Operations
 // ============================================
-function createRoute(params) {
+export function createRoute(params) {
     const db = getDatabase();
-    const id = (0, crypto_1.randomUUID)();
+    const id = randomUUID();
     const now = Math.floor(Date.now() / 1000);
     db.prepare(`
     INSERT INTO routes (
@@ -385,11 +296,11 @@ function createRoute(params) {
         created_at: now,
     };
 }
-function getRoutesForExecution(executionId) {
+export function getRoutesForExecution(executionId) {
     const db = getDatabase();
     return db.prepare('SELECT * FROM routes WHERE execution_id = ? ORDER BY step_index').all(executionId);
 }
-function updateRoute(id, updates) {
+export function updateRoute(id, updates) {
     const db = getDatabase();
     const sets = [];
     const values = [];
@@ -409,9 +320,9 @@ function updateRoute(id, updates) {
 // ============================================
 // Session Operations
 // ============================================
-function upsertSession(params) {
+export function upsertSession(params) {
     const db = getDatabase();
-    const id = (0, crypto_1.randomUUID)();
+    const id = randomUUID();
     const now = Math.floor(Date.now() / 1000);
     const existing = db.prepare('SELECT * FROM sessions WHERE chain = ? AND network = ? AND user_address = ? AND session_id = ?').get(params.chain, params.network, params.userAddress.toLowerCase(), params.sessionId);
     if (existing) {
@@ -441,7 +352,7 @@ function upsertSession(params) {
         updated_at: now,
     };
 }
-function countSessions(params) {
+export function countSessions(params) {
     const db = getDatabase();
     let query = 'SELECT COUNT(*) as count FROM sessions WHERE 1=1';
     const values = [];
@@ -459,7 +370,7 @@ function countSessions(params) {
     }
     return db.prepare(query).get(...values).count;
 }
-function listSessions(params) {
+export function listSessions(params) {
     const db = getDatabase();
     const limit = params?.limit ?? 50;
     let query = 'SELECT * FROM sessions WHERE 1=1';
@@ -480,7 +391,7 @@ function listSessions(params) {
     values.push(limit);
     return db.prepare(query).all(...values);
 }
-function listSessionsWithMeta(params) {
+export function listSessionsWithMeta(params) {
     const limit = params?.limit ?? 50;
     const totalInDb = countSessions(params);
     const data = listSessions(params);
@@ -492,9 +403,9 @@ function listSessionsWithMeta(params) {
 // ============================================
 // Asset Operations
 // ============================================
-function upsertAsset(params) {
+export function upsertAsset(params) {
     const db = getDatabase();
-    const id = (0, crypto_1.randomUUID)();
+    const id = randomUUID();
     const now = Math.floor(Date.now() / 1000);
     const existing = db.prepare('SELECT * FROM assets WHERE chain = ? AND network = ? AND wallet_address = ? AND (token_address = ? OR (token_address IS NULL AND ? IS NULL))').get(params.chain, params.network, params.walletAddress.toLowerCase(), params.tokenAddress ?? null, params.tokenAddress ?? null);
     if (existing) {
@@ -530,7 +441,7 @@ function upsertAsset(params) {
         updated_at: now,
     };
 }
-function countAssets(params) {
+export function countAssets(params) {
     const db = getDatabase();
     let query = 'SELECT COUNT(*) as count FROM assets WHERE 1=1';
     const values = [];
@@ -548,7 +459,7 @@ function countAssets(params) {
     }
     return db.prepare(query).get(...values).count;
 }
-function listAssets(params) {
+export function listAssets(params) {
     const db = getDatabase();
     const limit = params?.limit ?? 100;
     let query = 'SELECT * FROM assets WHERE 1=1';
@@ -569,7 +480,7 @@ function listAssets(params) {
     values.push(limit);
     return db.prepare(query).all(...values);
 }
-function listAssetsWithMeta(params) {
+export function listAssetsWithMeta(params) {
     const limit = params?.limit ?? 100;
     const totalInDb = countAssets(params);
     const data = listAssets(params);
@@ -581,9 +492,9 @@ function listAssetsWithMeta(params) {
 // ============================================
 // Wallet Operations
 // ============================================
-function registerWallet(params) {
+export function registerWallet(params) {
     const db = getDatabase();
-    const id = (0, crypto_1.randomUUID)();
+    const id = randomUUID();
     const now = Math.floor(Date.now() / 1000);
     // If setting as primary, unset other primaries for this chain/network
     if (params.isPrimary) {
@@ -604,11 +515,11 @@ function registerWallet(params) {
         created_at: now,
     };
 }
-function getPrimaryWallet(chain, network) {
+export function getPrimaryWallet(chain, network) {
     const db = getDatabase();
     return db.prepare('SELECT * FROM wallets WHERE chain = ? AND network = ? AND is_primary = 1').get(chain, network);
 }
-function listWallets(params) {
+export function listWallets(params) {
     const db = getDatabase();
     let query = 'SELECT * FROM wallets WHERE 1=1';
     const values = [];
@@ -623,7 +534,7 @@ function listWallets(params) {
     query += ' ORDER BY is_primary DESC, created_at DESC';
     return db.prepare(query).all(...values);
 }
-function getLedgerSummary() {
+export function getLedgerSummary() {
     const db = getDatabase();
     const totalExec = db.prepare('SELECT COUNT(*) as count FROM executions').get().count;
     const confirmedExec = db.prepare("SELECT COUNT(*) as count FROM executions WHERE status IN ('confirmed', 'finalized')").get().count;
@@ -655,7 +566,7 @@ function getLedgerSummary() {
 /**
  * Get all confirmed transaction hashes for proof bundle
  */
-function getProofBundle() {
+export function getProofBundle() {
     const db = getDatabase();
     const ethTxs = db.prepare(`
     SELECT tx_hash, explorer_url, action, created_at
@@ -684,9 +595,9 @@ function getProofBundle() {
         })),
     };
 }
-function createExecutionStep(params) {
+export function createExecutionStep(params) {
     const db = getDatabase();
-    const id = (0, crypto_1.randomUUID)();
+    const id = randomUUID();
     const now = Math.floor(Date.now() / 1000);
     db.prepare(`
     INSERT INTO execution_steps (
@@ -703,7 +614,7 @@ function createExecutionStep(params) {
         created_at: now,
     };
 }
-function updateExecutionStep(id, updates) {
+export function updateExecutionStep(id, updates) {
     const db = getDatabase();
     const sets = [];
     const values = [];
@@ -736,11 +647,11 @@ function updateExecutionStep(id, updates) {
     values.push(id);
     db.prepare(`UPDATE execution_steps SET ${sets.join(', ')} WHERE id = ?`).run(...values);
 }
-function getExecutionSteps(executionId) {
+export function getExecutionSteps(executionId) {
     const db = getDatabase();
     return db.prepare('SELECT * FROM execution_steps WHERE execution_id = ? ORDER BY step_index').all(executionId);
 }
-function getSummaryStats() {
+export function getSummaryStats() {
     const db = getDatabase();
     // Basic counts
     const totalExec = db.prepare('SELECT COUNT(*) as count FROM executions').get().count;
@@ -842,7 +753,7 @@ function getSummaryStats() {
         lastExecutionAt: lastExecResult.lastAt,
     };
 }
-function getRecentExecutions(limit = 20) {
+export function getRecentExecutions(limit = 20) {
     const db = getDatabase();
     return db.prepare(`
     SELECT * FROM executions
@@ -850,9 +761,9 @@ function getRecentExecutions(limit = 20) {
     LIMIT ?
   `).all(limit);
 }
-function createIntent(params) {
+export function createIntent(params) {
     const db = getDatabase();
-    const id = (0, crypto_1.randomUUID)();
+    const id = randomUUID();
     const now = Math.floor(Date.now() / 1000);
     db.prepare(`
     INSERT INTO intents (
@@ -872,7 +783,7 @@ function createIntent(params) {
         metadata_json: params.metadataJson,
     };
 }
-function updateIntentStatus(id, updates) {
+export function updateIntentStatus(id, updates) {
     const db = getDatabase();
     const sets = [];
     const values = [];
@@ -929,11 +840,11 @@ function updateIntentStatus(id, updates) {
     values.push(id);
     db.prepare(`UPDATE intents SET ${sets.join(', ')} WHERE id = ?`).run(...values);
 }
-function getIntent(id) {
+export function getIntent(id) {
     const db = getDatabase();
     return db.prepare('SELECT * FROM intents WHERE id = ?').get(id);
 }
-function getRecentIntents(limit = 50) {
+export function getRecentIntents(limit = 50) {
     const db = getDatabase();
     return db.prepare(`
     SELECT * FROM intents
@@ -941,7 +852,7 @@ function getRecentIntents(limit = 50) {
     LIMIT ?
   `).all(limit);
 }
-function getIntentStatsSummary() {
+export function getIntentStatsSummary() {
     const db = getDatabase();
     // Basic counts
     const totalIntents = db.prepare('SELECT COUNT(*) as count FROM intents').get().count;
@@ -998,7 +909,7 @@ function getIntentStatsSummary() {
         recentIntents,
     };
 }
-function linkExecutionToIntent(executionId, intentId) {
+export function linkExecutionToIntent(executionId, intentId) {
     const db = getDatabase();
     // Add intent_id column if it doesn't exist (migration)
     try {
@@ -1009,7 +920,7 @@ function linkExecutionToIntent(executionId, intentId) {
     }
     db.prepare('UPDATE executions SET intent_id = ? WHERE id = ?').run(intentId, executionId);
 }
-function getExecutionsForIntent(intentId) {
+export function getExecutionsForIntent(intentId) {
     const db = getDatabase();
     // Check if intent_id column exists
     try {
@@ -1024,7 +935,7 @@ function getExecutionsForIntent(intentId) {
     }
 }
 // Updated getSummaryStats to include intent metrics
-function getSummaryStatsWithIntents() {
+export function getSummaryStatsWithIntents() {
     const baseStats = getSummaryStats();
     const intentStats = getIntentStatsSummary();
     return {
@@ -1034,7 +945,7 @@ function getSummaryStatsWithIntents() {
         failedIntentsByStage: intentStats.failuresByStage,
     };
 }
-function createPosition(input) {
+export function createPosition(input) {
     const db = getDatabase();
     const id = crypto.randomUUID();
     const now = Math.floor(Date.now() / 1000);
@@ -1049,12 +960,12 @@ function createPosition(input) {
   `).run(id, input.chain, input.network, input.venue, input.market, input.side, input.leverage ?? null, input.margin_units ?? null, input.margin_display ?? null, input.size_units ?? null, input.entry_price ?? null, now, input.open_tx_hash ?? null, input.open_explorer_url ?? null, input.user_address, input.on_chain_position_id ?? null, input.intent_id ?? null, input.execution_id ?? null, now, now);
     return getPosition(id);
 }
-function getPosition(id) {
+export function getPosition(id) {
     const db = getDatabase();
     const row = db.prepare('SELECT * FROM positions WHERE id = ?').get(id);
     return row ?? null;
 }
-function getPositionByOnChainId(chain, network, venue, onChainPositionId) {
+export function getPositionByOnChainId(chain, network, venue, onChainPositionId) {
     const db = getDatabase();
     const row = db.prepare(`
     SELECT * FROM positions
@@ -1062,7 +973,7 @@ function getPositionByOnChainId(chain, network, venue, onChainPositionId) {
   `).get(chain, network, venue, onChainPositionId);
     return row ?? null;
 }
-function updatePosition(id, updates) {
+export function updatePosition(id, updates) {
     const db = getDatabase();
     const setClauses = [];
     const values = [];
@@ -1079,7 +990,7 @@ function updatePosition(id, updates) {
     values.push(id);
     db.prepare(`UPDATE positions SET ${setClauses.join(', ')} WHERE id = ?`).run(...values);
 }
-function closePosition(id, closeTxHash, closeExplorerUrl, pnl, status = 'closed') {
+export function closePosition(id, closeTxHash, closeExplorerUrl, pnl, status = 'closed') {
     const db = getDatabase();
     const now = Math.floor(Date.now() / 1000);
     db.prepare(`
@@ -1093,7 +1004,7 @@ function closePosition(id, closeTxHash, closeExplorerUrl, pnl, status = 'closed'
     WHERE id = ?
   `).run(status, now, closeTxHash, closeExplorerUrl, pnl ?? null, now, id);
 }
-function getOpenPositions(filters) {
+export function getOpenPositions(filters) {
     const db = getDatabase();
     let sql = 'SELECT * FROM positions WHERE status = ?';
     const params = ['open'];
@@ -1116,7 +1027,7 @@ function getOpenPositions(filters) {
     sql += ' ORDER BY opened_at DESC';
     return db.prepare(sql).all(...params);
 }
-function getRecentPositions(limit = 20) {
+export function getRecentPositions(limit = 20) {
     const db = getDatabase();
     return db.prepare(`
     SELECT * FROM positions
@@ -1124,7 +1035,7 @@ function getRecentPositions(limit = 20) {
     LIMIT ?
   `).all(limit);
 }
-function getPositionsByStatus(status, limit = 50) {
+export function getPositionsByStatus(status, limit = 50) {
     const db = getDatabase();
     return db.prepare(`
     SELECT * FROM positions
@@ -1133,7 +1044,7 @@ function getPositionsByStatus(status, limit = 50) {
     LIMIT ?
   `).all(status, limit);
 }
-function getPositionStats() {
+export function getPositionStats() {
     const db = getDatabase();
     const total = db.prepare('SELECT COUNT(*) as count FROM positions').get().count;
     const open = db.prepare('SELECT COUNT(*) as count FROM positions WHERE status = ?').get('open').count;
@@ -1145,7 +1056,7 @@ function getPositionStats() {
   `).all();
     return { total, open, closed, liquidated, byMarket };
 }
-function getIndexerState(chain, network, contractAddress) {
+export function getIndexerState(chain, network, contractAddress) {
     const db = getDatabase();
     const row = db.prepare(`
     SELECT * FROM indexer_state
@@ -1153,7 +1064,7 @@ function getIndexerState(chain, network, contractAddress) {
   `).get(chain, network, contractAddress);
     return row ?? null;
 }
-function upsertIndexerState(chain, network, contractAddress, lastIndexedBlock) {
+export function upsertIndexerState(chain, network, contractAddress, lastIndexedBlock) {
     const db = getDatabase();
     const id = `${chain}:${network}:${contractAddress}`;
     const now = Math.floor(Date.now() / 1000);
@@ -1164,7 +1075,7 @@ function upsertIndexerState(chain, network, contractAddress, lastIndexedBlock) {
     DO UPDATE SET last_indexed_block = ?, updated_at = ?
   `).run(id, chain, network, contractAddress, lastIndexedBlock, now, lastIndexedBlock, now);
 }
-function addToWaitlist(params) {
+export function addToWaitlist(params) {
     const db = getDatabase();
     const id = `wl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const now = Math.floor(Date.now() / 1000);
@@ -1186,13 +1097,13 @@ function addToWaitlist(params) {
   `).run(id, params.email || null, params.walletAddress || null, now, params.source || 'landing', params.metadata ? JSON.stringify(params.metadata) : null);
     return id;
 }
-function getWaitlistEntries(limit = 100) {
+export function getWaitlistEntries(limit = 100) {
     const db = getDatabase();
     return db.prepare(`
     SELECT * FROM waitlist ORDER BY created_at DESC LIMIT ?
   `).all(limit);
 }
-function getWaitlistCount() {
+export function getWaitlistCount() {
     const db = getDatabase();
     const row = db.prepare('SELECT COUNT(*) as count FROM waitlist').get();
     return row?.count || 0;
@@ -1201,7 +1112,160 @@ function getWaitlistCount() {
 // Aliases for API compatibility
 // ============================================
 // Alias for getSummaryStats
-exports.getStatsSummary = getSummaryStats;
+export const getStatsSummary = getSummaryStats;
 // Alias for getIntentStatsSummary
-exports.getIntentStats = getIntentStatsSummary;
+export const getIntentStats = getIntentStatsSummary;
+/**
+ * ============================================================
+ * ASYNC/POSTGRES SUPPORT
+ * Async-capable exports that route to Postgres in production
+ * ============================================================
+ */
+/**
+ * Async-capable intent creation (uses Postgres if DATABASE_URL is set)
+ */
+export async function createIntentAsync(params) {
+    if (dbType === 'postgres') {
+        const pgDb = await import('./db-pg.js');
+        return pgDb.createIntent(params);
+    }
+    // SQLite: use synchronous version, wrap in Promise
+    return Promise.resolve(createIntent(params));
+}
+/**
+ * Async-capable intent status update (uses Postgres if DATABASE_URL is set)
+ */
+export async function updateIntentStatusAsync(id, updates) {
+    if (dbType === 'postgres') {
+        const pgDb = await import('./db-pg.js');
+        return pgDb.updateIntentStatus(id, updates);
+    }
+    // SQLite: use synchronous version
+    updateIntentStatus(id, updates);
+    return Promise.resolve();
+}
+/**
+ * Async-capable execution creation (uses Postgres if DATABASE_URL is set)
+ */
+export async function createExecutionAsync(params) {
+    if (dbType === 'postgres') {
+        const pgDb = await import('./db-pg.js');
+        return pgDb.createExecution(params);
+    }
+    // SQLite: use synchronous version
+    return Promise.resolve(createExecution(params));
+}
+/**
+ * Async-capable execution update (uses Postgres if DATABASE_URL is set)
+ */
+export async function updateExecutionAsync(id, updates) {
+    if (dbType === 'postgres') {
+        const pgDb = await import('./db-pg.js');
+        return pgDb.updateExecution(id, updates);
+    }
+    // SQLite: use synchronous version
+    updateExecution(id, updates);
+    return Promise.resolve();
+}
+/**
+ * Async-capable get intent (uses Postgres if DATABASE_URL is set)
+ */
+export async function getIntentAsync(id) {
+    if (dbType === 'postgres') {
+        const pgDb = await import('./db-pg.js');
+        return pgDb.getIntent(id);
+    }
+    // SQLite: use synchronous version
+    return Promise.resolve(getIntent(id));
+}
+/**
+ * Async-capable get recent intents (uses Postgres if DATABASE_URL is set)
+ */
+export async function getRecentIntentsAsync(limit = 50) {
+    if (dbType === 'postgres') {
+        const pgDb = await import('./db-pg.js');
+        return pgDb.getRecentIntents(limit);
+    }
+    // SQLite: use synchronous version
+    return Promise.resolve(getRecentIntents(limit));
+}
+/**
+ * Async-capable get summary stats (uses Postgres if DATABASE_URL is set)
+ */
+export async function getSummaryStatsAsync() {
+    if (dbType === 'postgres') {
+        const pgDb = await import('./db-pg.js');
+        return pgDb.getSummaryStats();
+    }
+    // SQLite: use synchronous version
+    return Promise.resolve(getSummaryStats());
+}
+/**
+ * Async-capable get intent stats summary (uses Postgres if DATABASE_URL is set)
+ */
+export async function getIntentStatsSummaryAsync() {
+    if (dbType === 'postgres') {
+        const pgDb = await import('./db-pg.js');
+        return pgDb.getIntentStatsSummary();
+    }
+    // SQLite: use synchronous version
+    return Promise.resolve(getIntentStatsSummary());
+}
+/**
+ * Async-capable get executions for intent (uses Postgres if DATABASE_URL is set)
+ */
+export async function getExecutionsForIntentAsync(intentId) {
+    if (dbType === 'postgres') {
+        const pgDb = await import('./db-pg.js');
+        return pgDb.getExecutionsForIntent(intentId);
+    }
+    // SQLite: use synchronous version
+    return Promise.resolve(getExecutionsForIntent(intentId));
+}
+/**
+ * Async-capable link execution to intent (uses Postgres if DATABASE_URL is set)
+ */
+export async function linkExecutionToIntentAsync(executionId, intentId) {
+    if (dbType === 'postgres') {
+        const pgDb = await import('./db-pg.js');
+        return pgDb.linkExecutionToIntent(executionId, intentId);
+    }
+    // SQLite: use synchronous version
+    linkExecutionToIntent(executionId, intentId);
+    return Promise.resolve();
+}
+/**
+ * Async-capable create execution step (uses Postgres if DATABASE_URL is set)
+ */
+export async function createExecutionStepAsync(params) {
+    if (dbType === 'postgres') {
+        const pgDb = await import('./db-pg.js');
+        return pgDb.createExecutionStep(params);
+    }
+    // SQLite: use synchronous version
+    return Promise.resolve(createExecutionStep(params));
+}
+/**
+ * Async-capable update execution step (uses Postgres if DATABASE_URL is set)
+ */
+export async function updateExecutionStepAsync(id, updates) {
+    if (dbType === 'postgres') {
+        const pgDb = await import('./db-pg.js');
+        return pgDb.updateExecutionStep(id, updates);
+    }
+    // SQLite: use synchronous version
+    updateExecutionStep(id, updates);
+    return Promise.resolve();
+}
+/**
+ * Async-capable get summary stats with intents (uses Postgres if DATABASE_URL is set)
+ */
+export async function getSummaryStatsWithIntentsAsync() {
+    if (dbType === 'postgres') {
+        const pgDb = await import('./db-pg.js');
+        return pgDb.getSummaryStatsWithIntents();
+    }
+    // SQLite: use synchronous version
+    return Promise.resolve(getSummaryStatsWithIntents());
+}
 //# sourceMappingURL=db.js.map

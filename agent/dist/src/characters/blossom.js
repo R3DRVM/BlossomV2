@@ -1,4 +1,3 @@
-"use strict";
 /**
  * Blossom Character Definition
  * AI Trading Copilot for on-chain perps, DeFi, and event markets
@@ -6,9 +5,7 @@
  * TODO: When integrating full ElizaOS, import Character from '@elizaos/core'
  * For MVP, we use a simplified character definition
  */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.blossomCharacter = void 0;
-exports.blossomCharacter = {
+export const blossomCharacter = {
     name: 'Blossom',
     bio: 'AI Trading Copilot for on-chain perps, DeFi, and event markets',
     settings: {

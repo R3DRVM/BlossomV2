@@ -1380,8 +1380,9 @@ async function executePerpEthereum(
               side: positionSide,
               margin: marginAmount.toString(),
               leverage,
-          },
-        }),
+            },
+          }),
+        },
       });
 
       return {

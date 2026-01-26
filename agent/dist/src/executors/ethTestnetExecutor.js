@@ -1,71 +1,34 @@
-"use strict";
 // @ts-nocheck
 /**
  * ETH Testnet Executor
  * Prepares execution plans and EIP-712 typed data for signing
  */
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.executionRequestToIntent = executionRequestToIntent;
-exports.prepareEthTestnetExecution = prepareEthTestnetExecution;
-const config_1 = require("../config");
-const evmQuote_1 = require("../quotes/evmQuote");
-const lendingQuote_1 = require("../quotes/lendingQuote");
-const erc20Rpc_1 = require("./erc20Rpc");
-const evmRpc_1 = require("./evmRpc");
-const viem_1 = require("viem");
-const correlationId_1 = require("../utils/correlationId");
+import { EXECUTION_ROUTER_ADDRESS, MOCK_SWAP_ADAPTER_ADDRESS, UNISWAP_V3_ADAPTER_ADDRESS, UNISWAP_ADAPTER_ADDRESS, WETH_WRAP_ADAPTER_ADDRESS, ERC20_PULL_ADAPTER_ADDRESS, USDC_ADDRESS_SEPOLIA, WETH_ADDRESS_SEPOLIA, DEMO_USDC_ADDRESS, DEMO_WETH_ADDRESS, DEMO_LEND_VAULT_ADDRESS, DEMO_LEND_ADAPTER_ADDRESS, PROOF_ADAPTER_ADDRESS, ETH_TESTNET_RPC_URL, ETH_TESTNET_CHAIN_ID, requireEthTestnetConfig, } from '../config';
+import { getSwapQuote, getSwapRoutingDecision } from '../quotes/evmQuote';
+import { getLendingRoutingDecision } from '../quotes/lendingQuote';
+import { erc20_balanceOf, erc20_allowance } from './erc20Rpc';
+import { eth_call, padAddress, encodeCall, decodeUint256 } from './evmRpc';
+import { parseUnits } from 'viem';
+import { makeCorrelationId } from '../utils/correlationId';
 /**
  * Convert executionRequest to executionIntent and params
  */
-function executionRequestToIntent(executionRequest) {
+export function executionRequestToIntent(executionRequest) {
     if (executionRequest.kind !== 'swap') {
         throw new Error('Only swap execution requests supported');
     }
-    if (!config_1.USDC_ADDRESS_SEPOLIA || !config_1.WETH_ADDRESS_SEPOLIA) {
+    if (!USDC_ADDRESS_SEPOLIA || !WETH_ADDRESS_SEPOLIA) {
         throw new Error('Token addresses not configured');
     }
     // Determine token addresses
     const tokenInAddr = executionRequest.tokenIn === 'ETH'
         ? 'ETH' // Special case for native ETH
         : executionRequest.tokenIn === 'WETH'
-            ? config_1.WETH_ADDRESS_SEPOLIA.toLowerCase()
-            : config_1.USDC_ADDRESS_SEPOLIA.toLowerCase();
+            ? WETH_ADDRESS_SEPOLIA.toLowerCase()
+            : USDC_ADDRESS_SEPOLIA.toLowerCase();
     const tokenOutAddr = executionRequest.tokenOut === 'WETH'
-        ? config_1.WETH_ADDRESS_SEPOLIA.toLowerCase()
-        : config_1.USDC_ADDRESS_SEPOLIA.toLowerCase();
+        ? WETH_ADDRESS_SEPOLIA.toLowerCase()
+        : USDC_ADDRESS_SEPOLIA.toLowerCase();
     // Determine executionIntent
     let executionIntent;
     if (executionRequest.tokenIn === 'USDC' && executionRequest.tokenOut === 'WETH') {
@@ -85,11 +48,11 @@ function executionRequestToIntent(executionRequest) {
     let amountIn;
     if (executionRequest.tokenIn === 'ETH' || executionRequest.tokenIn === 'WETH') {
         // 18 decimals
-        amountIn = (0, viem_1.parseUnits)(executionRequest.amountIn, 18);
+        amountIn = parseUnits(executionRequest.amountIn, 18);
     }
     else {
         // USDC: 6 decimals
-        amountIn = (0, viem_1.parseUnits)(executionRequest.amountIn, 6);
+        amountIn = parseUnits(executionRequest.amountIn, 6);
     }
     return {
         executionIntent,
@@ -103,20 +66,20 @@ function executionRequestToIntent(executionRequest) {
  * Fetch nonce from ExecutionRouter contract via RPC
  */
 async function fetchNonceFromChain(userAddress) {
-    if (!config_1.ETH_TESTNET_RPC_URL) {
+    if (!ETH_TESTNET_RPC_URL) {
         throw new Error('ETH_TESTNET_RPC_URL is required to fetch nonce');
     }
-    if (!config_1.EXECUTION_ROUTER_ADDRESS) {
+    if (!EXECUTION_ROUTER_ADDRESS) {
         throw new Error('EXECUTION_ROUTER_ADDRESS is required to fetch nonce');
     }
     // Encode function call: nonces(address)
     // Function selector: nonces(address) = 0x7ecebe00
     const functionSelector = '0x7ecebe00';
-    const paddedAddr = (0, evmRpc_1.padAddress)(userAddress);
-    const callData = (0, evmRpc_1.encodeCall)(functionSelector, paddedAddr.slice(2));
+    const paddedAddr = padAddress(userAddress);
+    const callData = encodeCall(functionSelector, paddedAddr.slice(2));
     try {
-        const result = await (0, evmRpc_1.eth_call)(config_1.ETH_TESTNET_RPC_URL, config_1.EXECUTION_ROUTER_ADDRESS, callData);
-        return (0, evmRpc_1.decodeUint256)(result);
+        const result = await eth_call(ETH_TESTNET_RPC_URL, EXECUTION_ROUTER_ADDRESS, callData);
+        return decodeUint256(result);
     }
     catch (error) {
         console.error('[ethTestnetExecutor] Failed to fetch nonce:', error);
@@ -126,26 +89,26 @@ async function fetchNonceFromChain(userAddress) {
 /**
  * Prepare ETH testnet execution plan and EIP-712 typed data
  */
-async function prepareEthTestnetExecution(args) {
+export async function prepareEthTestnetExecution(args) {
     const { draftId, userAddress, strategy, authMode = 'direct', executionIntent: providedIntent, executionRequest, executionKind = 'default' } = args;
     // If executionRequest provided, convert to intent
     let executionIntent = providedIntent || 'mock';
     let fundingPolicy = 'require_tokenIn';
     let requestAmountIn;
     // Demo swap mode: force swap intent
-    const isDemoSwap = executionKind === 'demo_swap' && config_1.DEMO_USDC_ADDRESS && config_1.DEMO_WETH_ADDRESS;
+    const isDemoSwap = executionKind === 'demo_swap' && DEMO_USDC_ADDRESS && DEMO_WETH_ADDRESS;
     if (isDemoSwap && !executionRequest) {
         // Default to USDC → WETH demo swap
         executionIntent = 'swap_usdc_weth';
         fundingPolicy = 'require_tokenIn';
-        requestAmountIn = (0, viem_1.parseUnits)('100', 6); // 100 USDC default
+        requestAmountIn = parseUnits('100', 6); // 100 USDC default
     }
     // Lending supply mode: detect from executionKind or executionRequest
-    const isLendSupply = executionKind === 'lend_supply' && config_1.DEMO_USDC_ADDRESS && config_1.DEMO_LEND_VAULT_ADDRESS && config_1.DEMO_LEND_ADAPTER_ADDRESS;
+    const isLendSupply = executionKind === 'lend_supply' && DEMO_USDC_ADDRESS && DEMO_LEND_VAULT_ADDRESS && DEMO_LEND_ADAPTER_ADDRESS;
     let lendAmount;
     if (isLendSupply && !executionRequest) {
         // Default to 100 USDC lending
-        lendAmount = (0, viem_1.parseUnits)('100', 6);
+        lendAmount = parseUnits('100', 6);
         fundingPolicy = 'require_tokenIn';
     }
     if (executionRequest && executionRequest.kind === 'swap') {
@@ -161,7 +124,7 @@ async function prepareEthTestnetExecution(args) {
         const amountStr = executionRequest.amount || '100';
         lendAsset = executionRequest.asset?.toUpperCase() || 'USDC';
         const lendDecimals = lendAsset === 'WETH' ? 18 : 6;
-        lendAmount = (0, viem_1.parseUnits)(amountStr, lendDecimals);
+        lendAmount = parseUnits(amountStr, lendDecimals);
         fundingPolicy = 'require_tokenIn';
     }
     // Validate user address
@@ -173,14 +136,14 @@ async function prepareEthTestnetExecution(args) {
         throw new Error(`Invalid userAddress format: ${userAddress}`);
     }
     // Require ETH testnet config
-    (0, config_1.requireEthTestnetConfig)();
-    if (!config_1.EXECUTION_ROUTER_ADDRESS || !config_1.MOCK_SWAP_ADAPTER_ADDRESS) {
+    requireEthTestnetConfig();
+    if (!EXECUTION_ROUTER_ADDRESS || !MOCK_SWAP_ADAPTER_ADDRESS) {
         throw new Error('EXECUTION_ROUTER_ADDRESS and MOCK_SWAP_ADAPTER_ADDRESS must be set');
     }
     // Determine nonce
     let nonce;
     const warnings = [];
-    if (config_1.ETH_TESTNET_RPC_URL) {
+    if (ETH_TESTNET_RPC_URL) {
         try {
             nonce = await fetchNonceFromChain(userAddress);
             console.log(`[ethTestnetExecutor] Fetched nonce for ${userAddress}: ${nonce}`);
@@ -205,7 +168,7 @@ async function prepareEthTestnetExecution(args) {
         hasStrategy: !!strategy,
         strategyType: strategy?.type,
         strategyInstrumentType: strategy?.instrumentType,
-        hasPROOF_ADAPTER: !!config_1.PROOF_ADAPTER_ADDRESS,
+        hasPROOF_ADAPTER: !!PROOF_ADAPTER_ADDRESS,
     });
     // Build actions array based on executionIntent
     let actions;
@@ -222,35 +185,35 @@ async function prepareEthTestnetExecution(args) {
         executionRequest.kind === 'swap' &&
         executionRequest.tokenIn === 'ETH' &&
         fundingPolicy === 'auto' &&
-        config_1.WETH_WRAP_ADAPTER_ADDRESS;
+        WETH_WRAP_ADAPTER_ADDRESS;
     if (needsFundingRoute) {
         // Compose atomic funding route: WRAP(ETH→WETH) + SWAP(WETH→tokenOut)
-        if (!config_1.UNISWAP_V3_ADAPTER_ADDRESS) {
+        if (!UNISWAP_V3_ADAPTER_ADDRESS) {
             throw new Error('UNISWAP_V3_ADAPTER_ADDRESS not configured for funding route');
         }
-        if (!config_1.WETH_ADDRESS_SEPOLIA) {
+        if (!WETH_ADDRESS_SEPOLIA) {
             throw new Error('WETH_ADDRESS_SEPOLIA not configured');
         }
-        if (!config_1.USDC_ADDRESS_SEPOLIA) {
+        if (!USDC_ADDRESS_SEPOLIA) {
             throw new Error('USDC_ADDRESS_SEPOLIA not configured');
         }
         const wrapAmount = requestAmountIn; // Already validated above
         // Step 1: WRAP action (ETH → WETH)
         // If tokenOut is WETH, wrap directly to user (no swap needed)
         // If tokenOut is USDC, wrap to router so router can swap
-        const { encodeAbiParameters } = await Promise.resolve().then(() => __importStar(require('viem')));
+        const { encodeAbiParameters } = await import('viem');
         const wrapRecipient = executionRequest.tokenOut === 'WETH'
             ? userAddress.toLowerCase() // Direct to user if final output is WETH
-            : config_1.EXECUTION_ROUTER_ADDRESS.toLowerCase(); // To router if we need to swap
+            : EXECUTION_ROUTER_ADDRESS.toLowerCase(); // To router if we need to swap
         const wrapData = encodeAbiParameters([{ type: 'address' }], [wrapRecipient]);
         const wrapAction = {
             actionType: 1, // WRAP (from PlanTypes.ActionType enum)
-            adapter: config_1.WETH_WRAP_ADAPTER_ADDRESS.toLowerCase(), // Checked above
+            adapter: WETH_WRAP_ADAPTER_ADDRESS.toLowerCase(), // Checked above
             data: wrapData,
         };
         // Step 2: SWAP action (only if tokenOut is not WETH)
         if (executionRequest.tokenOut === 'USDC') {
-            const tokenOut = config_1.USDC_ADDRESS_SEPOLIA.toLowerCase();
+            const tokenOut = USDC_ADDRESS_SEPOLIA.toLowerCase();
             const fee = 3000; // 0.3% fee tier
             const amountOutMin = 0n; // No slippage protection for MVP
             const recipient = userAddress.toLowerCase();
@@ -264,7 +227,7 @@ async function prepareEthTestnetExecution(args) {
                 { type: 'address' },
                 { type: 'uint256' },
             ], [
-                config_1.WETH_ADDRESS_SEPOLIA.toLowerCase(),
+                WETH_ADDRESS_SEPOLIA.toLowerCase(),
                 tokenOut,
                 fee,
                 wrapAmount, // Use wrapped amount as swap input
@@ -274,7 +237,7 @@ async function prepareEthTestnetExecution(args) {
             ]);
             const swapAction = {
                 actionType: 0, // SWAP
-                adapter: config_1.UNISWAP_V3_ADAPTER_ADDRESS.toLowerCase(),
+                adapter: UNISWAP_V3_ADAPTER_ADDRESS.toLowerCase(),
                 data: swapInnerData,
             };
             // Compose plan: [WRAP, SWAP]
@@ -287,7 +250,7 @@ async function prepareEthTestnetExecution(args) {
         // Set value to wrap amount (user sends ETH with transaction)
         planValue = '0x' + wrapAmount.toString(16);
         // Check allowance for WETH (router needs to approve adapter for swap)
-        if (config_1.ETH_TESTNET_RPC_URL && config_1.EXECUTION_ROUTER_ADDRESS) {
+        if (ETH_TESTNET_RPC_URL && EXECUTION_ROUTER_ADDRESS) {
             try {
                 // Note: Router will hold WETH after wrap, so we check router's allowance
                 // But router doesn't exist yet, so we check if user would need to approve
@@ -307,13 +270,13 @@ async function prepareEthTestnetExecution(args) {
     }
     else if (executionIntent === 'swap_usdc_weth' || executionIntent === 'swap_weth_usdc') {
         // Check execution mode: real vs demo
-        const { EXECUTION_SWAP_MODE } = await Promise.resolve().then(() => __importStar(require('../config')));
+        const { EXECUTION_SWAP_MODE } = await import('../config');
         const useRealExecution = EXECUTION_SWAP_MODE === 'real';
         // Check if this is a demo swap (using demo tokens)
         // Demo swap is enabled when:
         // 1. EXECUTION_SWAP_MODE !== 'real', AND
         // 2. (executionKind === 'demo_swap', OR executionRequest specifies USDC/WETH swap with demo tokens configured)
-        const useDemoTokens = !useRealExecution && config_1.DEMO_USDC_ADDRESS && config_1.DEMO_WETH_ADDRESS && (isDemoSwap ||
+        const useDemoTokens = !useRealExecution && DEMO_USDC_ADDRESS && DEMO_WETH_ADDRESS && (isDemoSwap ||
             (executionRequest && executionRequest.kind === 'swap' &&
                 ((executionRequest.tokenIn === 'USDC' && executionRequest.tokenOut === 'WETH') ||
                     (executionRequest.tokenIn === 'WETH' && executionRequest.tokenOut === 'USDC'))));
@@ -322,16 +285,16 @@ async function prepareEthTestnetExecution(args) {
         let tokenOut;
         let swapAdapter;
         let pullAdapter;
-        if (useDemoTokens && config_1.DEMO_USDC_ADDRESS && config_1.DEMO_WETH_ADDRESS) {
+        if (useDemoTokens && DEMO_USDC_ADDRESS && DEMO_WETH_ADDRESS) {
             // Use demo tokens and adapters
             tokenIn = executionIntent === 'swap_usdc_weth'
-                ? config_1.DEMO_USDC_ADDRESS.toLowerCase()
-                : config_1.DEMO_WETH_ADDRESS.toLowerCase();
+                ? DEMO_USDC_ADDRESS.toLowerCase()
+                : DEMO_WETH_ADDRESS.toLowerCase();
             tokenOut = executionIntent === 'swap_usdc_weth'
-                ? config_1.DEMO_WETH_ADDRESS.toLowerCase()
-                : config_1.DEMO_USDC_ADDRESS.toLowerCase();
-            swapAdapter = config_1.UNISWAP_ADAPTER_ADDRESS?.toLowerCase() || config_1.UNISWAP_V3_ADAPTER_ADDRESS?.toLowerCase() || '';
-            pullAdapter = config_1.ERC20_PULL_ADAPTER_ADDRESS?.toLowerCase();
+                ? DEMO_WETH_ADDRESS.toLowerCase()
+                : DEMO_USDC_ADDRESS.toLowerCase();
+            swapAdapter = UNISWAP_ADAPTER_ADDRESS?.toLowerCase() || UNISWAP_V3_ADAPTER_ADDRESS?.toLowerCase() || '';
+            pullAdapter = ERC20_PULL_ADAPTER_ADDRESS?.toLowerCase();
             if (!swapAdapter) {
                 throw new Error('UNISWAP_ADAPTER_ADDRESS not configured for demo swap');
             }
@@ -341,22 +304,22 @@ async function prepareEthTestnetExecution(args) {
         }
         else {
             // Use real tokens (existing behavior)
-            if (!config_1.UNISWAP_V3_ADAPTER_ADDRESS) {
+            if (!UNISWAP_V3_ADAPTER_ADDRESS) {
                 throw new Error('UNISWAP_V3_ADAPTER_ADDRESS not configured');
             }
-            if (!config_1.USDC_ADDRESS_SEPOLIA) {
+            if (!USDC_ADDRESS_SEPOLIA) {
                 throw new Error('USDC_ADDRESS_SEPOLIA not configured');
             }
-            if (!config_1.WETH_ADDRESS_SEPOLIA) {
+            if (!WETH_ADDRESS_SEPOLIA) {
                 throw new Error('WETH_ADDRESS_SEPOLIA not configured');
             }
             tokenIn = executionIntent === 'swap_usdc_weth'
-                ? config_1.USDC_ADDRESS_SEPOLIA.toLowerCase()
-                : config_1.WETH_ADDRESS_SEPOLIA.toLowerCase();
+                ? USDC_ADDRESS_SEPOLIA.toLowerCase()
+                : WETH_ADDRESS_SEPOLIA.toLowerCase();
             tokenOut = executionIntent === 'swap_usdc_weth'
-                ? config_1.WETH_ADDRESS_SEPOLIA.toLowerCase()
-                : config_1.USDC_ADDRESS_SEPOLIA.toLowerCase();
-            swapAdapter = config_1.UNISWAP_V3_ADAPTER_ADDRESS.toLowerCase();
+                ? WETH_ADDRESS_SEPOLIA.toLowerCase()
+                : USDC_ADDRESS_SEPOLIA.toLowerCase();
+            swapAdapter = UNISWAP_V3_ADAPTER_ADDRESS.toLowerCase();
             pullAdapter = undefined; // Real swaps don't use PULL adapter yet
         }
         // Derive amountIn from executionRequest, strategy, or use default
@@ -372,24 +335,24 @@ async function prepareEthTestnetExecution(args) {
             if (strategy.notionalUsd) {
                 // Convert USD to token units using viem parseUnits
                 const usdAmountStr = Math.max(1, Math.round(strategy.notionalUsd)).toString();
-                amountIn = (0, viem_1.parseUnits)(usdAmountStr, decimalsIn);
+                amountIn = parseUnits(usdAmountStr, decimalsIn);
             }
             else if (strategy.depositUsd) {
                 const usdAmountStr = Math.max(1, Math.round(strategy.depositUsd)).toString();
-                amountIn = (0, viem_1.parseUnits)(usdAmountStr, decimalsIn);
+                amountIn = parseUnits(usdAmountStr, decimalsIn);
             }
             else {
                 // Default fallback
                 amountIn = executionIntent === 'swap_usdc_weth'
-                    ? (0, viem_1.parseUnits)('100', 6)
-                    : (0, viem_1.parseUnits)('0.1', 18);
+                    ? parseUnits('100', 6)
+                    : parseUnits('0.1', 18);
             }
         }
         else {
             // Default fallback
             amountIn = executionIntent === 'swap_usdc_weth'
-                ? (0, viem_1.parseUnits)('100', 6)
-                : (0, viem_1.parseUnits)('0.1', 18);
+                ? parseUnits('100', 6)
+                : parseUnits('0.1', 18);
         }
         // Get routing decision for metadata (hybrid: 1inch intelligence + demo execution)
         if (useDemoTokens) {
@@ -399,7 +362,7 @@ async function prepareEthTestnetExecution(args) {
                 const tokenOutSymbol = executionIntent === 'swap_usdc_weth' ? 'WETH' : 'USDC';
                 const tokenInDecimals = executionIntent === 'swap_usdc_weth' ? 6 : 18;
                 const tokenOutDecimals = executionIntent === 'swap_usdc_weth' ? 18 : 6;
-                const routingDecision = await (0, evmQuote_1.getSwapRoutingDecision)({
+                const routingDecision = await getSwapRoutingDecision({
                     tokenIn,
                     tokenOut,
                     tokenInSymbol,
@@ -433,7 +396,7 @@ async function prepareEthTestnetExecution(args) {
                 console.warn('[ethTestnetExecutor] Failed to get routing decision:', error);
                 // Fall back to basic quote for minOut calculation
                 try {
-                    const quote = await (0, evmQuote_1.getSwapQuote)({
+                    const quote = await getSwapQuote({
                         tokenIn,
                         tokenOut,
                         amountIn: amountIn.toString(),
@@ -466,7 +429,7 @@ async function prepareEthTestnetExecution(args) {
             : 0n; // Use quote minOut for demo, 0 for real swaps (no slippage protection for MVP)
         const recipient = userAddress.toLowerCase();
         const swapDeadline = deadlineSeconds;
-        const { encodeAbiParameters } = await Promise.resolve().then(() => __importStar(require('viem')));
+        const { encodeAbiParameters } = await import('viem');
         // For demo swaps: build PULL + SWAP actions
         if (useDemoTokens && pullAdapter) {
             // Action 0: PULL - transfer tokenIn from user to router
@@ -523,7 +486,7 @@ async function prepareEthTestnetExecution(args) {
         }
         else if (useRealExecution) {
             // Real swaps: PULL + SWAP actions (router pulls tokens, then swaps via Uniswap V3)
-            if (!config_1.ERC20_PULL_ADAPTER_ADDRESS) {
+            if (!ERC20_PULL_ADAPTER_ADDRESS) {
                 throw new Error('ERC20_PULL_ADAPTER_ADDRESS not configured for real swap execution');
             }
             // Action 0: PULL - transfer tokenIn from user to router
@@ -566,7 +529,7 @@ async function prepareEthTestnetExecution(args) {
             actions = [
                 {
                     actionType: 2, // PULL
-                    adapter: config_1.ERC20_PULL_ADAPTER_ADDRESS.toLowerCase(),
+                    adapter: ERC20_PULL_ADAPTER_ADDRESS.toLowerCase(),
                     data: pullActionData,
                 },
                 {
@@ -614,10 +577,10 @@ async function prepareEthTestnetExecution(args) {
             ];
         }
         // Check balance and allowance for swap intents
-        if (config_1.ETH_TESTNET_RPC_URL && config_1.EXECUTION_ROUTER_ADDRESS) {
+        if (ETH_TESTNET_RPC_URL && EXECUTION_ROUTER_ADDRESS) {
             try {
-                const balance = await (0, erc20Rpc_1.erc20_balanceOf)(tokenIn, userAddress);
-                const allowance = await (0, erc20Rpc_1.erc20_allowance)(tokenIn, userAddress, config_1.EXECUTION_ROUTER_ADDRESS);
+                const balance = await erc20_balanceOf(tokenIn, userAddress);
+                const allowance = await erc20_allowance(tokenIn, userAddress, EXECUTION_ROUTER_ADDRESS);
                 // Check balance
                 if (balance < amountIn) {
                     const tokenName = executionIntent === 'swap_usdc_weth' ? 'USDC' : 'WETH';
@@ -631,7 +594,7 @@ async function prepareEthTestnetExecution(args) {
                     }
                     approvalRequirements.push({
                         token: tokenIn,
-                        spender: config_1.EXECUTION_ROUTER_ADDRESS.toLowerCase(),
+                        spender: EXECUTION_ROUTER_ADDRESS.toLowerCase(),
                         amount: '0x' + amountIn.toString(16), // Convert to hex string
                     });
                 }
@@ -648,9 +611,9 @@ async function prepareEthTestnetExecution(args) {
         const requestedAsset = lendAsset || executionRequest?.asset?.toUpperCase() || 'USDC';
         const isWethLend = requestedAsset === 'WETH';
         const lendDecimals = isWethLend ? 18 : 6;
-        const amount = lendAmount || (0, viem_1.parseUnits)(isWethLend ? '0.01' : '100', lendDecimals);
-        const { AAVE_SEPOLIA_POOL_ADDRESS, AAVE_ADAPTER_ADDRESS, AAVE_USDC_ADDRESS, AAVE_WETH_ADDRESS, LENDING_EXECUTION_MODE, } = await Promise.resolve().then(() => __importStar(require('../config')));
-        const { getAaveMarketConfig, getSupportedAsset } = await Promise.resolve().then(() => __importStar(require('../defi/aave/market')));
+        const amount = lendAmount || parseUnits(isWethLend ? '0.01' : '100', lendDecimals);
+        const { AAVE_SEPOLIA_POOL_ADDRESS, AAVE_ADAPTER_ADDRESS, AAVE_USDC_ADDRESS, AAVE_WETH_ADDRESS, LENDING_EXECUTION_MODE, } = await import('../config');
+        const { getAaveMarketConfig, getSupportedAsset } = await import('../defi/aave/market');
         // Determine if we should try Aave Sepolia (requires all Aave config variables)
         const hasAaveConfig = AAVE_SEPOLIA_POOL_ADDRESS && AAVE_ADAPTER_ADDRESS;
         const useRealAave = LENDING_EXECUTION_MODE === 'real' && hasAaveConfig;
@@ -679,7 +642,7 @@ async function prepareEthTestnetExecution(args) {
                     // Use USDC for lending
                     let usdcAsset = await getSupportedAsset('USDC');
                     // Override with AAVE_USDC_ADDRESS if configured
-                    if (AAVE_USDC_ADDRESS && AAVE_USDC_ADDRESS !== config_1.DEMO_USDC_ADDRESS) {
+                    if (AAVE_USDC_ADDRESS && AAVE_USDC_ADDRESS !== DEMO_USDC_ADDRESS) {
                         usdcAsset = {
                             symbol: 'USDC',
                             address: AAVE_USDC_ADDRESS.toLowerCase(),
@@ -708,16 +671,16 @@ async function prepareEthTestnetExecution(args) {
         // Fallback to VaultSim if Aave not configured or failed
         if (!useAaveSepolia) {
             console.log('[ethTestnetExecutor] Using VaultSim fallback for lending');
-            asset = config_1.DEMO_USDC_ADDRESS.toLowerCase();
-            vault = config_1.DEMO_LEND_VAULT_ADDRESS.toLowerCase();
-            lendAdapter = config_1.DEMO_LEND_ADAPTER_ADDRESS.toLowerCase();
+            asset = DEMO_USDC_ADDRESS.toLowerCase();
+            vault = DEMO_LEND_VAULT_ADDRESS.toLowerCase();
+            lendAdapter = DEMO_LEND_ADAPTER_ADDRESS.toLowerCase();
             lendingProtocol = 'VaultSim';
         }
-        const pullAdapter = config_1.ERC20_PULL_ADAPTER_ADDRESS.toLowerCase();
+        const pullAdapter = ERC20_PULL_ADAPTER_ADDRESS.toLowerCase();
         // Get lending routing decision
         let lendingRouting;
         try {
-            lendingRouting = await (0, lendingQuote_1.getLendingRoutingDecision)({
+            lendingRouting = await getLendingRoutingDecision({
                 asset,
                 amount: amount.toString(),
                 vaultAddress: vault,
@@ -740,7 +703,7 @@ async function prepareEthTestnetExecution(args) {
             console.warn('[ethTestnetExecutor] Failed to get lending routing:', error);
             warnings.push(`Lending routing failed: ${error.message}`);
         }
-        const { encodeAbiParameters } = await Promise.resolve().then(() => __importStar(require('viem')));
+        const { encodeAbiParameters } = await import('viem');
         if (authMode === 'session') {
             // Session mode: wrap data with maxSpendUnits
             const pullInnerData = encodeAbiParameters([{ type: 'address' }, { type: 'address' }, { type: 'uint256' }], [asset, userAddress.toLowerCase(), amount]);
@@ -780,16 +743,16 @@ async function prepareEthTestnetExecution(args) {
         const amountDisplay = (Number(amount) / 1e6).toFixed(2);
         summary = `Supply ${amountDisplay} USDC to ${lendingRouting?.protocol || lendingProtocol} (Est APR: ${lendingRouting?.apr || '5.00'}%)`;
         // Check approval requirements
-        if (config_1.ETH_TESTNET_RPC_URL) {
+        if (ETH_TESTNET_RPC_URL) {
             try {
-                const allowance = await (0, erc20Rpc_1.erc20_allowance)(asset, userAddress, config_1.EXECUTION_ROUTER_ADDRESS);
+                const allowance = await erc20_allowance(asset, userAddress, EXECUTION_ROUTER_ADDRESS);
                 if (allowance < amount) {
                     if (!approvalRequirements) {
                         approvalRequirements = [];
                     }
                     approvalRequirements.push({
                         token: asset,
-                        spender: config_1.EXECUTION_ROUTER_ADDRESS.toLowerCase(),
+                        spender: EXECUTION_ROUTER_ADDRESS.toLowerCase(),
                         amount: '0x' + amount.toString(16),
                     });
                 }
@@ -805,9 +768,9 @@ async function prepareEthTestnetExecution(args) {
         const isPerpStrategy = strategy?.instrumentType === 'perp' || executionKind === 'perp' ||
             (executionRequest && executionRequest.kind === 'perp');
         const isEventStrategy = strategy?.instrumentType === 'event' || executionKind === 'event';
-        if ((isPerpStrategy || isEventStrategy) && config_1.PROOF_ADAPTER_ADDRESS) {
+        if ((isPerpStrategy || isEventStrategy) && PROOF_ADAPTER_ADDRESS) {
             // Build proof-of-execution action for perps or events
-            const { encodeAbiParameters, keccak256, toBytes, stringToBytes } = await Promise.resolve().then(() => __importStar(require('viem')));
+            const { encodeAbiParameters, keccak256, toBytes, stringToBytes } = await import('viem');
             // Determine venue type: 1 = perps, 2 = event
             const venueType = isPerpStrategy ? 1 : 2;
             // Build canonical intent payload for hashing
@@ -899,7 +862,7 @@ async function prepareEthTestnetExecution(args) {
             actions = [
                 {
                     actionType: 6, // PROOF (from PlanTypes.ActionType enum)
-                    adapter: config_1.PROOF_ADAPTER_ADDRESS.toLowerCase(),
+                    adapter: PROOF_ADAPTER_ADDRESS.toLowerCase(),
                     data: proofData,
                 },
             ];
@@ -922,7 +885,7 @@ async function prepareEthTestnetExecution(args) {
             }
             if (authMode === 'session') {
                 // Wrap as (maxSpendUnits, innerData) for session mode
-                const { encodeAbiParameters } = await Promise.resolve().then(() => __importStar(require('viem')));
+                const { encodeAbiParameters } = await import('viem');
                 const innerData = '0x'; // Empty for mock adapter
                 actionData = encodeAbiParameters([{ type: 'uint256' }, { type: 'bytes' }], [maxSpendUnits, innerData]);
             }
@@ -933,7 +896,7 @@ async function prepareEthTestnetExecution(args) {
             actions = [
                 {
                     actionType: 0, // SWAP (from PlanTypes.ActionType enum)
-                    adapter: config_1.MOCK_SWAP_ADAPTER_ADDRESS.toLowerCase(),
+                    adapter: MOCK_SWAP_ADAPTER_ADDRESS.toLowerCase(),
                     data: actionData,
                 },
             ];
@@ -957,8 +920,8 @@ async function prepareEthTestnetExecution(args) {
         domain: {
             name: 'BlossomExecutionRouter',
             version: '1',
-            chainId: config_1.ETH_TESTNET_CHAIN_ID,
-            verifyingContract: config_1.EXECUTION_ROUTER_ADDRESS.toLowerCase(),
+            chainId: ETH_TESTNET_CHAIN_ID,
+            verifyingContract: EXECUTION_ROUTER_ADDRESS.toLowerCase(),
         },
         types: {
             EIP712Domain: [
@@ -1012,7 +975,7 @@ async function prepareEthTestnetExecution(args) {
     }
     const netExposure = netExposureParts.length > 0 ? `Net: ${netExposureParts.join(', ')}` : 'Net: Neutral';
     // V1: Compute planHash server-side (keccak256(abi.encode(plan)))
-    const { keccak256, encodeAbiParameters } = await Promise.resolve().then(() => __importStar(require('viem')));
+    const { keccak256, encodeAbiParameters } = await import('viem');
     const planHash = keccak256(encodeAbiParameters([
         { type: 'address' }, // user
         { type: 'uint256' }, // nonce
@@ -1037,8 +1000,8 @@ async function prepareEthTestnetExecution(args) {
     ]));
     // Initialize result object
     const result = {
-        chainId: config_1.ETH_TESTNET_CHAIN_ID,
-        to: config_1.EXECUTION_ROUTER_ADDRESS.toLowerCase(),
+        chainId: ETH_TESTNET_CHAIN_ID,
+        to: EXECUTION_ROUTER_ADDRESS.toLowerCase(),
         value: planValue, // May be > 0 if WRAP action included
         plan,
         planHash, // V1: Include server-computed planHash
@@ -1068,7 +1031,7 @@ async function prepareEthTestnetExecution(args) {
                     reason: 'Routing metadata missing from routingDecision',
                     latencyMs: 0,
                     mode: process.env.ROUTING_MODE || 'hybrid',
-                    correlationId: (0, correlationId_1.makeCorrelationId)('executor'),
+                    correlationId: makeCorrelationId('executor'),
                 },
             }
         } : {
@@ -1084,7 +1047,7 @@ async function prepareEthTestnetExecution(args) {
                     reason: 'No routing metadata available',
                     latencyMs: 0,
                     mode: process.env.ROUTING_MODE || 'hybrid',
-                    correlationId: (0, correlationId_1.makeCorrelationId)('executor'),
+                    correlationId: makeCorrelationId('executor'),
                 },
             },
         }),
@@ -1096,14 +1059,14 @@ async function prepareEthTestnetExecution(args) {
         userAddress,
         nonce,
         deadline: new Date(deadlineSeconds * 1000).toISOString(),
-        routerAddress: config_1.EXECUTION_ROUTER_ADDRESS,
+        routerAddress: EXECUTION_ROUTER_ADDRESS,
         actionCount: actions.length,
         method: 'executeBySender',
         requirements: result.requirements,
     });
     // Task 1: DEBUG_EXECUTION logging
     if (process.env.DEBUG_EXECUTION === 'true' || process.env.DEBUG_DEMO === 'true') {
-        const { encodeFunctionData } = await Promise.resolve().then(() => __importStar(require('viem')));
+        const { encodeFunctionData } = await import('viem');
         const executeBySenderAbi = [
             {
                 name: 'executeBySender',
@@ -1138,12 +1101,12 @@ async function prepareEthTestnetExecution(args) {
             args: [plan],
         });
         console.log('[ethTestnetExecutor] DEBUG_EXECUTION:', {
-            chainId: config_1.ETH_TESTNET_CHAIN_ID,
-            to: config_1.EXECUTION_ROUTER_ADDRESS,
+            chainId: ETH_TESTNET_CHAIN_ID,
+            to: EXECUTION_ROUTER_ADDRESS,
             value: planValue,
             dataLength: encodedData.length,
             dataBytes: encodedData.length / 2 - 1, // Subtract '0x' prefix
-            routerAddress: config_1.EXECUTION_ROUTER_ADDRESS,
+            routerAddress: EXECUTION_ROUTER_ADDRESS,
             adapterAddresses: actions.map(a => a.adapter),
             actionTypes: actions.map(a => a.actionType),
             routingMetadata: routingMetadata ? {
@@ -1154,15 +1117,15 @@ async function prepareEthTestnetExecution(args) {
         });
     }
     // Task 3: Static call check before returning tx (if DEBUG_EXECUTION enabled)
-    if ((process.env.DEBUG_EXECUTION === 'true' || process.env.DEBUG_DEMO === 'true') && config_1.ETH_TESTNET_RPC_URL) {
+    if ((process.env.DEBUG_EXECUTION === 'true' || process.env.DEBUG_DEMO === 'true') && ETH_TESTNET_RPC_URL) {
         try {
-            const { createPublicClient, http } = await Promise.resolve().then(() => __importStar(require('viem')));
-            const { sepolia } = await Promise.resolve().then(() => __importStar(require('viem/chains')));
+            const { createPublicClient, http } = await import('viem');
+            const { sepolia } = await import('viem/chains');
             const publicClient = createPublicClient({
                 chain: sepolia,
-                transport: http(config_1.ETH_TESTNET_RPC_URL),
+                transport: http(ETH_TESTNET_RPC_URL),
             });
-            const { encodeFunctionData } = await Promise.resolve().then(() => __importStar(require('viem')));
+            const { encodeFunctionData } = await import('viem');
             const executeBySenderAbi = [
                 {
                     name: 'executeBySender',
@@ -1198,7 +1161,7 @@ async function prepareEthTestnetExecution(args) {
             });
             // Try static call to check for reverts
             await publicClient.call({
-                to: config_1.EXECUTION_ROUTER_ADDRESS,
+                to: EXECUTION_ROUTER_ADDRESS,
                 data: encodedData,
                 value: BigInt(planValue),
             });

@@ -1,15 +1,8 @@
-"use strict";
 /**
  * DeFi Simulation Plugin
  * Simulates DeFi yield farming positions
  */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.setBalanceCallbacks = setBalanceCallbacks;
-exports.openDefiPosition = openDefiPosition;
-exports.closeDefiPosition = closeDefiPosition;
-exports.getDefiSnapshot = getDefiSnapshot;
-exports.resetDefiState = resetDefiState;
-const uuid_1 = require("uuid");
+import { v4 as uuidv4 } from 'uuid';
 // Available vaults with APRs
 const VAULTS = {
     Kamino: { apr: 8.5, asset: 'USDC' },
@@ -22,14 +15,14 @@ let defiState = {
 // Reference to perps account for balance updates
 let getUsdcBalance;
 let updateUsdcBalance;
-function setBalanceCallbacks(getBalance, updateBalance) {
+export function setBalanceCallbacks(getBalance, updateBalance) {
     getUsdcBalance = getBalance;
     updateUsdcBalance = updateBalance;
 }
 /**
  * Open a DeFi position
  */
-function openDefiPosition(protocol, asset, amountUsd) {
+export function openDefiPosition(protocol, asset, amountUsd) {
     const vault = VAULTS[protocol];
     if (!vault) {
         throw new Error(`Unknown protocol: ${protocol}`);
@@ -45,7 +38,7 @@ function openDefiPosition(protocol, asset, amountUsd) {
     }
     // Create position
     const position = {
-        id: (0, uuid_1.v4)(),
+        id: uuidv4(),
         protocol,
         asset: vault.asset,
         depositUsd: amountUsd,
@@ -59,7 +52,7 @@ function openDefiPosition(protocol, asset, amountUsd) {
 /**
  * Close a DeFi position
  */
-function closeDefiPosition(id) {
+export function closeDefiPosition(id) {
     const position = defiState.positions.find(p => p.id === id && !p.isClosed);
     if (!position) {
         throw new Error(`Position ${id} not found or already closed`);
@@ -82,7 +75,7 @@ function closeDefiPosition(id) {
 /**
  * Get DeFi snapshot
  */
-function getDefiSnapshot() {
+export function getDefiSnapshot() {
     return {
         positions: [...defiState.positions],
     };
@@ -90,7 +83,7 @@ function getDefiSnapshot() {
 /**
  * Reset DeFi state (for testing)
  */
-function resetDefiState() {
+export function resetDefiState() {
     defiState = {
         positions: [],
     };

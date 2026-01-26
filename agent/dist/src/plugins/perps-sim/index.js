@@ -1,17 +1,9 @@
-"use strict";
 /**
  * Perps Simulation Plugin
  * Simulates perpetual futures trading
  */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.openPerp = openPerp;
-exports.closePerp = closePerp;
-exports.getPerpsSnapshot = getPerpsSnapshot;
-exports.updateUsdcBalance = updateUsdcBalance;
-exports.getUsdcBalance = getUsdcBalance;
-exports.resetPerpsAccount = resetPerpsAccount;
-const uuid_1 = require("uuid");
-const prices_1 = require("../../services/prices");
+import { v4 as uuidv4 } from 'uuid';
+import { getPrice } from '../../services/prices';
 // Helper to extract base symbol from market
 function getBaseSymbolFromMarket(market) {
     const base = market.split('-')[0];
@@ -37,7 +29,7 @@ let accountState = {
 /**
  * Open a perp position
  */
-async function openPerp(spec) {
+export async function openPerp(spec) {
     const { market, side, riskPct, entry, takeProfit, stopLoss } = spec;
     // Calculate size based on risk
     const sizeUsd = accountState.accountValueUsd * (riskPct / 100);
@@ -53,7 +45,7 @@ async function openPerp(spec) {
     }
     else {
         const baseSymbol = getBaseSymbolFromMarket(market);
-        const priceSnapshot = await (0, prices_1.getPrice)(baseSymbol);
+        const priceSnapshot = await getPrice(baseSymbol);
         entryPrice = priceSnapshot.priceUsd;
     }
     // Calculate TP/SL if not provided (small deterministic move around entry)
@@ -63,7 +55,7 @@ async function openPerp(spec) {
     usdcBalance.balanceUsd -= sizeUsd;
     // Create position
     const position = {
-        id: (0, uuid_1.v4)(),
+        id: uuidv4(),
         market,
         side,
         sizeUsd,
@@ -80,14 +72,14 @@ async function openPerp(spec) {
 /**
  * Close a perp position
  */
-async function closePerp(id) {
+export async function closePerp(id) {
     const position = accountState.positions.find(p => p.id === id && !p.isClosed);
     if (!position) {
         throw new Error(`Position ${id} not found or already closed`);
     }
     // Calculate PnL based on current price vs entry
     const baseSymbol = getBaseSymbolFromMarket(position.market);
-    const currentPriceSnapshot = await (0, prices_1.getPrice)(baseSymbol);
+    const currentPriceSnapshot = await getPrice(baseSymbol);
     const currentPrice = currentPriceSnapshot.priceUsd;
     // Calculate PnL based on price movement
     let pnlPct;
@@ -117,7 +109,7 @@ async function closePerp(id) {
 /**
  * Get perps account snapshot
  */
-function getPerpsSnapshot() {
+export function getPerpsSnapshot() {
     // Calculate open exposure
     const openPositions = accountState.positions.filter(p => !p.isClosed);
     const openPerpExposureUsd = openPositions.reduce((sum, p) => sum + p.sizeUsd, 0);
@@ -129,7 +121,7 @@ function getPerpsSnapshot() {
 /**
  * Update USDC balance (for DeFi/Event sims to sync)
  */
-function updateUsdcBalance(delta) {
+export function updateUsdcBalance(delta) {
     const usdc = accountState.balances.find(b => b.symbol === 'USDC');
     if (usdc) {
         usdc.balanceUsd += delta;
@@ -139,14 +131,14 @@ function updateUsdcBalance(delta) {
 /**
  * Get current USDC balance
  */
-function getUsdcBalance() {
+export function getUsdcBalance() {
     const usdc = accountState.balances.find(b => b.symbol === 'USDC');
     return usdc?.balanceUsd || 0;
 }
 /**
  * Reset account to initial state (for testing)
  */
-function resetPerpsAccount() {
+export function resetPerpsAccount() {
     accountState = {
         accountValueUsd: 10000,
         balances: [...INITIAL_BALANCES],

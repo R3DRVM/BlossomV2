@@ -1,4 +1,3 @@
-"use strict";
 /**
  * RPC Provider with Failover
  *
@@ -9,20 +8,8 @@
  * - Exponential backoff with jitter on retries
  * - Custom transport that wraps ALL viem RPC calls
  */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.initRpcProvider = initRpcProvider;
-exports.getAllRpcUrls = getAllRpcUrls;
-exports.getAvailableRpcUrl = getAvailableRpcUrl;
-exports.getCurrentActiveUrl = getCurrentActiveUrl;
-exports.executeRpcWithFailover = executeRpcWithFailover;
-exports.executeWithFailover = executeWithFailover;
-exports.createFailoverPublicClient = createFailoverPublicClient;
-exports.createFailoverWalletClient = createFailoverWalletClient;
-exports.getProviderHealthStatus = getProviderHealthStatus;
-exports.resetAllCircuits = resetAllCircuits;
-exports.forceFailover = forceFailover;
-const viem_1 = require("viem");
-const chains_1 = require("viem/chains");
+import { createPublicClient, createWalletClient, custom } from 'viem';
+import { sepolia } from 'viem/chains';
 // Configuration
 const CIRCUIT_BREAKER_THRESHOLD = 2; // Failures before circuit opens (reduced for faster failover)
 const CIRCUIT_BREAKER_RESET_MS = 30_000; // 30 seconds backoff
@@ -39,7 +26,7 @@ let currentActiveUrl;
 /**
  * Initialize RPC provider with primary and fallback URLs
  */
-function initRpcProvider(primary, fallbacks = []) {
+export function initRpcProvider(primary, fallbacks = []) {
     primaryUrl = primary;
     fallbackUrls = fallbacks;
     currentActiveUrl = primary;
@@ -196,14 +183,14 @@ function recordSuccess(url) {
 /**
  * Get all available RPC URLs in order of preference
  */
-function getAllRpcUrls() {
+export function getAllRpcUrls() {
     ensureInitialized();
     return [primaryUrl, ...fallbackUrls].filter(Boolean);
 }
 /**
  * Get next available RPC URL (skipping rate-limited ones)
  */
-function getAvailableRpcUrl() {
+export function getAvailableRpcUrl() {
     const allUrls = getAllRpcUrls();
     // Try to find a healthy endpoint
     for (const url of allUrls) {
@@ -224,7 +211,7 @@ function getAvailableRpcUrl() {
 /**
  * Get current active URL (for logging)
  */
-function getCurrentActiveUrl() {
+export function getCurrentActiveUrl() {
     return currentActiveUrl;
 }
 /**
@@ -270,7 +257,7 @@ async function makeRpcRequest(url, body) {
 /**
  * Execute a JSON-RPC request with automatic failover across all endpoints
  */
-async function executeRpcWithFailover(method, params) {
+export async function executeRpcWithFailover(method, params) {
     const allUrls = getAllRpcUrls();
     let lastError;
     let attemptCount = 0;
@@ -330,12 +317,12 @@ function createFailoverTransport() {
     const request = async ({ method, params }) => {
         return executeRpcWithFailover(method, params);
     };
-    return (0, viem_1.custom)({ request });
+    return custom({ request });
 }
 /**
  * Execute an RPC call with failover (legacy function, now uses executeRpcWithFailover internally)
  */
-async function executeWithFailover(fn) {
+export async function executeWithFailover(fn) {
     const allUrls = getAllRpcUrls();
     let lastError;
     for (const url of allUrls) {
@@ -413,9 +400,9 @@ function ensureInitialized() {
  * Create a public client with automatic failover transport
  * ALL RPC calls through this client will use failover logic
  */
-function createFailoverPublicClient(chain = chains_1.sepolia) {
+export function createFailoverPublicClient(chain = sepolia) {
     ensureInitialized();
-    return (0, viem_1.createPublicClient)({
+    return createPublicClient({
         chain,
         transport: createFailoverTransport(),
     });
@@ -424,9 +411,9 @@ function createFailoverPublicClient(chain = chains_1.sepolia) {
  * Create a wallet client with automatic failover transport
  * Accepts either an account address string or the full account object from privateKeyToAccount()
  */
-function createFailoverWalletClient(account, chain = chains_1.sepolia) {
+export function createFailoverWalletClient(account, chain = sepolia) {
     ensureInitialized();
-    return (0, viem_1.createWalletClient)({
+    return createWalletClient({
         account: account,
         chain,
         transport: createFailoverTransport(),
@@ -435,7 +422,7 @@ function createFailoverWalletClient(account, chain = chains_1.sepolia) {
 /**
  * Get current provider health status
  */
-function getProviderHealthStatus() {
+export function getProviderHealthStatus() {
     const status = {
         active: currentActiveUrl ? maskUrl(currentActiveUrl) : null,
         primary: null,
@@ -464,7 +451,7 @@ function getProviderHealthStatus() {
 /**
  * Reset all circuit breakers (for testing/manual recovery)
  */
-function resetAllCircuits() {
+export function resetAllCircuits() {
     for (const health of providerHealth.values()) {
         health.circuit.failures = 0;
         health.circuit.isOpen = false;
@@ -476,7 +463,7 @@ function resetAllCircuits() {
 /**
  * Force switch to next available endpoint (for manual failover)
  */
-function forceFailover() {
+export function forceFailover() {
     if (currentActiveUrl) {
         const health = providerHealth.get(currentActiveUrl);
         if (health) {

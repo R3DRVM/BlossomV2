@@ -1,11 +1,7 @@
-"use strict";
 /**
  * EVM Receipt Watcher
  * Polls for transaction receipts to confirm on-chain execution.
  */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.waitForReceipt = waitForReceipt;
-exports.isTransactionPending = isTransactionPending;
 /**
  * Wait for a transaction receipt with polling
  * @param rpcUrl RPC endpoint URL
@@ -13,7 +9,7 @@ exports.isTransactionPending = isTransactionPending;
  * @param options Timeout and poll interval options
  * @returns Receipt result with status
  */
-async function waitForReceipt(rpcUrl, txHash, options = {}) {
+export async function waitForReceipt(rpcUrl, txHash, options = {}) {
     const { timeoutMs = 60000, pollMs = 2000 } = options;
     const startTime = Date.now();
     while (Date.now() - startTime < timeoutMs) {
@@ -91,7 +87,7 @@ function sleep(ms) {
 /**
  * Check if a transaction is pending (no receipt yet)
  */
-async function isTransactionPending(rpcUrl, txHash) {
+export async function isTransactionPending(rpcUrl, txHash) {
     try {
         const receipt = await getTransactionReceipt(rpcUrl, txHash);
         return receipt === null;

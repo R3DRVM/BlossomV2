@@ -1,16 +1,12 @@
-"use strict";
 /**
  * Ticker Service
  * Provides live price ticker for on-chain assets and event markets
  */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.getOnchainTicker = getOnchainTicker;
-exports.getEventMarketsTicker = getEventMarketsTicker;
-const prices_1 = require("./prices");
-const event_sim_1 = require("../plugins/event-sim");
-const predictionData_1 = require("./predictionData");
-const providerRegistry_1 = require("../providers/providerRegistry");
-const config_1 = require("../config");
+import { getPrice } from './prices';
+import { getEventSnapshot } from '../plugins/event-sim';
+import { fetchKalshiMarkets, fetchPolymarketMarkets } from './predictionData';
+import { getMarketDataProvider } from '../providers/providerRegistry';
+import { DFLOW_ENABLED } from '../config';
 // Static fallback for on-chain ticker
 const STATIC_ONCHAIN_TICKER = [
     { symbol: 'BTC', priceUsd: 60000, change24hPct: 2.5 },
@@ -30,7 +26,7 @@ const STATIC_EVENT_TICKER = [
 /**
  * Get on-chain ticker (crypto prices) - new unified format
  */
-async function getOnchainTicker() {
+export async function getOnchainTicker() {
     const symbols = ['BTC', 'ETH', 'SOL', 'AVAX', 'LINK'];
     const priceData = [];
     let hasLiveData = false;
@@ -38,7 +34,7 @@ async function getOnchainTicker() {
     try {
         for (const symbol of symbols) {
             try {
-                const snapshot = await (0, prices_1.getPrice)(symbol);
+                const snapshot = await getPrice(symbol);
                 const change24hPct = getMock24hChange(symbol);
                 priceData.push({
                     symbol,
@@ -131,12 +127,12 @@ async function getOnchainTicker() {
  * Get event markets ticker - new unified format with live data support
  * Uses dFlow provider if enabled, falls back to Polymarket/Kalshi
  */
-async function getEventMarketsTicker() {
+export async function getEventMarketsTicker() {
     try {
         // Try dFlow provider first if enabled
-        if (config_1.DFLOW_ENABLED) {
+        if (DFLOW_ENABLED) {
             try {
-                const provider = (0, providerRegistry_1.getMarketDataProvider)();
+                const provider = getMarketDataProvider();
                 if (provider.name === 'dflow' && provider.isAvailable()) {
                     const dflowMarkets = await provider.getEventMarkets();
                     if (dflowMarkets.length > 0) {
@@ -167,8 +163,8 @@ async function getEventMarketsTicker() {
             }
         }
         // Fallback: Prefer Polymarket public feed first (no keys), then Kalshi if configured
-        const polymarketMarkets = await (0, predictionData_1.fetchPolymarketMarkets)();
-        const kalshiMarkets = await (0, predictionData_1.fetchKalshiMarkets)();
+        const polymarketMarkets = await fetchPolymarketMarkets();
+        const kalshiMarkets = await fetchKalshiMarkets();
         // Check if we have any live data
         const hasLivePolymarket = polymarketMarkets.some(m => m.isLive);
         const hasLiveKalshi = kalshiMarkets.some(m => m.isLive);
@@ -217,7 +213,7 @@ async function getEventMarketsTicker() {
             };
         }
         // Fallback to seeded markets if no live data
-        const eventSnapshot = (0, event_sim_1.getEventSnapshot)();
+        const eventSnapshot = getEventSnapshot();
         const allMarketsSeeded = eventSnapshot.markets;
         // Separate markets by source
         const kalshiMarketsSeeded = [];

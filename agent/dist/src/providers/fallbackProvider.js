@@ -1,13 +1,10 @@
-"use strict";
 /**
  * Fallback Provider Implementations
  * Wraps existing Polymarket/Kalshi and 1inch/deterministic functionality
  */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.FallbackQuoteProvider = exports.FallbackMarketDataProvider = void 0;
-const predictionData_1 = require("../services/predictionData");
-const evmQuote_1 = require("../quotes/evmQuote");
-const config_1 = require("../config");
+import { fetchKalshiMarkets, fetchPolymarketMarkets } from '../services/predictionData';
+import { getSwapRoutingDecision as get1inchRoutingDecision } from '../quotes/evmQuote';
+import { DEFAULT_SWAP_SLIPPAGE_BPS } from '../config';
 /**
  * Convert RawPredictionMarket to NormalizedEventMarket
  */
@@ -26,7 +23,7 @@ function normalizeMarket(market) {
 /**
  * Fallback Market Data Provider (Polymarket + Kalshi)
  */
-class FallbackMarketDataProvider {
+export class FallbackMarketDataProvider {
     name = 'fallback';
     isAvailable() {
         return true; // Always available (has static fallback)
@@ -34,8 +31,8 @@ class FallbackMarketDataProvider {
     async getEventMarkets() {
         try {
             const [kalshiMarkets, polymarketMarkets] = await Promise.all([
-                (0, predictionData_1.fetchKalshiMarkets)(),
-                (0, predictionData_1.fetchPolymarketMarkets)(),
+                fetchKalshiMarkets(),
+                fetchPolymarketMarkets(),
             ]);
             const normalized = [
                 ...kalshiMarkets.map(normalizeMarket),
@@ -54,11 +51,10 @@ class FallbackMarketDataProvider {
         }
     }
 }
-exports.FallbackMarketDataProvider = FallbackMarketDataProvider;
 /**
  * Fallback Quote Provider (1inch + deterministic)
  */
-class FallbackQuoteProvider {
+export class FallbackQuoteProvider {
     name = 'fallback';
     isAvailable() {
         return true; // Always available (has deterministic fallback)
@@ -72,7 +68,7 @@ class FallbackQuoteProvider {
             const tokenInDecimals = tokenInSymbol === 'USDC' ? 6 : 18;
             const tokenOutDecimals = tokenOutSymbol === 'USDC' ? 6 : 18;
             // Use the existing routing decision function which handles 1inch and fallback
-            const decision = await (0, evmQuote_1.getSwapRoutingDecision)({
+            const decision = await get1inchRoutingDecision({
                 tokenIn: params.tokenIn,
                 tokenOut: params.tokenOut,
                 tokenInSymbol,
@@ -80,7 +76,7 @@ class FallbackQuoteProvider {
                 tokenInDecimals,
                 tokenOutDecimals,
                 amountIn: params.amountIn,
-                slippageBps: params.slippageBps || config_1.DEFAULT_SWAP_SLIPPAGE_BPS,
+                slippageBps: params.slippageBps || DEFAULT_SWAP_SLIPPAGE_BPS,
             });
             return {
                 tokenIn: params.tokenIn,
@@ -105,5 +101,4 @@ class FallbackQuoteProvider {
         return null;
     }
 }
-exports.FallbackQuoteProvider = FallbackQuoteProvider;
 //# sourceMappingURL=fallbackProvider.js.map
