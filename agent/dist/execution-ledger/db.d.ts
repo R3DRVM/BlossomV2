@@ -515,4 +515,126 @@ export declare function getWaitlistEntries(limit?: number): WaitlistEntry[];
 export declare function getWaitlistCount(): number;
 export declare const getStatsSummary: typeof getSummaryStats;
 export declare const getIntentStats: typeof getIntentStatsSummary;
+/**
+ * ============================================================
+ * ASYNC/POSTGRES SUPPORT
+ * Async-capable exports that route to Postgres in production
+ * ============================================================
+ */
+/**
+ * Async-capable intent creation (uses Postgres if DATABASE_URL is set)
+ */
+export declare function createIntentAsync(params: {
+    intentText: string;
+    intentKind?: string;
+    requestedChain?: string;
+    requestedVenue?: string;
+    usdEstimate?: number;
+    metadataJson?: string;
+}): Promise<Intent>;
+/**
+ * Async-capable intent status update (uses Postgres if DATABASE_URL is set)
+ */
+export declare function updateIntentStatusAsync(id: string, updates: {
+    status?: string;
+    plannedAt?: number;
+    executedAt?: number;
+    confirmedAt?: number;
+    failureStage?: string;
+    errorCode?: string;
+    errorMessage?: string;
+    metadataJson?: string;
+}): Promise<void>;
+/**
+ * Async-capable execution creation (uses Postgres if DATABASE_URL is set)
+ */
+export declare function createExecutionAsync(params: {
+    id?: string;
+    chain: Chain;
+    network: Network;
+    kind?: string;
+    venue?: string;
+    intent: string;
+    action: string;
+    fromAddress: string;
+    toAddress?: string;
+    token?: string;
+    amountUnits?: string;
+    amountDisplay?: string;
+    usdEstimate?: number;
+    txHash?: string;
+    status?: string;
+    errorCode?: string;
+    errorMessage?: string;
+    explorerUrl?: string;
+    relayerAddress?: string;
+    sessionId?: string;
+    intentId?: string;
+}): Promise<Execution>;
+/**
+ * Async-capable execution update (uses Postgres if DATABASE_URL is set)
+ */
+export declare function updateExecutionAsync(id: string, updates: {
+    txHash?: string;
+    status?: string;
+    errorCode?: string;
+    errorMessage?: string;
+    explorerUrl?: string;
+    gasUsed?: string;
+    blockNumber?: number;
+    latencyMs?: number;
+}): Promise<void>;
+/**
+ * Async-capable get intent (uses Postgres if DATABASE_URL is set)
+ */
+export declare function getIntentAsync(id: string): Promise<Intent | undefined>;
+/**
+ * Async-capable get recent intents (uses Postgres if DATABASE_URL is set)
+ */
+export declare function getRecentIntentsAsync(limit?: number): Promise<Intent[]>;
+/**
+ * Async-capable get summary stats (uses Postgres if DATABASE_URL is set)
+ */
+export declare function getSummaryStatsAsync(): Promise<StatsSummary>;
+/**
+ * Async-capable get intent stats summary (uses Postgres if DATABASE_URL is set)
+ */
+export declare function getIntentStatsSummaryAsync(): Promise<IntentStatsSummary>;
+/**
+ * Async-capable get executions for intent (uses Postgres if DATABASE_URL is set)
+ */
+export declare function getExecutionsForIntentAsync(intentId: string): Promise<Execution[]>;
+/**
+ * Async-capable link execution to intent (uses Postgres if DATABASE_URL is set)
+ */
+export declare function linkExecutionToIntentAsync(executionId: string, intentId: string): Promise<void>;
+/**
+ * Async-capable create execution step (uses Postgres if DATABASE_URL is set)
+ */
+export declare function createExecutionStepAsync(params: {
+    executionId: string;
+    stepIndex: number;
+    action: string;
+    stage?: string;
+    status?: string;
+}): Promise<ExecutionStep>;
+/**
+ * Async-capable update execution step (uses Postgres if DATABASE_URL is set)
+ */
+export declare function updateExecutionStepAsync(id: string, updates: {
+    status?: string;
+    txHash?: string;
+    errorCode?: string;
+    errorMessage?: string;
+    explorerUrl?: string;
+}): Promise<void>;
+/**
+ * Async-capable get summary stats with intents (uses Postgres if DATABASE_URL is set)
+ */
+export declare function getSummaryStatsWithIntentsAsync(): Promise<StatsSummary & {
+    totalIntents: number;
+    confirmedIntents: number;
+    failedIntents: number;
+    intentSuccessRate: number;
+}>;
 //# sourceMappingURL=db.d.ts.map

@@ -1,22 +1,14 @@
-"use strict";
 /**
  * Execution Replay Artifacts Logger
  * Logs executionRequest, plan, and executionResult for debugging
  */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.logExecutionArtifact = logExecutionArtifact;
-exports.getExecutionArtifacts = getExecutionArtifacts;
-exports.getExecutionArtifact = getExecutionArtifact;
-exports.getExecutionArtifactsForUser = getExecutionArtifactsForUser;
-exports.clearExecutionArtifacts = clearExecutionArtifacts;
-exports.dumpExecutionArtifacts = dumpExecutionArtifacts;
 // In-memory store (for MVP - can be replaced with file/DB later)
 const executionArtifacts = [];
 const MAX_ARTIFACTS = 100; // Keep last 100 executions
 /**
  * Log an execution artifact
  */
-function logExecutionArtifact(artifact) {
+export function logExecutionArtifact(artifact) {
     const fullArtifact = {
         ...artifact,
         timestamp: new Date().toISOString(),
@@ -41,31 +33,31 @@ function logExecutionArtifact(artifact) {
 /**
  * Get all execution artifacts
  */
-function getExecutionArtifacts() {
+export function getExecutionArtifacts() {
     return [...executionArtifacts];
 }
 /**
  * Get execution artifact by ID
  */
-function getExecutionArtifact(executionId) {
+export function getExecutionArtifact(executionId) {
     return executionArtifacts.find(a => a.executionId === executionId);
 }
 /**
  * Get execution artifacts for a user
  */
-function getExecutionArtifactsForUser(userAddress) {
+export function getExecutionArtifactsForUser(userAddress) {
     return executionArtifacts.filter(a => a.userAddress?.toLowerCase() === userAddress.toLowerCase());
 }
 /**
  * Clear all artifacts (for testing)
  */
-function clearExecutionArtifacts() {
+export function clearExecutionArtifacts() {
     executionArtifacts.length = 0;
 }
 /**
  * Dump artifacts as JSON (for support/debugging)
  */
-function dumpExecutionArtifacts() {
+export function dumpExecutionArtifacts() {
     return JSON.stringify(executionArtifacts, null, 2);
 }
 //# sourceMappingURL=executionLogger.js.map

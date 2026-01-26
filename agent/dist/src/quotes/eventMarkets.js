@@ -1,4 +1,3 @@
-"use strict";
 /**
  * Event Markets Quote Provider
  * Fetches event market data from dFlow or Polymarket
@@ -8,44 +7,7 @@
  *
  * Sprint 3: Now uses unified routing service with truthful metadata
  */
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.getEventMarkets = getEventMarkets;
-exports.getEventMarketsWithRouting = getEventMarketsWithRouting;
-exports.findEventMarketByKeyword = findEventMarketByKeyword;
-const routingService_1 = require("../routing/routingService");
+import { getEventMarketsRouted } from '../routing/routingService';
 // In-memory cache (60 seconds)
 let cachedMarkets = null;
 let cacheTimestamp = 0;
@@ -62,16 +24,16 @@ const FALLBACK_MARKETS = [
  * Fetch event markets from dFlow if enabled, else Polymarket, else fallback
  * Sprint 3: Now uses unified routing service with truthful metadata
  */
-async function getEventMarkets(limit = 10) {
+export async function getEventMarkets(limit = 10) {
     // Check cache
     const now = Date.now();
     if (cachedMarkets && (now - cacheTimestamp) < CACHE_TTL_MS) {
         return cachedMarkets.slice(0, limit);
     }
     // Use routing service
-    const { makeCorrelationId } = await Promise.resolve().then(() => __importStar(require('../utils/correlationId')));
+    const { makeCorrelationId } = await import('../utils/correlationId');
     const routingCorrelationId = makeCorrelationId('markets');
-    const routedResult = await (0, routingService_1.getEventMarketsRouted)({
+    const routedResult = await getEventMarketsRouted({
         limit,
         correlationId: routingCorrelationId,
         fallbackMarkets: async () => {
@@ -127,10 +89,10 @@ async function getEventMarkets(limit = 10) {
 /**
  * Get event markets with routing metadata (Sprint 3)
  */
-async function getEventMarketsWithRouting(limit = 10) {
-    const { makeCorrelationId } = await Promise.resolve().then(() => __importStar(require('../utils/correlationId')));
+export async function getEventMarketsWithRouting(limit = 10) {
+    const { makeCorrelationId } = await import('../utils/correlationId');
     const routingCorrelationId = makeCorrelationId('markets');
-    const routedResult = await (0, routingService_1.getEventMarketsRouted)({
+    const routedResult = await getEventMarketsRouted({
         limit,
         correlationId: routingCorrelationId,
         fallbackMarkets: async () => {
@@ -195,7 +157,7 @@ async function getEventMarketsWithRouting(limit = 10) {
 /**
  * Find event market by keyword match
  */
-async function findEventMarketByKeyword(keyword) {
+export async function findEventMarketByKeyword(keyword) {
     const markets = await getEventMarkets(10);
     const lowerKeyword = keyword.toLowerCase();
     // Simple string search

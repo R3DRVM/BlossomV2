@@ -1,4 +1,3 @@
-"use strict";
 /**
  * Perp Position Indexer
  *
@@ -13,18 +12,13 @@
  * - MarginDeposited (DemoPerpEngine)
  * - LiquidationTriggered (DemoPerpEngine)
  */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.startPerpIndexer = startPerpIndexer;
-exports.stopPerpIndexer = stopPerpIndexer;
-exports.isIndexerRunning = isIndexerRunning;
-exports.triggerIndexerPoll = triggerIndexerPoll;
-const viem_1 = require("viem");
-const chains_1 = require("viem/chains");
-const ledger_1 = require("../ledger/ledger");
+import { createPublicClient, http, parseAbiItem } from 'viem';
+import { sepolia } from 'viem/chains';
+import { getIndexerState, upsertIndexerState, createPosition, getPositionByOnChainId, closePosition as dbClosePosition, } from '../ledger/ledger';
 // Event ABIs
-const POSITION_OPENED_ABI = (0, viem_1.parseAbiItem)('event PositionOpened(address indexed user, uint256 indexed positionId, uint8 market, uint8 side, uint256 margin, uint256 size, uint256 leverage, uint256 entryPrice)');
-const POSITION_CLOSED_ABI = (0, viem_1.parseAbiItem)('event PositionClosed(address indexed user, uint256 indexed positionId, uint256 exitPrice, int256 pnl, uint256 marginReturned)');
-const LIQUIDATION_ABI = (0, viem_1.parseAbiItem)('event LiquidationTriggered(address indexed user, uint256 indexed positionId, uint256 liquidationPrice, int256 loss)');
+const POSITION_OPENED_ABI = parseAbiItem('event PositionOpened(address indexed user, uint256 indexed positionId, uint8 market, uint8 side, uint256 margin, uint256 size, uint256 leverage, uint256 entryPrice)');
+const POSITION_CLOSED_ABI = parseAbiItem('event PositionClosed(address indexed user, uint256 indexed positionId, uint256 exitPrice, int256 pnl, uint256 marginReturned)');
+const LIQUIDATION_ABI = parseAbiItem('event LiquidationTriggered(address indexed user, uint256 indexed positionId, uint256 liquidationPrice, int256 loss)');
 // Market enum mapping
 const MARKET_MAP = {
     0: 'BTC',
@@ -70,14 +64,14 @@ async function processPositionOpened(log, perpEngineAddress, timestamp) {
         const leverage = Number(args.leverage) || 1;
         const entryPrice = args.entryPrice?.toString() || '0';
         // Check if position already exists
-        const existing = await (0, ledger_1.getPositionByOnChainId)(INDEXER_CONFIG.chain, INDEXER_CONFIG.network, INDEXER_CONFIG.venue, positionId);
+        const existing = await getPositionByOnChainId(INDEXER_CONFIG.chain, INDEXER_CONFIG.network, INDEXER_CONFIG.venue, positionId);
         if (existing) {
             // Position already indexed
             return;
         }
         // Create new position
         const txHash = log.transactionHash || '';
-        await (0, ledger_1.createPosition)({
+        await createPosition({
             chain: INDEXER_CONFIG.chain,
             network: INDEXER_CONFIG.network,
             venue: INDEXER_CONFIG.venue,
@@ -110,7 +104,7 @@ async function processPositionClosed(log) {
         const positionId = args.positionId?.toString() || '0';
         const pnl = args.pnl?.toString() || '0';
         // Find the position
-        const position = await (0, ledger_1.getPositionByOnChainId)(INDEXER_CONFIG.chain, INDEXER_CONFIG.network, INDEXER_CONFIG.venue, positionId);
+        const position = await getPositionByOnChainId(INDEXER_CONFIG.chain, INDEXER_CONFIG.network, INDEXER_CONFIG.venue, positionId);
         if (!position) {
             console.log(`[indexer] Position not found for close event: ${positionId}`);
             return;
@@ -120,7 +114,7 @@ async function processPositionClosed(log) {
             return;
         }
         const txHash = log.transactionHash || '';
-        await (0, ledger_1.closePosition)(position.id, txHash, txHash ? buildExplorerUrl(txHash) : '', pnl, 'closed');
+        await dbClosePosition(position.id, txHash, txHash ? buildExplorerUrl(txHash) : '', pnl, 'closed');
         console.log(`[indexer] Closed position: ${position.market} ${position.side} (id=${positionId})`);
     }
     catch (err) {
@@ -138,7 +132,7 @@ async function processLiquidation(log) {
         const positionId = args.positionId?.toString() || '0';
         const loss = args.loss?.toString() || '0';
         // Find the position
-        const position = await (0, ledger_1.getPositionByOnChainId)(INDEXER_CONFIG.chain, INDEXER_CONFIG.network, INDEXER_CONFIG.venue, positionId);
+        const position = await getPositionByOnChainId(INDEXER_CONFIG.chain, INDEXER_CONFIG.network, INDEXER_CONFIG.venue, positionId);
         if (!position) {
             console.log(`[indexer] Position not found for liquidation event: ${positionId}`);
             return;
@@ -147,7 +141,7 @@ async function processLiquidation(log) {
             return;
         }
         const txHash = log.transactionHash || '';
-        await (0, ledger_1.closePosition)(position.id, txHash, txHash ? buildExplorerUrl(txHash) : '', loss, 'liquidated');
+        await dbClosePosition(position.id, txHash, txHash ? buildExplorerUrl(txHash) : '', loss, 'liquidated');
         console.log(`[indexer] Liquidated position: ${position.market} ${position.side} (id=${positionId})`);
     }
     catch (err) {
@@ -198,7 +192,7 @@ async function pollOnce(client, perpEngineAddress) {
         // Get current block
         const currentBlock = await client.getBlockNumber();
         // Get last indexed block
-        const state = await (0, ledger_1.getIndexerState)(INDEXER_CONFIG.chain, INDEXER_CONFIG.network, perpEngineAddress);
+        const state = await getIndexerState(INDEXER_CONFIG.chain, INDEXER_CONFIG.network, perpEngineAddress);
         const lastIndexedBlock = state?.last_indexed_block
             ? BigInt(state.last_indexed_block)
             : BigInt(INDEXER_CONFIG.startBlock);
@@ -213,7 +207,7 @@ async function pollOnce(client, perpEngineAddress) {
         // Index the range
         await indexBlockRange(client, perpEngineAddress, fromBlock, toBlock);
         // Update state
-        await (0, ledger_1.upsertIndexerState)(INDEXER_CONFIG.chain, INDEXER_CONFIG.network, perpEngineAddress, Number(toBlock));
+        await upsertIndexerState(INDEXER_CONFIG.chain, INDEXER_CONFIG.network, perpEngineAddress, Number(toBlock));
         if (toBlock - fromBlock > 0n) {
             console.log(`[indexer] Indexed blocks ${fromBlock}-${toBlock}`);
         }
@@ -226,7 +220,7 @@ async function pollOnce(client, perpEngineAddress) {
 /**
  * Start the indexer loop
  */
-function startPerpIndexer(rpcUrl, perpEngineAddress) {
+export function startPerpIndexer(rpcUrl, perpEngineAddress) {
     if (isRunning) {
         console.log('[indexer] Already running');
         return;
@@ -238,9 +232,9 @@ function startPerpIndexer(rpcUrl, perpEngineAddress) {
     console.log('[indexer] Starting perp position indexer');
     console.log(`[indexer] Contract: ${perpEngineAddress}`);
     isRunning = true;
-    const client = (0, viem_1.createPublicClient)({
-        chain: chains_1.sepolia,
-        transport: (0, viem_1.http)(rpcUrl),
+    const client = createPublicClient({
+        chain: sepolia,
+        transport: http(rpcUrl),
     });
     const poll = async () => {
         if (!isRunning)
@@ -255,7 +249,7 @@ function startPerpIndexer(rpcUrl, perpEngineAddress) {
 /**
  * Stop the indexer
  */
-function stopPerpIndexer() {
+export function stopPerpIndexer() {
     console.log('[indexer] Stopping perp position indexer');
     isRunning = false;
     if (pollTimeout) {
@@ -266,16 +260,16 @@ function stopPerpIndexer() {
 /**
  * Check if indexer is running
  */
-function isIndexerRunning() {
+export function isIndexerRunning() {
     return isRunning;
 }
 /**
  * Manually trigger a single poll (for testing)
  */
-async function triggerIndexerPoll(rpcUrl, perpEngineAddress) {
-    const client = (0, viem_1.createPublicClient)({
-        chain: chains_1.sepolia,
-        transport: (0, viem_1.http)(rpcUrl),
+export async function triggerIndexerPoll(rpcUrl, perpEngineAddress) {
+    const client = createPublicClient({
+        chain: sepolia,
+        transport: http(rpcUrl),
     });
     await pollOnce(client, perpEngineAddress);
 }

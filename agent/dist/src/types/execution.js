@@ -1,7 +1,6 @@
-"use strict";
 /**
  * Execution Types
  * Types for ETH testnet execution prepare/submit flow
  */
-Object.defineProperty(exports, "__esModule", { value: true });
+export {};
 //# sourceMappingURL=execution.js.map

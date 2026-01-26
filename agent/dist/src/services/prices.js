@@ -1,11 +1,7 @@
-"use strict";
 /**
  * Price Service
  * Fetches real market prices with safe fallbacks
  */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.getPrice = getPrice;
-exports.clearPriceCache = clearPriceCache;
 // In-memory cache
 const priceCache = new Map();
 // Static fallback prices
@@ -22,7 +18,7 @@ const CACHE_TTL_MS = 12 * 1000;
 /**
  * Get price for a symbol, with caching and fallback
  */
-async function getPrice(symbol) {
+export async function getPrice(symbol) {
     // Check cache first
     const cached = priceCache.get(symbol);
     if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
@@ -89,7 +85,7 @@ async function fetchFromCoinGecko(symbol) {
 /**
  * Clear price cache (useful for testing)
  */
-function clearPriceCache() {
+export function clearPriceCache() {
     priceCache.clear();
 }
 //# sourceMappingURL=prices.js.map

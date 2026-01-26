@@ -25,7 +25,7 @@ export type {
 
 interface CreateIntentParams {
   intentText: string;
-  intentKind?: string;
+  intentKind?: any;
   requestedChain?: string;
   requestedVenue?: string;
   usdEstimate?: number;
@@ -33,7 +33,7 @@ interface CreateIntentParams {
 }
 
 interface UpdateIntentStatusParams {
-  status?: string;
+  status?: any;
   plannedAt?: number;
   executedAt?: number;
   confirmedAt?: number;
@@ -47,10 +47,10 @@ interface UpdateIntentStatusParams {
 
 interface CreateExecutionParams {
   id?: string;
-  chain: string;
-  network: string;
-  kind?: string;
-  venue?: string;
+  chain: any;
+  network: any;
+  kind?: any;
+  venue?: any;
   intent: string;
   action: string;
   fromAddress: string;
@@ -61,7 +61,7 @@ interface CreateExecutionParams {
   usdEstimate?: number;
   usdEstimateIsEstimate?: boolean;
   txHash?: string;
-  status?: string;
+  status?: any;
   errorCode?: string;
   errorMessage?: string;
   explorerUrl?: string;
@@ -71,7 +71,7 @@ interface CreateExecutionParams {
 }
 
 interface UpdateExecutionParams {
-  status?: string;
+  status?: any;
   txHash?: string;
   explorerUrl?: string;
   blockNumber?: number;
@@ -545,4 +545,75 @@ export async function updateExecutionStep(id: string, updates: any): Promise<voi
   const sql = `UPDATE execution_steps SET ${fields.join(', ')} WHERE id = $${paramIndex}`;
 
   await query(sql, values);
+}
+
+/**
+ * Get executions for a specific intent
+ */
+export async function getExecutionsForIntent(intentId: string) {
+  const sql = convertPlaceholders('SELECT * FROM executions WHERE intent_id = ? ORDER BY created_at DESC');
+  return queryRows(sql, [intentId]);
+}
+
+/**
+ * Get summary stats with intents
+ */
+export async function getSummaryStatsWithIntents() {
+  const execSql = `
+    SELECT
+      COUNT(*) as total_executions,
+      COUNT(CASE WHEN status = 'confirmed' THEN 1 END) as successful_executions,
+      COALESCE(SUM(CASE WHEN status = 'confirmed' THEN usd_estimate ELSE 0 END), 0) as total_usd_routed,
+      COUNT(DISTINCT chain) as chains_count
+    FROM executions
+  `;
+
+  const intentSql = `
+    SELECT
+      COUNT(*) as total_intents,
+      COUNT(CASE WHEN status = 'confirmed' THEN 1 END) as confirmed_intents,
+      COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed_intents,
+      COUNT(CASE WHEN failure_stage IS NOT NULL THEN 1 END) as total_failures,
+      failure_stage,
+      COUNT(*) as stage_count
+    FROM intents
+    WHERE failure_stage IS NOT NULL
+    GROUP BY failure_stage
+  `;
+
+  const execRow = await queryOne<any>(execSql, []);
+  const intentRows = await queryRows<any>(intentSql, []);
+  const intentCountSql = `
+    SELECT
+      COUNT(*) as total_intents,
+      COUNT(CASE WHEN status = 'confirmed' THEN 1 END) as confirmed_intents,
+      COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed_intents
+    FROM intents
+  `;
+  const intentCountRow = await queryOne<any>(intentCountSql, []);
+
+  const chainsResult = await queryRows<{chain: string}>('SELECT DISTINCT chain FROM executions WHERE status = $1', ['confirmed']);
+  const chainsActive = chainsResult.map(r => r.chain);
+
+  const totalExecs = parseInt(execRow?.total_executions || '0');
+  const successfulExecs = parseInt(execRow?.successful_executions || '0');
+  const totalIntents = parseInt(intentCountRow?.total_intents || '0');
+  const confirmedIntents = parseInt(intentCountRow?.confirmed_intents || '0');
+  const failedIntents = parseInt(intentCountRow?.failed_intents || '0');
+
+  return {
+    totalExecutions: totalExecs,
+    successfulExecutions: successfulExecs,
+    successRate: totalExecs > 0 ? (successfulExecs / totalExecs) * 100 : 0,
+    totalUsdRouted: parseFloat(execRow?.total_usd_routed || '0'),
+    chainsActive,
+    totalIntents,
+    confirmedIntents,
+    failedIntents,
+    intentSuccessRate: totalIntents > 0 ? (confirmedIntents / totalIntents) * 100 : 0,
+    failedIntentsByStage: intentRows.map(r => ({
+      stage: r.failure_stage,
+      count: parseInt(r.stage_count),
+    })),
+  };
 }

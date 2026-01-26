@@ -1,7 +1,6 @@
-"use strict";
 /**
  * Provider Types
  * Common interfaces for pluggable data providers
  */
-Object.defineProperty(exports, "__esModule", { value: true });
+export {};
 //# sourceMappingURL=types.js.map

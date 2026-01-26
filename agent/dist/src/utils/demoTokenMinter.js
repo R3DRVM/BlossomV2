@@ -1,48 +1,12 @@
-"use strict";
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.mintDemoTokens = mintDemoTokens;
-const viem_1 = require("viem");
-const chains_1 = require("viem/chains");
-const accounts_1 = require("viem/accounts");
+import { createWalletClient, http, publicActions } from 'viem';
+import { sepolia } from 'viem/chains';
+import { privateKeyToAccount } from 'viem/accounts';
 /**
  * Mints demo tokens (REDACTED and WETH) to a recipient address
  * Used for testnet faucet functionality
  */
-async function mintDemoTokens(recipientAddress) {
-    const { ETH_TESTNET_RPC_URL, DEMO_REDACTED_ADDRESS, DEMO_WETH_ADDRESS, RELAYER_PRIVATE_KEY } = await Promise.resolve().then(() => __importStar(require('../config')));
+export async function mintDemoTokens(recipientAddress) {
+    const { ETH_TESTNET_RPC_URL, DEMO_REDACTED_ADDRESS, DEMO_WETH_ADDRESS, RELAYER_PRIVATE_KEY } = await import('../config');
     if (!RELAYER_PRIVATE_KEY) {
         throw new Error('RELAYER_PRIVATE_KEY not configured');
     }
@@ -52,12 +16,12 @@ async function mintDemoTokens(recipientAddress) {
     if (!ETH_TESTNET_RPC_URL) {
         throw new Error('ETH_TESTNET_RPC_URL not configured');
     }
-    const account = (0, accounts_1.privateKeyToAccount)(RELAYER_PRIVATE_KEY);
-    const client = (0, viem_1.createWalletClient)({
+    const account = privateKeyToAccount(RELAYER_PRIVATE_KEY);
+    const client = createWalletClient({
         account,
-        chain: chains_1.sepolia,
-        transport: (0, viem_1.http)(ETH_TESTNET_RPC_URL)
-    }).extend(viem_1.publicActions);
+        chain: sepolia,
+        transport: http(ETH_TESTNET_RPC_URL)
+    }).extend(publicActions);
     // ERC20 mint function ABI
     const mintAbi = [
         {

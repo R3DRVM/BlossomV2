@@ -1,56 +1,19 @@
-"use strict";
 // @ts-nocheck
 /**
  * Session Authority Policy
  * Server-side enforcement for relayed execution
  */
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.estimatePlanSpend = estimatePlanSpend;
-exports.evaluateSessionPolicy = evaluateSessionPolicy;
-const viem_1 = require("viem");
+import { parseUnits } from 'viem';
 /**
  * Estimate spend from plan actions (best effort)
  * Returns spend in wei and whether it could be determined
  */
-async function estimatePlanSpend(plan) {
+export async function estimatePlanSpend(plan) {
     let totalSpendWei = BigInt(plan.value || '0x0');
     let determinable = true;
     let instrumentType;
     // Decode actions to estimate spend
-    const { decodeAbiParameters } = await Promise.resolve().then(() => __importStar(require('viem')));
+    const { decodeAbiParameters } = await import('viem');
     for (const action of plan.actions) {
         try {
             if (action.actionType === 0) {
@@ -71,7 +34,7 @@ async function estimatePlanSpend(plan) {
                     // For swaps, spend is the amountIn (in token units, not ETH)
                     // We can't convert to USD without price oracle, so mark as determinable but don't add to totalSpendWei
                     // For now, we'll use a conservative estimate: assume 1 ETH max per swap
-                    totalSpendWei += BigInt((0, viem_1.parseUnits)('1', 18)); // Conservative: 1 ETH per swap
+                    totalSpendWei += BigInt(parseUnits('1', 18)); // Conservative: 1 ETH per swap
                 }
                 catch {
                     // Session mode: wrapped as (maxSpendUnits, innerData)
@@ -137,7 +100,7 @@ async function estimatePlanSpend(plan) {
                 instrumentType = 'perp'; // Default to perp, could be event
                 // PROOF actions don't spend tokens directly, they're proof-of-execution
                 // For policy, we'll use a conservative estimate
-                totalSpendWei += BigInt((0, viem_1.parseUnits)('0.1', 18)); // Conservative: 0.1 ETH equivalent
+                totalSpendWei += BigInt(parseUnits('0.1', 18)); // Conservative: 0.1 ETH equivalent
             }
             else {
                 // Unknown action type
@@ -157,7 +120,7 @@ async function estimatePlanSpend(plan) {
 /**
  * Evaluate SessionPolicy for a relayed execution
  */
-async function evaluateSessionPolicy(sessionId, userAddress, plan, allowedAdapters, getSessionStatus, policyOverride // DEV-ONLY override for testing
+export async function evaluateSessionPolicy(sessionId, userAddress, plan, allowedAdapters, getSessionStatus, policyOverride // DEV-ONLY override for testing
 ) {
     // Check 1: Session must exist and be active
     // DEV-ONLY: Allow skipping session check in validateOnly mode for testing

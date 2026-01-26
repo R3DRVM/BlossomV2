@@ -1898,7 +1898,7 @@ export async function createIntentAsync(params: {
   }
 
   // SQLite: use synchronous version, wrap in Promise
-  return Promise.resolve(createIntent(params));
+  return Promise.resolve(createIntent(params as any));
 }
 
 /**
@@ -1923,7 +1923,7 @@ export async function updateIntentStatusAsync(
   }
 
   // SQLite: use synchronous version
-  updateIntentStatus(id, updates);
+  updateIntentStatus(id, updates as any);
   return Promise.resolve();
 }
 
@@ -1959,7 +1959,7 @@ export async function createExecutionAsync(params: {
   }
 
   // SQLite: use synchronous version
-  return Promise.resolve(createExecution(params));
+  return Promise.resolve(createExecution(params as any));
 }
 
 /**
@@ -1984,7 +1984,7 @@ export async function updateExecutionAsync(
   }
 
   // SQLite: use synchronous version
-  updateExecution(id, updates);
+  updateExecution(id, updates as any);
   return Promise.resolve();
 }
 
@@ -2126,5 +2126,5 @@ export async function getSummaryStatsWithIntentsAsync(): Promise<
   }
 
   // SQLite: use synchronous version
-  return Promise.resolve(getSummaryStatsWithIntents());
+  return Promise.resolve(getSummaryStatsWithIntents()) as any;
 }

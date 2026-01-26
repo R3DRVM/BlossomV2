@@ -1,4 +1,3 @@
-"use strict";
 /**
  * LiFi Bridge Quote Integration
  *
@@ -9,11 +8,6 @@
  * Uses LiFi public API (no API key required for quotes)
  * https://docs.li.fi/li.fi-api/li.fi-api
  */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.LiFiErrorCodes = void 0;
-exports.getLiFiQuote = getLiFiQuote;
-exports.checkLiFiHealth = checkLiFiHealth;
-exports.getLiFiChains = getLiFiChains;
 // LiFi API base URL
 const LIFI_API_BASE = 'https://li.quest/v1';
 // Supported chains for quoting
@@ -37,7 +31,7 @@ const TOKEN_ADDRESSES = {
     'WETH:sepolia': '0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14',
 };
 // Error codes for categorization
-exports.LiFiErrorCodes = {
+export const LiFiErrorCodes = {
     LIFI_UNREACHABLE: 'LIFI_UNREACHABLE',
     LIFI_NO_ROUTE: 'LIFI_NO_ROUTE',
     LIFI_QUOTE_FAILED: 'LIFI_QUOTE_FAILED',
@@ -80,7 +74,7 @@ function resolveTokenAddress(token, chain) {
  * @param params Quote parameters
  * @returns Quote result with success/failure status
  */
-async function getLiFiQuote(params) {
+export async function getLiFiQuote(params) {
     try {
         // Resolve chain IDs
         const fromChainId = resolveChainId(params.fromChain);
@@ -89,7 +83,7 @@ async function getLiFiQuote(params) {
             return {
                 ok: false,
                 error: {
-                    code: exports.LiFiErrorCodes.LIFI_UNSUPPORTED_CHAIN,
+                    code: LiFiErrorCodes.LIFI_UNSUPPORTED_CHAIN,
                     message: `Unsupported source chain: ${params.fromChain}`,
                 },
             };
@@ -98,7 +92,7 @@ async function getLiFiQuote(params) {
             return {
                 ok: false,
                 error: {
-                    code: exports.LiFiErrorCodes.LIFI_UNSUPPORTED_CHAIN,
+                    code: LiFiErrorCodes.LIFI_UNSUPPORTED_CHAIN,
                     message: `Unsupported destination chain: ${params.toChain}`,
                 },
             };
@@ -134,7 +128,7 @@ async function getLiFiQuote(params) {
                 return {
                     ok: false,
                     error: {
-                        code: exports.LiFiErrorCodes.LIFI_RATE_LIMITED,
+                        code: LiFiErrorCodes.LIFI_RATE_LIMITED,
                         message: 'LiFi API rate limit exceeded',
                     },
                 };
@@ -144,12 +138,12 @@ async function getLiFiQuote(params) {
                 // LiFi returns structured errors
                 const errorMessage = data.message || data.error || 'Quote request failed';
                 // Categorize the error
-                let errorCode = exports.LiFiErrorCodes.LIFI_QUOTE_FAILED;
+                let errorCode = LiFiErrorCodes.LIFI_QUOTE_FAILED;
                 if (errorMessage.toLowerCase().includes('no route')) {
-                    errorCode = exports.LiFiErrorCodes.LIFI_NO_ROUTE;
+                    errorCode = LiFiErrorCodes.LIFI_NO_ROUTE;
                 }
                 else if (errorMessage.toLowerCase().includes('invalid')) {
-                    errorCode = exports.LiFiErrorCodes.LIFI_INVALID_PARAMS;
+                    errorCode = LiFiErrorCodes.LIFI_INVALID_PARAMS;
                 }
                 return {
                     ok: false,
@@ -195,7 +189,7 @@ async function getLiFiQuote(params) {
                 return {
                     ok: false,
                     error: {
-                        code: exports.LiFiErrorCodes.LIFI_UNREACHABLE,
+                        code: LiFiErrorCodes.LIFI_UNREACHABLE,
                         message: 'LiFi API request timed out',
                     },
                 };
@@ -207,7 +201,7 @@ async function getLiFiQuote(params) {
         return {
             ok: false,
             error: {
-                code: exports.LiFiErrorCodes.LIFI_UNREACHABLE,
+                code: LiFiErrorCodes.LIFI_UNREACHABLE,
                 message: `LiFi API error: ${error.message?.slice(0, 150) || 'Unknown error'}`,
             },
         };
@@ -216,7 +210,7 @@ async function getLiFiQuote(params) {
 /**
  * Check if LiFi API is reachable
  */
-async function checkLiFiHealth() {
+export async function checkLiFiHealth() {
     try {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 5000);
@@ -234,7 +228,7 @@ async function checkLiFiHealth() {
 /**
  * Get supported chains from LiFi
  */
-async function getLiFiChains() {
+export async function getLiFiChains() {
     try {
         const response = await fetch(`${LIFI_API_BASE}/chains`, {
             method: 'GET',

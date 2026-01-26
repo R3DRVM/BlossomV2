@@ -55,9 +55,9 @@ export function getPgPool(): PgPool {
 export async function query<T = any>(
   sql: string,
   params: any[] = []
-): Promise<QueryResult<T>> {
+): Promise<QueryResult<any>> {
   const pool = getPgPool();
-  return pool.query<T>(sql, params);
+  return pool.query(sql, params) as any;
 }
 
 /**

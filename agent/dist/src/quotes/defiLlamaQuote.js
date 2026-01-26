@@ -1,13 +1,8 @@
-"use strict";
 /**
  * DefiLlama Yield Quote Provider
  * Fetches yield data from https://yields.llama.fi/pools
  * Caches results in-memory for 5 minutes
  */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.getTopYieldVaults = getTopYieldVaults;
-exports.getVaultRecommendation = getVaultRecommendation;
-exports.getTopProtocolsByTVL = getTopProtocolsByTVL;
 // In-memory cache (5 minutes)
 let cachedVaults = null;
 let cacheTimestamp = 0;
@@ -22,7 +17,7 @@ const FALLBACK_VAULTS = [
  * Fetch top yield vaults from DefiLlama
  * Returns top 3-5 stablecoin-like pools on Ethereum
  */
-async function getTopYieldVaults() {
+export async function getTopYieldVaults() {
     // Check cache
     const now = Date.now();
     if (cachedVaults && (now - cacheTimestamp) < CACHE_TTL_MS) {
@@ -74,7 +69,7 @@ async function getTopYieldVaults() {
  * Get vault recommendation for a given amount
  * Returns highest APY vault
  */
-async function getVaultRecommendation(amountUsd) {
+export async function getVaultRecommendation(amountUsd) {
     const vaults = await getTopYieldVaults();
     if (vaults.length === 0) {
         return null;
@@ -111,7 +106,7 @@ function formatTVL(tvl) {
  * Fetch top DeFi protocols by TVL from DefiLlama
  * Returns top 5-10 protocols sorted by TVL descending
  */
-async function getTopProtocolsByTVL(limit = 5) {
+export async function getTopProtocolsByTVL(limit = 5) {
     // Check cache
     const now = Date.now();
     if (cachedProtocolsTVL && (now - protocolsCacheTimestamp) < CACHE_TTL_MS) {

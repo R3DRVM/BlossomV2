@@ -1,7 +1,6 @@
-"use strict";
 /**
  * Blossom Agent Types
  * Shared types for Blossom AI Trading Copilot backend
  */
-Object.defineProperty(exports, "__esModule", { value: true });
+export {};
 //# sourceMappingURL=blossom.js.map
