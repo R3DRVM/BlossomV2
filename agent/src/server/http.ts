@@ -6734,6 +6734,11 @@ app.get('/api/stats/public', async (req, res) => {
     }));
 
     // Sanitize recent executions (include txHash, chain, network for explorer links, and USD estimate)
+    // Count executions with missing USD estimates for debugging
+    const missingUsdCount = recentExecutions.filter(exec =>
+      exec.status === 'confirmed' && (exec.usd_estimate === null || exec.usd_estimate === undefined)
+    ).length;
+
     const safeExecutions = recentExecutions.map(exec => ({
       id: exec.id,
       chain: exec.chain,
@@ -6758,9 +6763,11 @@ app.get('/api/stats/public', async (req, res) => {
         successfulExecutions: summary.successfulExecutions || 0,
         successRate: summary.successRate || 0,
         totalUsdRouted: summary.totalUsdRouted || 0,
+        uniqueWallets: summary.uniqueWallets || 0,
         chainsActive: summary.chainsActive || [],
         recentIntents: safeIntents || [],
         recentExecutions: safeExecutions || [],
+        missingUsdEstimateCount: missingUsdCount,
         dbIdentityHash,
         lastUpdated: Date.now(),
       },

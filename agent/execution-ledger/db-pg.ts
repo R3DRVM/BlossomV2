@@ -513,7 +513,8 @@ export async function getSummaryStats() {
       COUNT(*) as total_executions,
       COUNT(CASE WHEN status = 'confirmed' THEN 1 END) as successful_executions,
       COALESCE(SUM(CASE WHEN status = 'confirmed' THEN usd_estimate ELSE 0 END), 0) as total_usd_routed,
-      COUNT(DISTINCT chain) as chains_count
+      COUNT(DISTINCT chain) as chains_count,
+      COUNT(DISTINCT CASE WHEN status = 'confirmed' THEN from_address END) as unique_wallets
     FROM executions
   `;
 
@@ -531,6 +532,7 @@ export async function getSummaryStats() {
     successRate: totalExecs > 0 ? (successfulExecs / totalExecs) * 100 : 0,
     totalUsdRouted: parseFloat(row?.total_usd_routed || '0'),
     chainsActive,
+    uniqueWallets: parseInt(row?.unique_wallets || '0'),
   };
 }
 
