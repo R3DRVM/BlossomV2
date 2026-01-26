@@ -1,11 +1,11 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useBlossomContext, getOpenPositionsCount, isOpenPerp, isOpenEvent, isActiveDefi, Strategy, DefiPosition } from '../context/BlossomContext';
 import { useActivityFeed } from '../context/ActivityFeedContext';
 import PerpPositionEditor from './positions/PerpPositionEditor';
 import EventPositionEditor from './positions/EventPositionEditor';
 import PositionEditorCard from './PositionEditorCard';
 import SectionHeader from './ui/SectionHeader';
-import { ChevronDown, Clock, LogOut, RefreshCw, ChevronUp } from 'lucide-react';
+import { ChevronDown, Clock, LogOut, RefreshCw, ChevronUp, Loader2 } from 'lucide-react';
 import { executionMode, executionAuthMode, ethTestnetChainId, forceDemoPortfolio } from '../lib/config';
 import { getAddress, getAddressIfExplicit, getChainId, connectWallet as legacyConnectWallet, switchToSepolia, getProvider, disconnectWallet as legacyDisconnectWallet, isExplicitlyConnected } from '../lib/walletAdapter';
 import { isBackendHealthy, onBackendHealthChange, AGENT_API_BASE_URL } from '../lib/apiClient';
@@ -14,6 +14,7 @@ import ConnectWalletButton, { useWalletStatus } from './wallet/ConnectWalletButt
 import { useAccount, useChainId as useWagmiChainId, useSwitchChain } from 'wagmi';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { sepolia } from 'wagmi/chains';
+import { useToast } from './toast/useToast';
 
 interface RightPanelProps {
   selectedStrategyId?: string | null;
@@ -57,6 +58,7 @@ export default function RightPanel(_props: RightPanelProps) {
   const { switchChain } = useSwitchChain();
   const { publicKey: solanaPublicKey, connected: solanaConnected } = useWallet();
   const walletStatus = useWalletStatus();
+  const { showToast } = useToast();
 
   // Wallet connection state machine (eth_testnet mode only)
   type WalletState = 'DISCONNECTED' | 'CONNECTING' | 'CONNECTED_LOADING' | 'CONNECTED_READY' | 'WRONG_NETWORK' | 'ERROR' | 'BACKEND_OFFLINE' | 'BACKEND_MISCONFIGURED' | 'RPC_UNREACHABLE';
@@ -737,6 +739,30 @@ export default function RightPanel(_props: RightPanelProps) {
     console.log('Swap via button not implemented - use chat');
   };
 
+  // Poll for balance updates after mint
+  const pollForBalanceUpdate = useCallback(async (maxAttempts = 10, delayMs = 2000) => {
+    let attempt = 0;
+    const poll = async () => {
+      attempt++;
+      console.log(`[RightPanel] Polling for balance update (attempt ${attempt}/${maxAttempts})`);
+
+      // Trigger balance refresh
+      window.dispatchEvent(new CustomEvent('blossom-wallet-connection-change'));
+
+      if (attempt < maxAttempts) {
+        // Exponential backoff: 2s, 3s, 4.5s, 6.75s, etc.
+        const nextDelay = Math.min(delayMs * Math.pow(1.5, attempt - 1), 10000);
+        setTimeout(poll, nextDelay);
+      } else {
+        console.log('[RightPanel] Balance polling complete');
+        setFaucetStatus('idle');
+      }
+    };
+
+    // Start polling after initial delay
+    setTimeout(poll, delayMs);
+  }, []);
+
   const handleGetDemoTokens = async () => {
     if (!walletAddress) return;
 
@@ -764,20 +790,37 @@ export default function RightPanel(_props: RightPanelProps) {
 
       setFaucetStatus('success');
 
-      // Refresh balances after 5 seconds
-      setTimeout(() => {
-        // Trigger balance refresh (use connection-change event which is actually listened to)
-        window.dispatchEvent(new CustomEvent('blossom-wallet-connection-change'));
-        setFaucetStatus('idle');
-        // Mark faucet as claimed in localStorage to prevent repeated prompts
-        if (walletAddress) {
-          localStorage.setItem(`blossom_faucet_claimed_${walletAddress.toLowerCase()}`, 'true');
-        }
-      }, 5000);
+      // Show success toast
+      showToast({
+        title: 'Demo USDC minted!',
+        description: result.txHash
+          ? `10,000 demo USDC sent to your wallet. TX: ${result.txHash.slice(0, 10)}...`
+          : '10,000 demo USDC sent to your wallet.',
+        variant: 'success'
+      });
+
+      // Mark faucet as claimed in localStorage
+      if (walletAddress) {
+        localStorage.setItem(`blossom_faucet_claimed_${walletAddress.toLowerCase()}`, 'true');
+      }
+
+      // Poll for balance updates with exponential backoff
+      pollForBalanceUpdate(8, 2000);
+
     } catch (error: any) {
       console.error('[RightPanel] Faucet error:', error);
       setFaucetStatus('error');
       setFaucetError(error.message || 'Failed to mint tokens');
+
+      // Show error toast
+      showToast({
+        title: 'Mint failed',
+        description: error.message || 'Failed to mint demo tokens. Please try again.',
+        variant: 'default'
+      });
+
+      // Reset status after 3 seconds
+      setTimeout(() => setFaucetStatus('idle'), 3000);
     }
   };
 
@@ -1056,14 +1099,27 @@ export default function RightPanel(_props: RightPanelProps) {
               const wasClaimed = faucetClaimedKey && localStorage.getItem(faucetClaimedKey) === 'true';
               if (!hasLowUsdc || wasClaimed) return null;
               return (
-                <span className="flex items-center gap-1 text-[9px] text-slate-500">
+                <span className="flex items-center gap-1.5 text-[9px] text-slate-500">
                   <span>Need USDC?</span>
                   <button
                     onClick={handleGetDemoTokens}
-                    disabled={faucetStatus === 'minting'}
-                    className="text-pink-600 hover:text-pink-700 font-medium underline"
+                    disabled={faucetStatus === 'minting' || faucetStatus === 'success'}
+                    className={`flex items-center gap-1 font-medium ${
+                      faucetStatus === 'minting' ? 'text-slate-400' :
+                      faucetStatus === 'success' ? 'text-emerald-600' :
+                      faucetStatus === 'error' ? 'text-rose-500' :
+                      'text-pink-600 hover:text-pink-700 underline'
+                    }`}
                   >
-                    {faucetStatus === 'minting' ? '...' : 'Mint'}
+                    {faucetStatus === 'minting' && (
+                      <>
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        <span>Minting...</span>
+                      </>
+                    )}
+                    {faucetStatus === 'success' && <span>Sent!</span>}
+                    {faucetStatus === 'error' && <span>Failed</span>}
+                    {faucetStatus === 'idle' && <span>Mint</span>}
                   </button>
                 </span>
               );

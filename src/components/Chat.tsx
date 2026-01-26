@@ -21,29 +21,125 @@ import { isOneClickAuthorized } from './OneClickExecution';
 import { BlossomLogo } from './BlossomLogo';
 // ExecutionPlanCard removed - execution details now live inside chat plan card
 
-// Intent patterns that should go through the ledger execution system
-// Includes action intents (produce on-chain proof) and analytics intents (offchain, recorded to ledger)
-const LEDGER_INTENT_PATTERNS = [
-  // Action intents - produce on-chain proof tx
-  /^(?:swap|convert|trade)\s+/i,
-  /^(?:deposit|supply|lend)\s+/i,
-  /^(?:bridge|transfer)\s+/i,
-  /^(?:go\s+)?(?:long|short)\s+\w+/i,
-  /^(?:bet|wager|stake)\s+/i,
-  /^(?:hedge|protect)\s+/i,
-  // Analytics intents - recorded to ledger as offchain (no proof tx)
-  /^(?:show|check|get|view)\s+(?:me\s+)?(?:my\s+)?(?:current\s+)?(?:perp\s+)?exposure/i,
-  /^(?:show|check|get|view)\s+(?:me\s+)?(?:my\s+)?(?:current\s+)?risk/i,
-  /^(?:show|get|find)\s+(?:me\s+)?(?:the\s+)?(?:top|best)\s+(?:\d+\s+)?(?:defi\s+)?(?:protocols?|vaults?)/i,
-  /^(?:show|get|find)\s+(?:me\s+)?(?:the\s+)?(?:top|best)\s+(?:\d+\s+)?prediction\s+markets?/i,
+// =============================================================================
+// MESSAGE ROUTING CLASSIFIER
+// Routes messages to: CHAT (normal response) | PLAN (preview) | EXECUTE (action)
+// =============================================================================
+
+type RouteDecision = 'chat' | 'plan' | 'execute';
+
+interface ClassifyResult {
+  decision: RouteDecision;
+  reason: string;
+  confidence: 'high' | 'medium' | 'low';
+  strippedText?: string; // Text after removing escape prefix
+}
+
+// Chat escape hatches - ALWAYS treat as normal chat
+const CHAT_ESCAPE_PATTERNS = [
+  /^\/chat\s+/i,           // /chat <message>
+  /^just\s+answer[:\s]+/i, // just answer: <message>
+  /^explain\s+/i,          // explain <topic>
+  /^what\s+is\s+/i,        // what is <topic>
+  /^what\s+are\s+/i,       // what are <topic>
+  /^how\s+does\s+/i,       // how does <topic>
+  /^why\s+/i,              // why <question>
+  /^tell\s+me\s+about\s+/i, // tell me about <topic>
+  /^can\s+you\s+explain/i, // can you explain
+];
+
+// Question patterns - should be chat, not execution
+const QUESTION_PATTERNS = [
+  /\?$/,                          // Ends with question mark
+  /^what\s+(?:do\s+you\s+think|would|should|if)/i, // What do you think, what would, what should, what if
+  /^should\s+i\s+/i,              // should I...
+  /^is\s+it\s+(?:a\s+good|worth|smart)/i, // is it a good/worth/smart
+  /^do\s+you\s+(?:think|recommend)/i, // do you think/recommend
+  /^how\s+(?:risky|safe|much)/i,  // how risky/safe/much
+  /^compare\s+/i,                  // compare X to Y
+  /^analyze\s+/i,                  // analyze X
+  /^review\s+/i,                   // review my portfolio
+];
+
+// Education/info patterns - definitely chat
+const INFO_PATTERNS = [
+  /^(?:list|show|get|find)\s+(?:me\s+)?(?:the\s+)?(?:top|best)\s+(?:\d+\s+)?/i, // top 5 X
+  /^what\s+(?:are|is)\s+the\s+(?:top|best|biggest|largest)/i, // what are the top X
+  /sentiment\s+(?:on|for|of)/i,   // sentiment on X
+  /tvl|total\s+value\s+locked/i,  // TVL questions
+  /apy|apr|yield/i,               // yield questions without action
+  /market\s+cap/i,                // market cap questions
+  /price\s+(?:of|for)/i,          // price of X
+];
+
+// EXPLICIT execution patterns - must have action verb + amount/token
+// These are the ONLY patterns that should trigger execution
+const EXECUTE_PATTERNS = [
+  // Swap: "swap 100 USDC to ETH" - requires amount
+  /^swap\s+\d+(?:\.\d+)?\s*(?:k|m)?\s*\w+\s+(?:to|for|into)\s+\w+/i,
+  // Deposit: "deposit 500 USDC into Aave" - requires amount
+  /^deposit\s+\d+(?:\.\d+)?\s*(?:k|m)?\s*\w+\s+(?:into|to|on)\s+\w+/i,
+  // Bridge: "bridge 100 USDC from ETH to SOL" - requires amount
+  /^bridge\s+\d+(?:\.\d+)?\s*(?:k|m)?\s*\w+\s+(?:from|to)\s+\w+/i,
+  // Long/Short with specific risk%: "long ETH with 3% risk" or "long 100 USDC on ETH"
+  /^(?:go\s+)?(?:long|short)\s+(?:\d+(?:\.\d+)?\s*(?:k|m)?\s*\w+\s+(?:on|with)|eth|btc|sol)\s+.*(?:\d+%?\s*risk|\d+x)/i,
+  // Bet with amount: "bet 50 USDC on Trump wins"
+  /^bet\s+\d+(?:\.\d+)?\s*(?:k|m)?\s*\w+\s+(?:on|that)\s+/i,
+  // Execute/confirm explicit: "execute", "confirm", "do it", "yes execute"
+  /^(?:execute|confirm|do\s+it|yes\s+execute|approve|submit)\s*$/i,
 ];
 
 /**
- * Check if user text matches a ledger intent pattern
+ * Classify user message intent for routing
+ * Returns: 'chat' (normal response), 'plan' (show preview), 'execute' (take action)
  */
-function isLedgerIntent(text: string): boolean {
+function classifyMessage(text: string): ClassifyResult {
   const normalized = text.toLowerCase().trim();
-  return LEDGER_INTENT_PATTERNS.some(pattern => pattern.test(normalized));
+
+  // 1. Check escape hatches first - ALWAYS chat
+  for (const pattern of CHAT_ESCAPE_PATTERNS) {
+    if (pattern.test(normalized)) {
+      const strippedText = normalized.replace(pattern, '').trim();
+      return {
+        decision: 'chat',
+        reason: 'escape_hatch',
+        confidence: 'high',
+        strippedText: strippedText || text
+      };
+    }
+  }
+
+  // 2. Check if it's clearly a question - route to chat
+  for (const pattern of QUESTION_PATTERNS) {
+    if (pattern.test(normalized)) {
+      return { decision: 'chat', reason: 'question_pattern', confidence: 'high' };
+    }
+  }
+
+  // 3. Check if it's info/education request - route to chat
+  for (const pattern of INFO_PATTERNS) {
+    if (pattern.test(normalized)) {
+      return { decision: 'chat', reason: 'info_request', confidence: 'high' };
+    }
+  }
+
+  // 4. Check for EXPLICIT execution patterns - these are the ONLY ones that execute
+  for (const pattern of EXECUTE_PATTERNS) {
+    if (pattern.test(normalized)) {
+      return { decision: 'execute', reason: 'explicit_action', confidence: 'high' };
+    }
+  }
+
+  // 5. Default: treat as chat (fail-safe, chat-first approach)
+  // This is intentional - we want Blossom to feel like a normal LLM chat first
+  return { decision: 'chat', reason: 'default_chat', confidence: 'medium' };
+}
+
+// Legacy function for backward compatibility - now uses new classifier
+function isLedgerIntent(text: string): boolean {
+  const result = classifyMessage(text);
+  // Only return true for explicit execution intents
+  return result.decision === 'execute';
 }
 
 // Re-export Message type for backward compatibility
@@ -1046,10 +1142,22 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
     }
 
     // =========================================================================
-    // LEDGER INTENT EXECUTION: Route swap/deposit/bridge/perp intents to backend
+    // MESSAGE ROUTING: Classify message and route appropriately
     // =========================================================================
+    const classification = classifyMessage(userText);
     const ledgerSecretConfigured = Boolean(import.meta.env.VITE_DEV_LEDGER_SECRET);
-    if (ledgerSecretConfigured && isLedgerIntent(userText)) {
+
+    // Log routing decision for debugging and analytics
+    console.log('[Chat Router]', {
+      message: userText.slice(0, 50) + (userText.length > 50 ? '...' : ''),
+      decision: classification.decision,
+      reason: classification.reason,
+      confidence: classification.confidence,
+      timestamp: new Date().toISOString(),
+    });
+
+    // Only route to ledger system for EXPLICIT execution intents
+    if (ledgerSecretConfigured && classification.decision === 'execute') {
       if (import.meta.env.DEV) {
         console.log('[Chat] Routing to ledger intent system:', userText.slice(0, 50));
       }

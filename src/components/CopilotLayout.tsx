@@ -124,26 +124,8 @@ export default function CopilotLayout() {
                 >
                   Copilot
                 </button>
-                <button
-                  onClick={() => handleCenterViewChange('risk')}
-                  className={`text-[11px] font-medium transition-colors ${
-                    centerView === 'risk'
-                      ? 'text-slate-900 border-b border-pink-200 pb-0.5'
-                      : 'text-slate-500 hover:text-slate-700'
-                  }`}
-                >
-                  Risk Center
-                </button>
-                <button
-                  onClick={() => handleCenterViewChange('portfolio')}
-                  className={`text-[11px] font-medium transition-colors ${
-                    centerView === 'portfolio'
-                      ? 'text-slate-900 border-b border-pink-200 pb-0.5'
-                      : 'text-slate-500 hover:text-slate-700'
-                  }`}
-                >
-                  Portfolio Overview
-                </button>
+                {/* Risk Center and Portfolio Overview tabs hidden for beta */}
+                {/* TODO: Re-enable these tabs post-beta launch */}
               </div>
             </div>
             
