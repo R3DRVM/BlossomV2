@@ -654,6 +654,10 @@ export declare function getSummaryStatsAsync(): Promise<StatsSummary>;
  */
 export declare function getIntentStatsSummaryAsync(): Promise<IntentStatsSummary>;
 /**
+ * Async-capable get recent executions (uses Postgres if DATABASE_URL is set)
+ */
+export declare function getRecentExecutionsAsync(limit?: number): Promise<Execution[]>;
+/**
  * Async-capable get executions for intent (uses Postgres if DATABASE_URL is set)
  */
 export declare function getExecutionsForIntentAsync(intentId: string): Promise<Execution[]>;

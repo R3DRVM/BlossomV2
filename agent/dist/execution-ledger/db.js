@@ -1227,6 +1227,17 @@ export async function getIntentStatsSummaryAsync() {
     return Promise.resolve(getIntentStatsSummary());
 }
 /**
+ * Async-capable get recent executions (uses Postgres if DATABASE_URL is set)
+ */
+export async function getRecentExecutionsAsync(limit = 20) {
+    if (dbType === 'postgres') {
+        const pgDb = await import('./db-pg.js');
+        return pgDb.getRecentExecutions(limit);
+    }
+    // SQLite: use synchronous version
+    return Promise.resolve(getRecentExecutions(limit));
+}
+/**
  * Async-capable get executions for intent (uses Postgres if DATABASE_URL is set)
  */
 export async function getExecutionsForIntentAsync(intentId) {
