@@ -19,9 +19,10 @@ const __dirname = dirname(__filename);
 // Parse CLI args
 const args = process.argv.slice(2);
 const baseUrlArg = args.find(a => a.startsWith('--baseUrl='));
-const BASE_URL = baseUrlArg ? baseUrlArg.split('=')[1] : (process.env.BASE_URL || 'https://api.blossom.onl');
+const ledgerSecretArg = args.find(a => a.startsWith('--ledgerSecret='));
 
-const LEDGER_SECRET = process.env.LEDGER_SECRET || process.env.DEV_LEDGER_SECRET;
+const BASE_URL = baseUrlArg ? baseUrlArg.split('=')[1] : (process.env.BASE_URL || 'https://api.blossom.onl');
+const LEDGER_SECRET = ledgerSecretArg ? ledgerSecretArg.split('=')[1] : (process.env.LEDGER_SECRET || process.env.DEV_LEDGER_SECRET);
 
 // Generate run ID for this test batch
 const RUN_ID = `run_${Date.now()}`;
