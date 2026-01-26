@@ -229,7 +229,7 @@ export async function createExecution(params: CreateExecutionParams) {
       params.amountUnits || null,
       params.amountDisplay || null,
       params.usdEstimate || null,
-      params.usdEstimateIsEstimate !== undefined ? params.usdEstimateIsEstimate : true,
+      params.usdEstimateIsEstimate !== undefined ? (params.usdEstimateIsEstimate ? 1 : 0) : 1,
       params.txHash || null,
       params.status || 'pending',
       params.errorCode || null,
