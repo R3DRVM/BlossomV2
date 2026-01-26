@@ -1474,10 +1474,10 @@ async function executeProofOnly(
 ): Promise<IntentExecutionResult> {
   const {
     getIntent,
-    updateIntentStatus,
-    createExecution,
-    updateExecution,
-    linkExecutionToIntent,
+    updateIntentStatusAsync,
+    createExecutionAsync,
+    updateExecutionAsync,
+    linkExecutionToIntentAsync,
   } = await import('../../execution-ledger/db');
   const { buildExplorerUrl } = await import('../ledger/ledger');
 
@@ -1500,7 +1500,7 @@ async function executeProofOnly(
   } = await import('../config');
 
   if (!RELAYER_PRIVATE_KEY || !ETH_TESTNET_RPC_URL) {
-    await updateIntentStatus(intentId, {
+    await updateIntentStatusAsync(intentId, {
       status: 'failed',
       failureStage: 'execute',
       errorCode: 'CONFIG_MISSING',
@@ -1537,7 +1537,7 @@ async function executeProofOnly(
     });
 
     // Create execution record
-    const execution = await createExecution({
+    const execution = await createExecutionAsync({
       chain: 'ethereum',
       network: 'sepolia',
       kind: 'proof',
@@ -1550,7 +1550,7 @@ async function executeProofOnly(
       usdEstimateIsEstimate: true,
     });
 
-    await linkExecutionToIntent(execution.id, intentId);
+    await linkExecutionToIntentAsync(execution.id, intentId);
 
     // Build proof metadata for calldata
     const proofData = {
@@ -1582,7 +1582,7 @@ async function executeProofOnly(
     const explorerUrl = buildExplorerUrl('ethereum', 'sepolia', txHash);
 
     if (receipt.status === 'success') {
-      await updateExecution(execution.id, {
+      await updateExecutionAsync(execution.id, {
         status: 'confirmed',
         txHash,
         explorerUrl,
@@ -1591,7 +1591,7 @@ async function executeProofOnly(
         latencyMs,
       });
 
-      await updateIntentStatus(intentId, {
+      await updateIntentStatusAsync(intentId, {
         status: 'confirmed',
         confirmedAt: Math.floor(Date.now() / 1000),
         metadataJson: mergeMetadata(existingMetadataJson, {
@@ -1618,7 +1618,7 @@ async function executeProofOnly(
         },
       };
     } else {
-      await updateExecution(execution.id, {
+      await updateExecutionAsync(execution.id, {
         status: 'failed',
         txHash,
         explorerUrl,
@@ -1626,7 +1626,7 @@ async function executeProofOnly(
         errorMessage: 'Proof transaction reverted',
       });
 
-      await updateIntentStatus(intentId, {
+      await updateIntentStatusAsync(intentId, {
         status: 'failed',
         failureStage: 'confirm',
         errorCode: 'TX_REVERTED',
@@ -1648,7 +1648,7 @@ async function executeProofOnly(
       };
     }
   } catch (error: any) {
-    await updateIntentStatus(intentId, {
+    await updateIntentStatusAsync(intentId, {
       status: 'failed',
       failureStage: 'execute',
       errorCode: 'PROOF_TX_FAILED',
@@ -1678,10 +1678,10 @@ async function executeProofOnlySolana(
 ): Promise<IntentExecutionResult> {
   const {
     getIntent,
-    updateIntentStatus,
-    createExecution,
-    updateExecution,
-    linkExecutionToIntent,
+    updateIntentStatusAsync,
+    createExecutionAsync,
+    updateExecutionAsync,
+    linkExecutionToIntentAsync,
   } = await import('../../execution-ledger/db');
   const { buildExplorerUrl } = await import('../ledger/ledger');
 
@@ -1696,7 +1696,7 @@ async function executeProofOnlySolana(
   const solanaPrivateKey = process.env.SOLANA_PRIVATE_KEY;
 
   if (!solanaPrivateKey) {
-    await updateIntentStatus(intentId, {
+    await updateIntentStatusAsync(intentId, {
       status: 'failed',
       failureStage: 'execute',
       errorCode: 'CONFIG_MISSING',
@@ -1779,7 +1779,7 @@ async function executeProofOnlySolana(
     const senderPubkey = base58Encode(publicKey);
 
     // Create execution record
-    const execution = await createExecution({
+    const execution = await createExecutionAsync({
       chain: 'solana',
       network: 'devnet',
       kind: 'proof',
@@ -1792,7 +1792,7 @@ async function executeProofOnlySolana(
       usdEstimateIsEstimate: true,
     });
 
-    await linkExecutionToIntent(execution.id, intentId);
+    await linkExecutionToIntentAsync(execution.id, intentId);
 
     // Use SolanaClient to send a small transfer as proof
     const client = new SolanaClient();
@@ -1863,7 +1863,7 @@ async function executeProofOnlySolana(
     const latencyMs = Date.now() - startTime;
     const explorerUrl = buildExplorerUrl('solana', 'devnet', txSignature);
 
-    await updateExecution(execution.id, {
+    await updateExecutionAsync(execution.id, {
       status: 'confirmed',
       txHash: txSignature,
       explorerUrl,
@@ -1871,7 +1871,7 @@ async function executeProofOnlySolana(
       latencyMs,
     });
 
-    await updateIntentStatus(intentId, {
+    await updateIntentStatusAsync(intentId, {
       status: 'confirmed',
       confirmedAt: Math.floor(Date.now() / 1000),
       metadataJson: mergeMetadata(existingMetadataJson, {
@@ -1898,7 +1898,7 @@ async function executeProofOnlySolana(
       },
     };
   } catch (error: any) {
-    await updateIntentStatus(intentId, {
+    await updateIntentStatusAsync(intentId, {
       status: 'failed',
       failureStage: 'execute',
       errorCode: 'SOLANA_PROOF_TX_FAILED',
