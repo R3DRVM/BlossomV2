@@ -45,28 +45,30 @@ export default function CommandBar({ isOpen, onClose, onNavigate, onInsertChatPr
         onClose();
       },
     });
-    items.push({
-      id: 'nav-risk',
-      label: 'Go to Risk Center',
-      description: 'View risk metrics and alerts',
-      category: 'navigate',
-      action: () => {
-        setActiveTab('risk');
-        onNavigate('risk');
-        onClose();
-      },
-    });
-    items.push({
-      id: 'nav-portfolio',
-      label: 'Go to Portfolio Overview',
-      description: 'View portfolio performance',
-      category: 'navigate',
-      action: () => {
-        setActiveTab('portfolio');
-        onNavigate('portfolio');
-        onClose();
-      },
-    });
+    // Risk Center and Portfolio Overview hidden for beta
+    // TODO: Re-enable these commands post-beta launch
+    // items.push({
+    //   id: 'nav-risk',
+    //   label: 'Go to Risk Center',
+    //   description: 'View risk metrics and alerts',
+    //   category: 'navigate',
+    //   action: () => {
+    //     setActiveTab('risk');
+    //     onNavigate('risk');
+    //     onClose();
+    //   },
+    // });
+    // items.push({
+    //   id: 'nav-portfolio',
+    //   label: 'Go to Portfolio Overview',
+    //   description: 'View portfolio performance',
+    //   category: 'navigate',
+    //   action: () => {
+    //     setActiveTab('portfolio');
+    //     onNavigate('portfolio');
+    //     onClose();
+    //   },
+    // });
 
     // Position commands
     openPositions.forEach((pos) => {
