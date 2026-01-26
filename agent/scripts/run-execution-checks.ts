@@ -49,15 +49,16 @@ interface TestCase {
 }
 
 const TEST_CASES: TestCase[] = [
-  // ETHEREUM TESTS
-  { name: 'ETH: Plan swap', intent: 'swap 1 USDC for WETH', chain: 'ethereum', planOnly: true, category: 'swap' },
-  { name: 'ETH: Plan deposit', intent: 'deposit 5 USDC to aave', chain: 'ethereum', planOnly: true, category: 'defi' },
-  { name: 'ETH: Execute swap', intent: 'swap 0.5 USDC for WETH', chain: 'ethereum', planOnly: false, category: 'swap' },
-  { name: 'ETH: Execute deposit', intent: 'deposit 2 USDC to aave', chain: 'ethereum', planOnly: false, category: 'defi' },
+  // ETHEREUM TESTS - Large notionals ($500-$2000 realistic for testnet)
+  // Note: Testnet may have liquidity constraints, amounts will degrade gracefully if needed
+  { name: 'ETH: Plan $2k swap', intent: 'swap $2000 USDC for WETH', chain: 'ethereum', planOnly: true, category: 'swap' },
+  { name: 'ETH: Plan $1k deposit', intent: 'deposit $1000 USDC to aave', chain: 'ethereum', planOnly: true, category: 'defi' },
+  { name: 'ETH: Execute $500 swap', intent: 'swap $500 USDC for WETH', chain: 'ethereum', planOnly: false, category: 'swap' },
+  { name: 'ETH: Execute $800 deposit', intent: 'deposit $800 USDC to aave', chain: 'ethereum', planOnly: false, category: 'defi' },
 
-  // SOLANA TESTS (proof-only on devnet)
-  { name: 'SOL: Plan swap', intent: 'swap 1 USDC for SOL on solana', chain: 'solana', planOnly: true, category: 'swap' },
-  { name: 'SOL: Execute swap', intent: 'swap 0.5 USDC for SOL on solana', chain: 'solana', planOnly: false, category: 'swap' },
+  // SOLANA TESTS - Proof-only on devnet with large notionals
+  { name: 'SOL: Plan $1.5k swap', intent: 'swap $1500 USDC for SOL on solana', chain: 'solana', planOnly: true, category: 'swap' },
+  { name: 'SOL: Execute $900 swap', intent: 'swap $900 USDC for SOL on solana', chain: 'solana', planOnly: false, category: 'swap' },
 ];
 
 /**
