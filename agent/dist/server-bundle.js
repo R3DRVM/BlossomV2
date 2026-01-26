@@ -371,21 +371,21 @@ async function getTopYieldVaults() {
     const data = await response.json();
     const pools = data.data || [];
     const stablecoinSymbols = ["USDC", "USDT", "DAI", "USDC.e", "USDT.e"];
-    const ethereumPools = pools.filter((pool) => {
-      const isEthereum = pool.chain === "Ethereum" || pool.chain === "ethereum";
+    const ethereumPools = pools.filter((pool2) => {
+      const isEthereum = pool2.chain === "Ethereum" || pool2.chain === "ethereum";
       const isStablecoin = stablecoinSymbols.some(
-        (sym) => pool.symbol?.toUpperCase().includes(sym)
+        (sym) => pool2.symbol?.toUpperCase().includes(sym)
       );
-      return isEthereum && isStablecoin && pool.apy > 0;
+      return isEthereum && isStablecoin && pool2.apy > 0;
     });
     ethereumPools.sort((a, b) => (b.apy || 0) - (a.apy || 0));
     const topPools = ethereumPools.slice(0, 5);
-    const vaults = topPools.map((pool) => ({
-      name: `${pool.project} ${pool.symbol}`,
-      apy: pool.apy || 0,
-      tvl: pool.tvlUsd || 0,
-      poolId: pool.pool || pool.project,
-      protocol: pool.project || "Unknown"
+    const vaults = topPools.map((pool2) => ({
+      name: `${pool2.project} ${pool2.symbol}`,
+      apy: pool2.apy || 0,
+      tvl: pool2.tvlUsd || 0,
+      poolId: pool2.pool || pool2.project,
+      protocol: pool2.project || "Unknown"
     }));
     cachedVaults = vaults.length > 0 ? vaults : FALLBACK_VAULTS;
     cacheTimestamp = now;
@@ -6217,6 +6217,457 @@ CREATE TABLE IF NOT EXISTS indexer_state (
   }
 });
 
+// agent/execution-ledger/db-pg-client.ts
+import pkg from "pg";
+function getPgPool() {
+  if (pool) return pool;
+  if (global.__pgPool) {
+    pool = global.__pgPool;
+    return pool;
+  }
+  const DATABASE_URL = process.env.DATABASE_URL;
+  if (!DATABASE_URL) {
+    throw new Error("DATABASE_URL not set for Postgres mode");
+  }
+  pool = new Pool({
+    connectionString: DATABASE_URL,
+    ssl: {
+      rejectUnauthorized: true
+    },
+    max: 1,
+    // Serverless: minimize connections
+    idleTimeoutMillis: 3e4,
+    connectionTimeoutMillis: 1e4
+  });
+  global.__pgPool = pool;
+  console.log("\u{1F5C4}\uFE0F  PostgreSQL pool initialized (Neon)");
+  return pool;
+}
+async function query(sql, params = []) {
+  const pool2 = getPgPool();
+  return pool2.query(sql, params);
+}
+async function queryRows(sql, params = []) {
+  const result = await query(sql, params);
+  return result.rows;
+}
+async function queryOne(sql, params = []) {
+  const rows = await queryRows(sql, params);
+  return rows[0];
+}
+function convertPlaceholders(sql) {
+  let index = 1;
+  return sql.replace(/\?/g, () => `$${index++}`);
+}
+var Pool, pool;
+var init_db_pg_client = __esm({
+  "agent/execution-ledger/db-pg-client.ts"() {
+    "use strict";
+    ({ Pool } = pkg);
+    pool = null;
+  }
+});
+
+// agent/execution-ledger/db-pg.ts
+var db_pg_exports = {};
+__export(db_pg_exports, {
+  createExecution: () => createExecution2,
+  createExecutionStep: () => createExecutionStep,
+  createIntent: () => createIntent,
+  getExecutionsForIntent: () => getExecutionsForIntent,
+  getIntent: () => getIntent,
+  getIntentStatsSummary: () => getIntentStatsSummary,
+  getRecentIntents: () => getRecentIntents,
+  getSummaryStats: () => getSummaryStats,
+  getSummaryStatsWithIntents: () => getSummaryStatsWithIntents,
+  linkExecutionToIntent: () => linkExecutionToIntent,
+  updateExecution: () => updateExecution2,
+  updateExecutionStep: () => updateExecutionStep,
+  updateIntentStatus: () => updateIntentStatus
+});
+import { randomUUID as randomUUID3 } from "crypto";
+async function createIntent(params) {
+  const id = randomUUID3();
+  const now = Math.floor(Date.now() / 1e3);
+  const sql = convertPlaceholders(
+    `INSERT INTO intents (
+      id, created_at, intent_text, intent_kind, requested_chain, requested_venue,
+      usd_estimate, status, metadata_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    RETURNING *`
+  );
+  const row = await queryOne(sql, [
+    id,
+    now,
+    params.intentText,
+    params.intentKind || null,
+    params.requestedChain || null,
+    params.requestedVenue || null,
+    params.usdEstimate || null,
+    "queued",
+    params.metadataJson || null
+  ]);
+  return row;
+}
+async function updateIntentStatus(id, updates) {
+  const fields = [];
+  const values = [];
+  let paramIndex = 1;
+  if (updates.status !== void 0) {
+    fields.push(`status = $${paramIndex++}`);
+    values.push(updates.status);
+  }
+  if (updates.plannedAt !== void 0) {
+    fields.push(`planned_at = $${paramIndex++}`);
+    values.push(updates.plannedAt);
+  }
+  if (updates.executedAt !== void 0) {
+    fields.push(`executed_at = $${paramIndex++}`);
+    values.push(updates.executedAt);
+  }
+  if (updates.confirmedAt !== void 0) {
+    fields.push(`confirmed_at = $${paramIndex++}`);
+    values.push(updates.confirmedAt);
+  }
+  if (updates.failureStage !== void 0) {
+    fields.push(`failure_stage = $${paramIndex++}`);
+    values.push(updates.failureStage);
+  }
+  if (updates.errorCode !== void 0) {
+    fields.push(`error_code = $${paramIndex++}`);
+    values.push(updates.errorCode);
+  }
+  if (updates.errorMessage !== void 0) {
+    const truncated = updates.errorMessage.substring(0, 500);
+    fields.push(`error_message = $${paramIndex++}`);
+    values.push(truncated);
+  }
+  if (updates.metadataJson !== void 0) {
+    fields.push(`metadata_json = $${paramIndex++}`);
+    values.push(updates.metadataJson);
+  }
+  if (fields.length === 0) return;
+  values.push(id);
+  const sql = `UPDATE intents SET ${fields.join(", ")} WHERE id = $${paramIndex}`;
+  try {
+    const result = await query(sql, values);
+    console.log(`[Postgres] Updated intent ${id.slice(0, 8)} - rows affected: ${result.rowCount}`);
+  } catch (error) {
+    console.error(`[Postgres] Failed to update intent ${id.slice(0, 8)}:`, error.message);
+    throw error;
+  }
+}
+async function getIntent(id) {
+  const sql = convertPlaceholders("SELECT * FROM intents WHERE id = ?");
+  return queryOne(sql, [id]);
+}
+async function getRecentIntents(limit = 50) {
+  const sql = convertPlaceholders("SELECT * FROM intents ORDER BY created_at DESC LIMIT ?");
+  return queryRows(sql, [limit]);
+}
+async function createExecution2(params) {
+  const id = params.id || randomUUID3();
+  const now = Math.floor(Date.now() / 1e3);
+  const sql = convertPlaceholders(
+    `INSERT INTO executions (
+      id, chain, network, kind, venue, intent, action, from_address, to_address,
+      token, amount_units, amount_display, usd_estimate, tx_hash, status,
+      error_code, error_message, explorer_url, relayer_address, session_id,
+      intent_id, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    RETURNING *`
+  );
+  try {
+    console.log(`[Postgres] Creating execution ${id.slice(0, 8)} for intent ${params.intentId?.slice(0, 8) || "none"}`);
+    const row = await queryOne(sql, [
+      id,
+      params.chain,
+      params.network,
+      params.kind || null,
+      params.venue || null,
+      params.intent,
+      params.action,
+      params.fromAddress,
+      params.toAddress || null,
+      params.token || null,
+      params.amountUnits || null,
+      params.amountDisplay || null,
+      params.usdEstimate || null,
+      params.txHash || null,
+      params.status || "pending",
+      params.errorCode || null,
+      params.errorMessage || null,
+      params.explorerUrl || null,
+      params.relayerAddress || null,
+      params.sessionId || null,
+      params.intentId || null,
+      now,
+      now
+    ]);
+    console.log(`[Postgres] Created execution ${id.slice(0, 8)} successfully`);
+    return row;
+  } catch (error) {
+    console.error(`[Postgres] Failed to create execution:`, error.message);
+    throw error;
+  }
+}
+async function updateExecution2(id, updates) {
+  const fields = [];
+  const values = [];
+  let paramIndex = 1;
+  const now = Math.floor(Date.now() / 1e3);
+  fields.push(`updated_at = $${paramIndex++}`);
+  values.push(now);
+  const fieldMap = {
+    txHash: "tx_hash",
+    status: "status",
+    errorCode: "error_code",
+    errorMessage: "error_message",
+    explorerUrl: "explorer_url",
+    kind: "kind",
+    venue: "venue"
+  };
+  Object.entries(updates).forEach(([key, value]) => {
+    const dbField = fieldMap[key];
+    if (dbField && value !== void 0) {
+      fields.push(`${dbField} = $${paramIndex++}`);
+      values.push(value);
+    }
+  });
+  if (fields.length === 1) return;
+  values.push(id);
+  const sql = `UPDATE executions SET ${fields.join(", ")} WHERE id = $${paramIndex}`;
+  await query(sql, values);
+}
+async function linkExecutionToIntent(executionId, intentId) {
+  const sql = convertPlaceholders("UPDATE executions SET intent_id = ? WHERE id = ?");
+  await query(sql, [intentId, executionId]);
+}
+async function getExecutionsForIntent(intentId) {
+  const sql = convertPlaceholders("SELECT * FROM executions WHERE intent_id = ? ORDER BY created_at DESC");
+  return queryRows(sql, [intentId]);
+}
+async function createExecutionStep(params) {
+  const id = randomUUID3();
+  const now = Math.floor(Date.now() / 1e3);
+  const sql = convertPlaceholders(
+    `INSERT INTO execution_steps (id, execution_id, step_index, action, stage, status, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     RETURNING *`
+  );
+  return queryOne(sql, [
+    id,
+    params.executionId,
+    params.stepIndex,
+    params.action,
+    params.stage || null,
+    params.status || "pending",
+    now
+  ]);
+}
+async function updateExecutionStep(id, updates) {
+  const fields = [];
+  const values = [];
+  let paramIndex = 1;
+  if (updates.status !== void 0) {
+    fields.push(`status = $${paramIndex++}`);
+    values.push(updates.status);
+  }
+  if (updates.txHash !== void 0) {
+    fields.push(`tx_hash = $${paramIndex++}`);
+    values.push(updates.txHash);
+  }
+  if (updates.errorCode !== void 0) {
+    fields.push(`error_code = $${paramIndex++}`);
+    values.push(updates.errorCode);
+  }
+  if (updates.errorMessage !== void 0) {
+    fields.push(`error_message = $${paramIndex++}`);
+    values.push(updates.errorMessage);
+  }
+  if (updates.explorerUrl !== void 0) {
+    fields.push(`explorer_url = $${paramIndex++}`);
+    values.push(updates.explorerUrl);
+  }
+  if (fields.length === 0) return;
+  values.push(id);
+  const sql = `UPDATE execution_steps SET ${fields.join(", ")} WHERE id = $${paramIndex}`;
+  await query(sql, values);
+}
+async function getSummaryStats() {
+  const execSql = `
+    SELECT
+      COUNT(*) as total,
+      SUM(CASE WHEN status = 'confirmed' OR status = 'finalized' THEN 1 ELSE 0 END) as successful,
+      SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
+      SUM(COALESCE(usd_estimate, 0)) as total_usd,
+      COUNT(DISTINCT from_address) as unique_wallets,
+      AVG(latency_ms) as avg_latency
+    FROM executions
+  `;
+  const execStats = await queryOne(execSql, []);
+  const total = parseInt(execStats?.total || "0");
+  const successful = parseInt(execStats?.successful || "0");
+  const failed = parseInt(execStats?.failed || "0");
+  const byKindSql = `
+    SELECT kind, COUNT(*) as count, SUM(COALESCE(usd_estimate, 0)) as usd_total
+    FROM executions
+    WHERE kind IS NOT NULL
+    GROUP BY kind
+    ORDER BY count DESC
+  `;
+  const byKind = await queryRows(byKindSql, []);
+  const byVenueSql = `
+    SELECT venue, COUNT(*) as count, SUM(COALESCE(usd_estimate, 0)) as usd_total
+    FROM executions
+    WHERE venue IS NOT NULL
+    GROUP BY venue
+    ORDER BY count DESC
+  `;
+  const byVenue = await queryRows(byVenueSql, []);
+  const byChainSql = `
+    SELECT
+      chain,
+      network,
+      COUNT(*) as count,
+      SUM(CASE WHEN status = 'confirmed' OR status = 'finalized' THEN 1 ELSE 0 END) as success_count,
+      SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed_count
+    FROM executions
+    GROUP BY chain, network
+    ORDER BY count DESC
+  `;
+  const byChain = await queryRows(byChainSql, []);
+  const lastExecSql = "SELECT MAX(created_at) as last_at FROM executions";
+  const lastExec = await queryOne(lastExecSql, []);
+  const chainsSql = "SELECT DISTINCT chain FROM executions WHERE chain IS NOT NULL";
+  const chainsRows = await queryRows(chainsSql, []);
+  const chainsActive = chainsRows.map((r) => r.chain);
+  return {
+    totalExecutions: total,
+    successfulExecutions: successful,
+    failedExecutions: failed,
+    successRate: total > 0 ? successful / total * 100 : 0,
+    totalUsdRouted: parseFloat(execStats?.total_usd || "0"),
+    relayedTxCount: 0,
+    chainsActive,
+    byKind: byKind.map((r) => ({
+      kind: r.kind,
+      count: parseInt(r.count),
+      usdTotal: parseFloat(r.usd_total || "0")
+    })),
+    byVenue: byVenue.map((r) => ({
+      venue: r.venue,
+      count: parseInt(r.count),
+      usdTotal: parseFloat(r.usd_total || "0")
+    })),
+    byChain: byChain.map((r) => ({
+      chain: r.chain,
+      network: r.network,
+      count: parseInt(r.count),
+      successCount: parseInt(r.success_count),
+      failedCount: parseInt(r.failed_count)
+    })),
+    avgLatencyMs: Math.round(parseFloat(execStats?.avg_latency || "0")),
+    lastExecutionAt: lastExec?.last_at || null,
+    uniqueWallets: parseInt(execStats?.unique_wallets || "0")
+  };
+}
+async function getIntentStatsSummary() {
+  const sql = `
+    SELECT
+      COUNT(*) as total,
+      SUM(CASE WHEN status = 'confirmed' THEN 1 ELSE 0 END) as confirmed,
+      SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed
+    FROM intents
+  `;
+  const stats = await queryOne(sql, []);
+  const total = parseInt(stats?.total || "0");
+  const confirmed = parseInt(stats?.confirmed || "0");
+  const failed = parseInt(stats?.failed || "0");
+  const byKindSql = `
+    SELECT
+      intent_kind as kind,
+      COUNT(*) as count,
+      SUM(CASE WHEN status = 'confirmed' THEN 1 ELSE 0 END) as confirmed,
+      SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed
+    FROM intents
+    WHERE intent_kind IS NOT NULL
+    GROUP BY intent_kind
+    ORDER BY count DESC
+  `;
+  const byKind = await queryRows(byKindSql, []);
+  const byStatusSql = `
+    SELECT status, COUNT(*) as count
+    FROM intents
+    GROUP BY status
+    ORDER BY count DESC
+  `;
+  const byStatus = await queryRows(byStatusSql, []);
+  const byStageSql = `
+    SELECT failure_stage as stage, COUNT(*) as count
+    FROM intents
+    WHERE failure_stage IS NOT NULL
+    GROUP BY failure_stage
+    ORDER BY count DESC
+  `;
+  const failuresByStage = await queryRows(byStageSql, []);
+  const byCodeSql = `
+    SELECT error_code as code, COUNT(*) as count
+    FROM intents
+    WHERE error_code IS NOT NULL
+    GROUP BY error_code
+    ORDER BY count DESC
+  `;
+  const failuresByCode = await queryRows(byCodeSql, []);
+  return {
+    totalIntents: total,
+    confirmedIntents: confirmed,
+    failedIntents: failed,
+    intentSuccessRate: total > 0 ? confirmed / total * 100 : 0,
+    byKind: byKind.map((r) => ({
+      kind: r.kind,
+      count: parseInt(r.count),
+      confirmed: parseInt(r.confirmed || "0"),
+      failed: parseInt(r.failed || "0")
+    })),
+    byStatus: byStatus.map((r) => ({
+      status: r.status,
+      count: parseInt(r.count)
+    })),
+    failuresByStage: failuresByStage.map((r) => ({
+      stage: r.stage,
+      count: parseInt(r.count)
+    })),
+    failuresByCode: failuresByCode.map((r) => ({
+      code: r.code,
+      count: parseInt(r.count)
+    }))
+  };
+}
+async function getSummaryStatsWithIntents() {
+  const [execStats, intentStats] = await Promise.all([
+    getSummaryStats(),
+    getIntentStatsSummary()
+  ]);
+  return {
+    ...execStats,
+    totalIntents: intentStats.totalIntents,
+    confirmedIntents: intentStats.confirmedIntents,
+    failedIntents: intentStats.failedIntents,
+    intentSuccessRate: intentStats.intentSuccessRate,
+    intentsByKind: intentStats.byKind,
+    intentsByStatus: intentStats.byStatus,
+    failuresByStage: intentStats.failuresByStage,
+    failuresByCode: intentStats.failuresByCode
+  };
+}
+var init_db_pg = __esm({
+  "agent/execution-ledger/db-pg.ts"() {
+    "use strict";
+    init_db_pg_client();
+  }
+});
+
 // agent/execution-ledger/db.ts
 var db_exports2 = {};
 __export(db_exports2, {
@@ -6226,20 +6677,26 @@ __export(db_exports2, {
   countAssets: () => countAssets,
   countExecutions: () => countExecutions,
   countSessions: () => countSessions,
-  createExecution: () => createExecution2,
-  createExecutionStep: () => createExecutionStep,
-  createIntent: () => createIntent,
+  createExecution: () => createExecution3,
+  createExecutionAsync: () => createExecutionAsync,
+  createExecutionStep: () => createExecutionStep2,
+  createExecutionStepAsync: () => createExecutionStepAsync,
+  createIntent: () => createIntent2,
+  createIntentAsync: () => createIntentAsync,
   createPosition: () => createPosition,
   createRoute: () => createRoute,
   getDatabase: () => getDatabase2,
   getExecution: () => getExecution2,
   getExecutionByTxHash: () => getExecutionByTxHash,
   getExecutionSteps: () => getExecutionSteps,
-  getExecutionsForIntent: () => getExecutionsForIntent,
+  getExecutionsForIntent: () => getExecutionsForIntent2,
+  getExecutionsForIntentAsync: () => getExecutionsForIntentAsync,
   getIndexerState: () => getIndexerState,
-  getIntent: () => getIntent,
+  getIntent: () => getIntent2,
+  getIntentAsync: () => getIntentAsync,
   getIntentStats: () => getIntentStats,
-  getIntentStatsSummary: () => getIntentStatsSummary,
+  getIntentStatsSummary: () => getIntentStatsSummary2,
+  getIntentStatsSummaryAsync: () => getIntentStatsSummaryAsync,
   getLedgerSummary: () => getLedgerSummary,
   getOpenPositions: () => getOpenPositions,
   getPosition: () => getPosition,
@@ -6249,16 +6706,20 @@ __export(db_exports2, {
   getPrimaryWallet: () => getPrimaryWallet,
   getProofBundle: () => getProofBundle,
   getRecentExecutions: () => getRecentExecutions,
-  getRecentIntents: () => getRecentIntents,
+  getRecentIntents: () => getRecentIntents2,
+  getRecentIntentsAsync: () => getRecentIntentsAsync,
   getRecentPositions: () => getRecentPositions,
   getRoutesForExecution: () => getRoutesForExecution,
   getStatsSummary: () => getStatsSummary,
-  getSummaryStats: () => getSummaryStats,
-  getSummaryStatsWithIntents: () => getSummaryStatsWithIntents,
+  getSummaryStats: () => getSummaryStats2,
+  getSummaryStatsAsync: () => getSummaryStatsAsync,
+  getSummaryStatsWithIntents: () => getSummaryStatsWithIntents2,
+  getSummaryStatsWithIntentsAsync: () => getSummaryStatsWithIntentsAsync,
   getWaitlistCount: () => getWaitlistCount,
   getWaitlistEntries: () => getWaitlistEntries,
   initDatabase: () => initDatabase2,
-  linkExecutionToIntent: () => linkExecutionToIntent,
+  linkExecutionToIntent: () => linkExecutionToIntent2,
+  linkExecutionToIntentAsync: () => linkExecutionToIntentAsync,
   listAssets: () => listAssets,
   listAssetsWithMeta: () => listAssetsWithMeta,
   listExecutions: () => listExecutions2,
@@ -6267,9 +6728,12 @@ __export(db_exports2, {
   listSessionsWithMeta: () => listSessionsWithMeta,
   listWallets: () => listWallets,
   registerWallet: () => registerWallet,
-  updateExecution: () => updateExecution2,
-  updateExecutionStep: () => updateExecutionStep,
-  updateIntentStatus: () => updateIntentStatus,
+  updateExecution: () => updateExecution3,
+  updateExecutionAsync: () => updateExecutionAsync,
+  updateExecutionStep: () => updateExecutionStep2,
+  updateExecutionStepAsync: () => updateExecutionStepAsync,
+  updateIntentStatus: () => updateIntentStatus2,
+  updateIntentStatusAsync: () => updateIntentStatusAsync,
   updatePosition: () => updatePosition,
   updateRoute: () => updateRoute,
   upsertAsset: () => upsertAsset,
@@ -6277,7 +6741,7 @@ __export(db_exports2, {
   upsertSession: () => upsertSession2
 });
 import Database2 from "better-sqlite3";
-import { randomUUID as randomUUID3 } from "crypto";
+import { randomUUID as randomUUID4 } from "crypto";
 import * as path2 from "path";
 import * as fs2 from "fs";
 import { fileURLToPath as fileURLToPath4 } from "url";
@@ -6340,9 +6804,9 @@ function runColumnMigrations(database) {
     }
   }
 }
-function createExecution2(params) {
+function createExecution3(params) {
   const db3 = getDatabase2();
-  const id = randomUUID3();
+  const id = randomUUID4();
   const now = Math.floor(Date.now() / 1e3);
   db3.prepare(`
     INSERT INTO executions (
@@ -6393,7 +6857,7 @@ function createExecution2(params) {
     updated_at: now
   };
 }
-function updateExecution2(id, updates) {
+function updateExecution3(id, updates) {
   const db3 = getDatabase2();
   const now = Math.floor(Date.now() / 1e3);
   const sets = ["updated_at = ?"];
@@ -6467,43 +6931,43 @@ function getExecutionByTxHash(txHash) {
 }
 function countExecutions(params) {
   const db3 = getDatabase2();
-  let query = "SELECT COUNT(*) as count FROM executions WHERE 1=1";
+  let query2 = "SELECT COUNT(*) as count FROM executions WHERE 1=1";
   const values = [];
   if (params?.chain) {
-    query += " AND chain = ?";
+    query2 += " AND chain = ?";
     values.push(params.chain);
   }
   if (params?.network) {
-    query += " AND network = ?";
+    query2 += " AND network = ?";
     values.push(params.network);
   }
   if (params?.status) {
-    query += " AND status = ?";
+    query2 += " AND status = ?";
     values.push(params.status);
   }
-  return db3.prepare(query).get(...values).count;
+  return db3.prepare(query2).get(...values).count;
 }
 function listExecutions2(params) {
   const db3 = getDatabase2();
   const limit = params?.limit ?? 50;
   const offset = params?.offset ?? 0;
-  let query = "SELECT * FROM executions WHERE 1=1";
+  let query2 = "SELECT * FROM executions WHERE 1=1";
   const values = [];
   if (params?.chain) {
-    query += " AND chain = ?";
+    query2 += " AND chain = ?";
     values.push(params.chain);
   }
   if (params?.network) {
-    query += " AND network = ?";
+    query2 += " AND network = ?";
     values.push(params.network);
   }
   if (params?.status) {
-    query += " AND status = ?";
+    query2 += " AND status = ?";
     values.push(params.status);
   }
-  query += " ORDER BY created_at DESC LIMIT ? OFFSET ?";
+  query2 += " ORDER BY created_at DESC LIMIT ? OFFSET ?";
   values.push(limit, offset);
-  return db3.prepare(query).all(...values);
+  return db3.prepare(query2).all(...values);
 }
 function listExecutionsWithMeta(params) {
   const limit = params?.limit ?? 50;
@@ -6517,7 +6981,7 @@ function listExecutionsWithMeta(params) {
 }
 function createRoute(params) {
   const db3 = getDatabase2();
-  const id = randomUUID3();
+  const id = randomUUID4();
   const now = Math.floor(Date.now() / 1e3);
   db3.prepare(`
     INSERT INTO routes (
@@ -6570,7 +7034,7 @@ function updateRoute(id, updates) {
 }
 function upsertSession2(params) {
   const db3 = getDatabase2();
-  const id = randomUUID3();
+  const id = randomUUID4();
   const now = Math.floor(Date.now() / 1e3);
   const existing = db3.prepare(
     "SELECT * FROM sessions WHERE chain = ? AND network = ? AND user_address = ? AND session_id = ?"
@@ -6622,42 +7086,42 @@ function upsertSession2(params) {
 }
 function countSessions(params) {
   const db3 = getDatabase2();
-  let query = "SELECT COUNT(*) as count FROM sessions WHERE 1=1";
+  let query2 = "SELECT COUNT(*) as count FROM sessions WHERE 1=1";
   const values = [];
   if (params?.chain) {
-    query += " AND chain = ?";
+    query2 += " AND chain = ?";
     values.push(params.chain);
   }
   if (params?.network) {
-    query += " AND network = ?";
+    query2 += " AND network = ?";
     values.push(params.network);
   }
   if (params?.status) {
-    query += " AND status = ?";
+    query2 += " AND status = ?";
     values.push(params.status);
   }
-  return db3.prepare(query).get(...values).count;
+  return db3.prepare(query2).get(...values).count;
 }
 function listSessions(params) {
   const db3 = getDatabase2();
   const limit = params?.limit ?? 50;
-  let query = "SELECT * FROM sessions WHERE 1=1";
+  let query2 = "SELECT * FROM sessions WHERE 1=1";
   const values = [];
   if (params?.chain) {
-    query += " AND chain = ?";
+    query2 += " AND chain = ?";
     values.push(params.chain);
   }
   if (params?.network) {
-    query += " AND network = ?";
+    query2 += " AND network = ?";
     values.push(params.network);
   }
   if (params?.status) {
-    query += " AND status = ?";
+    query2 += " AND status = ?";
     values.push(params.status);
   }
-  query += " ORDER BY created_at DESC LIMIT ?";
+  query2 += " ORDER BY created_at DESC LIMIT ?";
   values.push(limit);
-  return db3.prepare(query).all(...values);
+  return db3.prepare(query2).all(...values);
 }
 function listSessionsWithMeta(params) {
   const limit = params?.limit ?? 50;
@@ -6670,7 +7134,7 @@ function listSessionsWithMeta(params) {
 }
 function upsertAsset(params) {
   const db3 = getDatabase2();
-  const id = randomUUID3();
+  const id = randomUUID4();
   const now = Math.floor(Date.now() / 1e3);
   const existing = db3.prepare(
     "SELECT * FROM assets WHERE chain = ? AND network = ? AND wallet_address = ? AND (token_address = ? OR (token_address IS NULL AND ? IS NULL))"
@@ -6733,42 +7197,42 @@ function upsertAsset(params) {
 }
 function countAssets(params) {
   const db3 = getDatabase2();
-  let query = "SELECT COUNT(*) as count FROM assets WHERE 1=1";
+  let query2 = "SELECT COUNT(*) as count FROM assets WHERE 1=1";
   const values = [];
   if (params?.chain) {
-    query += " AND chain = ?";
+    query2 += " AND chain = ?";
     values.push(params.chain);
   }
   if (params?.network) {
-    query += " AND network = ?";
+    query2 += " AND network = ?";
     values.push(params.network);
   }
   if (params?.walletAddress) {
-    query += " AND wallet_address = ?";
+    query2 += " AND wallet_address = ?";
     values.push(params.walletAddress.toLowerCase());
   }
-  return db3.prepare(query).get(...values).count;
+  return db3.prepare(query2).get(...values).count;
 }
 function listAssets(params) {
   const db3 = getDatabase2();
   const limit = params?.limit ?? 100;
-  let query = "SELECT * FROM assets WHERE 1=1";
+  let query2 = "SELECT * FROM assets WHERE 1=1";
   const values = [];
   if (params?.chain) {
-    query += " AND chain = ?";
+    query2 += " AND chain = ?";
     values.push(params.chain);
   }
   if (params?.network) {
-    query += " AND network = ?";
+    query2 += " AND network = ?";
     values.push(params.network);
   }
   if (params?.walletAddress) {
-    query += " AND wallet_address = ?";
+    query2 += " AND wallet_address = ?";
     values.push(params.walletAddress.toLowerCase());
   }
-  query += " ORDER BY updated_at DESC LIMIT ?";
+  query2 += " ORDER BY updated_at DESC LIMIT ?";
   values.push(limit);
-  return db3.prepare(query).all(...values);
+  return db3.prepare(query2).all(...values);
 }
 function listAssetsWithMeta(params) {
   const limit = params?.limit ?? 100;
@@ -6781,7 +7245,7 @@ function listAssetsWithMeta(params) {
 }
 function registerWallet(params) {
   const db3 = getDatabase2();
-  const id = randomUUID3();
+  const id = randomUUID4();
   const now = Math.floor(Date.now() / 1e3);
   if (params.isPrimary) {
     db3.prepare(
@@ -6819,18 +7283,18 @@ function getPrimaryWallet(chain, network) {
 }
 function listWallets(params) {
   const db3 = getDatabase2();
-  let query = "SELECT * FROM wallets WHERE 1=1";
+  let query2 = "SELECT * FROM wallets WHERE 1=1";
   const values = [];
   if (params?.chain) {
-    query += " AND chain = ?";
+    query2 += " AND chain = ?";
     values.push(params.chain);
   }
   if (params?.network) {
-    query += " AND network = ?";
+    query2 += " AND network = ?";
     values.push(params.network);
   }
-  query += " ORDER BY is_primary DESC, created_at DESC";
-  return db3.prepare(query).all(...values);
+  query2 += " ORDER BY is_primary DESC, created_at DESC";
+  return db3.prepare(query2).all(...values);
 }
 function getLedgerSummary() {
   const db3 = getDatabase2();
@@ -6890,9 +7354,9 @@ function getProofBundle() {
     }))
   };
 }
-function createExecutionStep(params) {
+function createExecutionStep2(params) {
   const db3 = getDatabase2();
-  const id = randomUUID3();
+  const id = randomUUID4();
   const now = Math.floor(Date.now() / 1e3);
   db3.prepare(`
     INSERT INTO execution_steps (
@@ -6909,7 +7373,7 @@ function createExecutionStep(params) {
     created_at: now
   };
 }
-function updateExecutionStep(id, updates) {
+function updateExecutionStep2(id, updates) {
   const db3 = getDatabase2();
   const sets = [];
   const values = [];
@@ -6947,7 +7411,7 @@ function getExecutionSteps(executionId) {
     "SELECT * FROM execution_steps WHERE execution_id = ? ORDER BY step_index"
   ).all(executionId);
 }
-function getSummaryStats() {
+function getSummaryStats2() {
   const db3 = getDatabase2();
   const totalExec = db3.prepare("SELECT COUNT(*) as count FROM executions").get().count;
   const successExec = db3.prepare("SELECT COUNT(*) as count FROM executions WHERE status IN ('confirmed', 'finalized')").get().count;
@@ -7044,9 +7508,9 @@ function getRecentExecutions(limit = 20) {
     LIMIT ?
   `).all(limit);
 }
-function createIntent(params) {
+function createIntent2(params) {
   const db3 = getDatabase2();
-  const id = randomUUID3();
+  const id = randomUUID4();
   const now = Math.floor(Date.now() / 1e3);
   db3.prepare(`
     INSERT INTO intents (
@@ -7075,7 +7539,7 @@ function createIntent(params) {
     metadata_json: params.metadataJson
   };
 }
-function updateIntentStatus(id, updates) {
+function updateIntentStatus2(id, updates) {
   const db3 = getDatabase2();
   const sets = [];
   const values = [];
@@ -7131,11 +7595,11 @@ function updateIntentStatus(id, updates) {
   values.push(id);
   db3.prepare(`UPDATE intents SET ${sets.join(", ")} WHERE id = ?`).run(...values);
 }
-function getIntent(id) {
+function getIntent2(id) {
   const db3 = getDatabase2();
   return db3.prepare("SELECT * FROM intents WHERE id = ?").get(id);
 }
-function getRecentIntents(limit = 50) {
+function getRecentIntents2(limit = 50) {
   const db3 = getDatabase2();
   return db3.prepare(`
     SELECT * FROM intents
@@ -7143,7 +7607,7 @@ function getRecentIntents(limit = 50) {
     LIMIT ?
   `).all(limit);
 }
-function getIntentStatsSummary() {
+function getIntentStatsSummary2() {
   const db3 = getDatabase2();
   const totalIntents = db3.prepare("SELECT COUNT(*) as count FROM intents").get().count;
   const confirmedIntents = db3.prepare("SELECT COUNT(*) as count FROM intents WHERE status = 'confirmed'").get().count;
@@ -7179,7 +7643,7 @@ function getIntentStatsSummary() {
     ORDER BY count DESC
     LIMIT 10
   `).all();
-  const recentIntents = getRecentIntents(10);
+  const recentIntents = getRecentIntents2(10);
   const attemptedIntents = confirmedIntents + failedIntents;
   const intentSuccessRate = attemptedIntents > 0 ? confirmedIntents / attemptedIntents * 100 : 0;
   return {
@@ -7194,7 +7658,7 @@ function getIntentStatsSummary() {
     recentIntents
   };
 }
-function linkExecutionToIntent(executionId, intentId) {
+function linkExecutionToIntent2(executionId, intentId) {
   const db3 = getDatabase2();
   try {
     db3.exec("ALTER TABLE executions ADD COLUMN intent_id TEXT");
@@ -7202,7 +7666,7 @@ function linkExecutionToIntent(executionId, intentId) {
   }
   db3.prepare("UPDATE executions SET intent_id = ? WHERE id = ?").run(intentId, executionId);
 }
-function getExecutionsForIntent(intentId) {
+function getExecutionsForIntent2(intentId) {
   const db3 = getDatabase2();
   try {
     return db3.prepare(`
@@ -7214,9 +7678,9 @@ function getExecutionsForIntent(intentId) {
     return [];
   }
 }
-function getSummaryStatsWithIntents() {
-  const baseStats = getSummaryStats();
-  const intentStats = getIntentStatsSummary();
+function getSummaryStatsWithIntents2() {
+  const baseStats = getSummaryStats2();
+  const intentStats = getIntentStatsSummary2();
   return {
     ...baseStats,
     totalIntents: intentStats.totalIntents,
@@ -7413,6 +7877,101 @@ function getWaitlistCount() {
   const row = db3.prepare("SELECT COUNT(*) as count FROM waitlist").get();
   return row?.count || 0;
 }
+async function createIntentAsync(params) {
+  if (dbType === "postgres") {
+    const pgDb = await Promise.resolve().then(() => (init_db_pg(), db_pg_exports));
+    return pgDb.createIntent(params);
+  }
+  return Promise.resolve(createIntent2(params));
+}
+async function updateIntentStatusAsync(id, updates) {
+  if (dbType === "postgres") {
+    const pgDb = await Promise.resolve().then(() => (init_db_pg(), db_pg_exports));
+    return pgDb.updateIntentStatus(id, updates);
+  }
+  updateIntentStatus2(id, updates);
+  return Promise.resolve();
+}
+async function createExecutionAsync(params) {
+  if (dbType === "postgres") {
+    const pgDb = await Promise.resolve().then(() => (init_db_pg(), db_pg_exports));
+    return pgDb.createExecution(params);
+  }
+  return Promise.resolve(createExecution3(params));
+}
+async function updateExecutionAsync(id, updates) {
+  if (dbType === "postgres") {
+    const pgDb = await Promise.resolve().then(() => (init_db_pg(), db_pg_exports));
+    return pgDb.updateExecution(id, updates);
+  }
+  updateExecution3(id, updates);
+  return Promise.resolve();
+}
+async function getIntentAsync(id) {
+  if (dbType === "postgres") {
+    const pgDb = await Promise.resolve().then(() => (init_db_pg(), db_pg_exports));
+    return pgDb.getIntent(id);
+  }
+  return Promise.resolve(getIntent2(id));
+}
+async function getRecentIntentsAsync(limit = 50) {
+  if (dbType === "postgres") {
+    const pgDb = await Promise.resolve().then(() => (init_db_pg(), db_pg_exports));
+    return pgDb.getRecentIntents(limit);
+  }
+  return Promise.resolve(getRecentIntents2(limit));
+}
+async function getSummaryStatsAsync() {
+  if (dbType === "postgres") {
+    const pgDb = await Promise.resolve().then(() => (init_db_pg(), db_pg_exports));
+    return pgDb.getSummaryStats();
+  }
+  return Promise.resolve(getSummaryStats2());
+}
+async function getIntentStatsSummaryAsync() {
+  if (dbType === "postgres") {
+    const pgDb = await Promise.resolve().then(() => (init_db_pg(), db_pg_exports));
+    return pgDb.getIntentStatsSummary();
+  }
+  return Promise.resolve(getIntentStatsSummary2());
+}
+async function getExecutionsForIntentAsync(intentId) {
+  if (dbType === "postgres") {
+    const pgDb = await Promise.resolve().then(() => (init_db_pg(), db_pg_exports));
+    return pgDb.getExecutionsForIntent(intentId);
+  }
+  return Promise.resolve(getExecutionsForIntent2(intentId));
+}
+async function linkExecutionToIntentAsync(executionId, intentId) {
+  if (dbType === "postgres") {
+    const pgDb = await Promise.resolve().then(() => (init_db_pg(), db_pg_exports));
+    return pgDb.linkExecutionToIntent(executionId, intentId);
+  }
+  linkExecutionToIntent2(executionId, intentId);
+  return Promise.resolve();
+}
+async function createExecutionStepAsync(params) {
+  if (dbType === "postgres") {
+    const pgDb = await Promise.resolve().then(() => (init_db_pg(), db_pg_exports));
+    return pgDb.createExecutionStep(params);
+  }
+  return Promise.resolve(createExecutionStep2(params));
+}
+async function updateExecutionStepAsync(id, updates) {
+  if (dbType === "postgres") {
+    const pgDb = await Promise.resolve().then(() => (init_db_pg(), db_pg_exports));
+    return pgDb.updateExecutionStep(id, updates);
+  }
+  updateExecutionStep2(id, updates);
+  return Promise.resolve();
+}
+async function getSummaryStatsWithIntentsAsync() {
+  if (dbType === "postgres") {
+    const pgDb = await Promise.resolve().then(() => (init_db_pg(), db_pg_exports));
+    return pgDb.getSummaryStatsWithIntents();
+  }
+  return Promise.resolve(getSummaryStatsWithIntents2());
+}
 var __filename4, __dirname4, isVercel, defaultPath, DB_PATH2, db2, dbType, getStatsSummary, getIntentStats;
 var init_db2 = __esm({
   "agent/execution-ledger/db.ts"() {
@@ -7427,8 +7986,8 @@ var init_db2 = __esm({
     db2 = null;
     dbType = detectDatabaseType();
     logDatabaseInfo();
-    getStatsSummary = getSummaryStats;
-    getIntentStats = getIntentStatsSummary;
+    getStatsSummary = getSummaryStats2;
+    getIntentStats = getIntentStatsSummary2;
   }
 });
 
@@ -7437,7 +7996,7 @@ var ledger_exports = {};
 __export(ledger_exports, {
   buildExplorerUrl: () => buildExplorerUrl,
   closePosition: () => closePosition2,
-  createExecutionStep: () => createExecutionStep2,
+  createExecutionStep: () => createExecutionStep3,
   createPosition: () => createPosition2,
   getExecutionSteps: () => getExecutionSteps2,
   getIndexerState: () => getIndexerState2,
@@ -7451,7 +8010,7 @@ __export(ledger_exports, {
   recordExecution: () => recordExecution,
   recordExecutionWithResult: () => recordExecutionWithResult,
   registerWallet: () => registerWallet2,
-  updateExecutionStep: () => updateExecutionStep2,
+  updateExecutionStep: () => updateExecutionStep3,
   updateLedgerExecution: () => updateLedgerExecution,
   updatePosition: () => updatePosition2,
   upsertIndexerState: () => upsertIndexerState2
@@ -7575,11 +8134,11 @@ async function upsertIndexerState2(chain, network, contractAddress, lastIndexedB
   const db3 = await getLedgerDb();
   db3.upsertIndexerState(chain, network, contractAddress, lastIndexedBlock);
 }
-async function createExecutionStep2(params) {
+async function createExecutionStep3(params) {
   const db3 = await getLedgerDb();
   return db3.createExecutionStep(params);
 }
-async function updateExecutionStep2(id, updates) {
+async function updateExecutionStep3(id, updates) {
   const db3 = await getLedgerDb();
   db3.updateExecutionStep(id, updates);
 }
@@ -8560,13 +9119,13 @@ function estimateIntentUsd(parsed) {
 }
 async function runIntent(intentText, options = {}) {
   const {
-    createIntent: createIntent2,
-    updateIntentStatus: updateIntentStatus2,
-    createExecution: createExecution3,
-    updateExecution: updateExecution3,
-    createExecutionStep: createExecutionStep3,
-    updateExecutionStep: updateExecutionStep3,
-    linkExecutionToIntent: linkExecutionToIntent2
+    createIntentAsync: createIntent3,
+    updateIntentStatusAsync: updateIntentStatus3,
+    createExecutionAsync: createExecution4,
+    updateExecutionAsync: updateExecution4,
+    createExecutionStepAsync: createExecutionStep4,
+    updateExecutionStepAsync: updateExecutionStep4,
+    linkExecutionToIntentAsync: linkExecutionToIntent3
   } = await Promise.resolve().then(() => (init_db2(), db_exports2));
   const now = Math.floor(Date.now() / 1e3);
   const parsed = parseIntent(intentText);
@@ -8578,7 +9137,7 @@ async function runIntent(intentText, options = {}) {
     parsed,
     ...extra
   });
-  const intent = createIntent2({
+  const intent = await createIntent3({
     intentText,
     intentKind: parsed.kind,
     requestedVenue: parsed.venue,
@@ -8586,14 +9145,14 @@ async function runIntent(intentText, options = {}) {
     metadataJson: buildMetadata({ options: { ...options, metadata: void 0 } })
   });
   try {
-    updateIntentStatus2(intent.id, {
+    await updateIntentStatus3(intent.id, {
       status: "planned",
       plannedAt: now,
       metadataJson: buildMetadata({ options: { ...options, metadata: void 0 } })
     });
     const route = routeIntent(parsed, options.chain);
     if ("error" in route) {
-      updateIntentStatus2(intent.id, {
+      await updateIntentStatus3(intent.id, {
         status: "failed",
         failureStage: route.error.stage,
         errorCode: route.error.code,
@@ -8606,7 +9165,7 @@ async function runIntent(intentText, options = {}) {
         error: route.error
       };
     }
-    updateIntentStatus2(intent.id, {
+    await updateIntentStatus3(intent.id, {
       status: "routed",
       requestedChain: route.chain,
       requestedVenue: route.venue,
@@ -8616,12 +9175,12 @@ async function runIntent(intentText, options = {}) {
       const bridgeResult = await handleBridgeIntent(intent.id, parsed, route);
       return bridgeResult;
     }
-    updateIntentStatus2(intent.id, {
+    await updateIntentStatus3(intent.id, {
       status: "executing",
       executedAt: now
     });
     if (options.planOnly || options.dryRun) {
-      updateIntentStatus2(intent.id, {
+      await updateIntentStatus3(intent.id, {
         status: "planned",
         plannedAt: now,
         metadataJson: buildMetadata({
@@ -8658,7 +9217,7 @@ async function runIntent(intentText, options = {}) {
     const execResult = await executeOnChain(intent.id, parsed, route);
     return execResult;
   } catch (error) {
-    updateIntentStatus2(intent.id, {
+    await updateIntentStatus3(intent.id, {
       status: "failed",
       failureStage: "execute",
       errorCode: "EXECUTION_ERROR",
@@ -8678,11 +9237,11 @@ async function runIntent(intentText, options = {}) {
 }
 async function executeIntentById(intentId) {
   const {
-    getIntent: getIntent2,
-    updateIntentStatus: updateIntentStatus2
+    getIntent: getIntent3,
+    updateIntentStatus: updateIntentStatus3
   } = await Promise.resolve().then(() => (init_db2(), db_exports2));
   const now = Math.floor(Date.now() / 1e3);
-  const intent = getIntent2(intentId);
+  const intent = getIntent3(intentId);
   if (!intent) {
     return {
       ok: false,
@@ -8723,7 +9282,7 @@ async function executeIntentById(intentId) {
         }
       };
     }
-    updateIntentStatus2(intentId, {
+    await updateIntentStatus3(intentId, {
       status: "executing",
       executedAt: now
     });
@@ -8734,7 +9293,7 @@ async function executeIntentById(intentId) {
     const execResult = await executeOnChain(intentId, parsed, route);
     return execResult;
   } catch (error) {
-    updateIntentStatus2(intentId, {
+    await updateIntentStatus3(intentId, {
       status: "failed",
       failureStage: "execute",
       errorCode: "EXECUTION_ERROR",
@@ -8754,10 +9313,10 @@ async function executeIntentById(intentId) {
 }
 async function handleBridgeIntent(intentId, parsed, route) {
   const {
-    updateIntentStatus: updateIntentStatus2,
-    createExecution: createExecution3,
-    updateExecution: updateExecution3,
-    linkExecutionToIntent: linkExecutionToIntent2
+    updateIntentStatus: updateIntentStatus3,
+    createExecution: createExecution4,
+    updateExecution: updateExecution4,
+    linkExecutionToIntent: linkExecutionToIntent3
   } = await Promise.resolve().then(() => (init_db2(), db_exports2));
   const { buildExplorerUrl: buildExplorerUrl3 } = await Promise.resolve().then(() => (init_ledger(), ledger_exports));
   const { getLiFiQuote: getLiFiQuote2 } = await Promise.resolve().then(() => (init_lifi(), lifi_exports));
@@ -8802,7 +9361,7 @@ async function handleBridgeIntent(intentId, parsed, route) {
     }
   }
   if (sourceProofResult.ok) {
-    updateIntentStatus2(intentId, {
+    await updateIntentStatus3(intentId, {
       status: "confirmed",
       confirmedAt: Math.floor(Date.now() / 1e3),
       metadataJson: JSON.stringify({
@@ -8842,10 +9401,10 @@ async function handleBridgeIntent(intentId, parsed, route) {
 }
 async function executeOnChain(intentId, parsed, route) {
   const {
-    updateIntentStatus: updateIntentStatus2,
-    createExecution: createExecution3,
-    updateExecution: updateExecution3,
-    linkExecutionToIntent: linkExecutionToIntent2
+    updateIntentStatus: updateIntentStatus3,
+    createExecution: createExecution4,
+    updateExecution: updateExecution4,
+    linkExecutionToIntent: linkExecutionToIntent3
   } = await Promise.resolve().then(() => (init_db2(), db_exports2));
   const now = Math.floor(Date.now() / 1e3);
   if (route.executionType === "offchain") {
@@ -8865,13 +9424,13 @@ async function executeOnChain(intentId, parsed, route) {
 }
 async function executeOffchain(intentId, parsed, route) {
   const {
-    updateIntentStatus: updateIntentStatus2,
-    createExecution: createExecution3,
-    linkExecutionToIntent: linkExecutionToIntent2
+    updateIntentStatus: updateIntentStatus3,
+    createExecution: createExecution4,
+    linkExecutionToIntent: linkExecutionToIntent3
   } = await Promise.resolve().then(() => (init_db2(), db_exports2));
   const now = Math.floor(Date.now() / 1e3);
   const analyticsType = parsed.rawParams?.analyticsType || "general";
-  const execution = createExecution3({
+  const execution = await createExecution4({
     chain: route.chain,
     network: route.network,
     kind: "proof",
@@ -8883,8 +9442,8 @@ async function executeOffchain(intentId, parsed, route) {
     usdEstimate: 0,
     usdEstimateIsEstimate: true
   });
-  linkExecutionToIntent2(execution.id, intentId);
-  updateIntentStatus2(intentId, {
+  await linkExecutionToIntent3(execution.id, intentId);
+  await updateIntentStatus3(intentId, {
     status: "confirmed",
     confirmedAt: now,
     metadataJson: JSON.stringify({
@@ -8912,16 +9471,16 @@ async function executeOffchain(intentId, parsed, route) {
 }
 async function executePerpEthereum(intentId, parsed, route) {
   const {
-    getIntent: getIntent2,
-    updateIntentStatus: updateIntentStatus2,
-    createExecution: createExecution3,
-    updateExecution: updateExecution3,
-    linkExecutionToIntent: linkExecutionToIntent2
+    getIntent: getIntent3,
+    updateIntentStatus: updateIntentStatus3,
+    createExecution: createExecution4,
+    updateExecution: updateExecution4,
+    linkExecutionToIntent: linkExecutionToIntent3
   } = await Promise.resolve().then(() => (init_db2(), db_exports2));
   const { buildExplorerUrl: buildExplorerUrl3 } = await Promise.resolve().then(() => (init_ledger(), ledger_exports));
   const now = Math.floor(Date.now() / 1e3);
   const startTime = Date.now();
-  const intent = getIntent2(intentId);
+  const intent = getIntent3(intentId);
   const existingMetadataJson = intent?.metadata_json;
   const {
     RELAYER_PRIVATE_KEY: RELAYER_PRIVATE_KEY2,
@@ -8932,7 +9491,7 @@ async function executePerpEthereum(intentId, parsed, route) {
     ERC20_PULL_ADAPTER_ADDRESS: ERC20_PULL_ADAPTER_ADDRESS2
   } = await Promise.resolve().then(() => (init_config(), config_exports));
   if (!RELAYER_PRIVATE_KEY2 || !ETH_TESTNET_RPC_URL2) {
-    updateIntentStatus2(intentId, {
+    await updateIntentStatus3(intentId, {
       status: "failed",
       failureStage: "execute",
       errorCode: "CONFIG_MISSING",
@@ -8950,7 +9509,7 @@ async function executePerpEthereum(intentId, parsed, route) {
     };
   }
   if (!DEMO_PERP_ADAPTER_ADDRESS2 || !DEMO_USDC_ADDRESS2 || !EXECUTION_ROUTER_ADDRESS2) {
-    updateIntentStatus2(intentId, {
+    await updateIntentStatus3(intentId, {
       status: "failed",
       failureStage: "execute",
       errorCode: "PERP_CONFIG_MISSING",
@@ -8978,7 +9537,7 @@ async function executePerpEthereum(intentId, parsed, route) {
     const account = privateKeyToAccount3(RELAYER_PRIVATE_KEY2);
     const publicClient = createFailoverPublicClient2();
     const walletClient = createFailoverWalletClient2(account);
-    const execution = createExecution3({
+    const execution = await createExecution4({
       chain: "ethereum",
       network: "sepolia",
       kind: "perp",
@@ -8991,7 +9550,7 @@ async function executePerpEthereum(intentId, parsed, route) {
       usdEstimate: estimateIntentUsd(parsed),
       usdEstimateIsEstimate: true
     });
-    linkExecutionToIntent2(execution.id, intentId);
+    await linkExecutionToIntent3(execution.id, intentId);
     const marketMap = {
       "BTC": 0,
       "ETH": 1,
@@ -9035,12 +9594,12 @@ async function executePerpEthereum(intentId, parsed, route) {
       args: [account.address]
     });
     if (balance < marginAmount) {
-      updateExecution3(execution.id, {
+      await updateExecution4(execution.id, {
         status: "failed",
         errorCode: "INSUFFICIENT_BALANCE",
         errorMessage: `Insufficient DEMO_USDC balance: have ${balance}, need ${marginAmount}`
       });
-      updateIntentStatus2(intentId, {
+      await updateIntentStatus3(intentId, {
         status: "failed",
         failureStage: "execute",
         errorCode: "INSUFFICIENT_BALANCE",
@@ -9090,21 +9649,21 @@ async function executePerpEthereum(intentId, parsed, route) {
     const latencyMs = Date.now() - startTime;
     const explorerUrl = buildExplorerUrl3("ethereum", "sepolia", txHash);
     if (receipt.status === "success") {
-      const { createPosition: createPosition3, createExecutionStep: createExecutionStep3, updateExecutionStep: updateExecutionStep3 } = await Promise.resolve().then(() => (init_db2(), db_exports2));
-      const routeStep = createExecutionStep3({
+      const { createPosition: createPosition3, createExecutionStep: createExecutionStep4, updateExecutionStep: updateExecutionStep4 } = await Promise.resolve().then(() => (init_db2(), db_exports2));
+      const routeStep = await createExecutionStep4({
         executionId: execution.id,
         stepIndex: 0,
         action: "route",
         stage: "route"
       });
-      updateExecutionStep3(routeStep.id, { status: "confirmed" });
-      const executeStep = createExecutionStep3({
+      await updateExecutionStep4(routeStep.id, { status: "confirmed" });
+      const executeStep = await createExecutionStep4({
         executionId: execution.id,
         stepIndex: 1,
         action: "open_position",
         stage: "execute"
       });
-      updateExecutionStep3(executeStep.id, {
+      await updateExecutionStep4(executeStep.id, {
         status: "confirmed",
         txHash,
         explorerUrl
@@ -9141,7 +9700,7 @@ async function executePerpEthereum(intentId, parsed, route) {
         intent_id: intentId,
         execution_id: execution.id
       });
-      updateExecution3(execution.id, {
+      await updateExecution4(execution.id, {
         status: "confirmed",
         txHash,
         explorerUrl,
@@ -9149,7 +9708,7 @@ async function executePerpEthereum(intentId, parsed, route) {
         gasUsed: receipt.gasUsed.toString(),
         latencyMs
       });
-      updateIntentStatus2(intentId, {
+      await updateIntentStatus3(intentId, {
         status: "confirmed",
         confirmedAt: Math.floor(Date.now() / 1e3),
         metadataJson: mergeMetadata(existingMetadataJson, {
@@ -9184,14 +9743,14 @@ async function executePerpEthereum(intentId, parsed, route) {
         }
       };
     } else {
-      updateExecution3(execution.id, {
+      await updateExecution4(execution.id, {
         status: "failed",
         txHash,
         explorerUrl,
         errorCode: "TX_REVERTED",
         errorMessage: "Perp position transaction reverted"
       });
-      updateIntentStatus2(intentId, {
+      await updateIntentStatus3(intentId, {
         status: "failed",
         failureStage: "confirm",
         errorCode: "TX_REVERTED",
@@ -9212,7 +9771,7 @@ async function executePerpEthereum(intentId, parsed, route) {
       };
     }
   } catch (error) {
-    updateIntentStatus2(intentId, {
+    await updateIntentStatus3(intentId, {
       status: "failed",
       failureStage: "execute",
       errorCode: "PERP_EXECUTION_ERROR",
@@ -9232,14 +9791,14 @@ async function executePerpEthereum(intentId, parsed, route) {
 }
 async function executeProofOnly(intentId, parsed, route) {
   const {
-    getIntent: getIntent2,
-    updateIntentStatus: updateIntentStatus2,
-    createExecution: createExecution3,
-    updateExecution: updateExecution3,
-    linkExecutionToIntent: linkExecutionToIntent2
+    getIntent: getIntent3,
+    updateIntentStatus: updateIntentStatus3,
+    createExecution: createExecution4,
+    updateExecution: updateExecution4,
+    linkExecutionToIntent: linkExecutionToIntent3
   } = await Promise.resolve().then(() => (init_db2(), db_exports2));
   const { buildExplorerUrl: buildExplorerUrl3 } = await Promise.resolve().then(() => (init_ledger(), ledger_exports));
-  const intent = getIntent2(intentId);
+  const intent = getIntent3(intentId);
   const existingMetadataJson = intent?.metadata_json;
   const now = Math.floor(Date.now() / 1e3);
   const startTime = Date.now();
@@ -9251,7 +9810,7 @@ async function executeProofOnly(intentId, parsed, route) {
     ETH_TESTNET_RPC_URL: ETH_TESTNET_RPC_URL2
   } = await Promise.resolve().then(() => (init_config(), config_exports));
   if (!RELAYER_PRIVATE_KEY2 || !ETH_TESTNET_RPC_URL2) {
-    updateIntentStatus2(intentId, {
+    await updateIntentStatus3(intentId, {
       status: "failed",
       failureStage: "execute",
       errorCode: "CONFIG_MISSING",
@@ -9282,7 +9841,7 @@ async function executeProofOnly(intentId, parsed, route) {
       chain: sepolia5,
       transport: http5(ETH_TESTNET_RPC_URL2)
     });
-    const execution = createExecution3({
+    const execution = await createExecution4({
       chain: "ethereum",
       network: "sepolia",
       kind: "proof",
@@ -9294,7 +9853,7 @@ async function executeProofOnly(intentId, parsed, route) {
       usdEstimate: estimateIntentUsd(parsed),
       usdEstimateIsEstimate: true
     });
-    linkExecutionToIntent2(execution.id, intentId);
+    await linkExecutionToIntent3(execution.id, intentId);
     const proofData = {
       type: "BLOSSOM_INTENT_PROOF",
       intentId: intentId.slice(0, 8),
@@ -9317,7 +9876,7 @@ async function executeProofOnly(intentId, parsed, route) {
     const latencyMs = Date.now() - startTime;
     const explorerUrl = buildExplorerUrl3("ethereum", "sepolia", txHash);
     if (receipt.status === "success") {
-      updateExecution3(execution.id, {
+      await updateExecution4(execution.id, {
         status: "confirmed",
         txHash,
         explorerUrl,
@@ -9325,7 +9884,7 @@ async function executeProofOnly(intentId, parsed, route) {
         gasUsed: receipt.gasUsed.toString(),
         latencyMs
       });
-      updateIntentStatus2(intentId, {
+      await updateIntentStatus3(intentId, {
         status: "confirmed",
         confirmedAt: Math.floor(Date.now() / 1e3),
         metadataJson: mergeMetadata(existingMetadataJson, {
@@ -9351,14 +9910,14 @@ async function executeProofOnly(intentId, parsed, route) {
         }
       };
     } else {
-      updateExecution3(execution.id, {
+      await updateExecution4(execution.id, {
         status: "failed",
         txHash,
         explorerUrl,
         errorCode: "TX_REVERTED",
         errorMessage: "Proof transaction reverted"
       });
-      updateIntentStatus2(intentId, {
+      await updateIntentStatus3(intentId, {
         status: "failed",
         failureStage: "confirm",
         errorCode: "TX_REVERTED",
@@ -9379,7 +9938,7 @@ async function executeProofOnly(intentId, parsed, route) {
       };
     }
   } catch (error) {
-    updateIntentStatus2(intentId, {
+    await updateIntentStatus3(intentId, {
       status: "failed",
       failureStage: "execute",
       errorCode: "PROOF_TX_FAILED",
@@ -9399,20 +9958,20 @@ async function executeProofOnly(intentId, parsed, route) {
 }
 async function executeProofOnlySolana(intentId, parsed, route) {
   const {
-    getIntent: getIntent2,
-    updateIntentStatus: updateIntentStatus2,
-    createExecution: createExecution3,
-    updateExecution: updateExecution3,
-    linkExecutionToIntent: linkExecutionToIntent2
+    getIntent: getIntent3,
+    updateIntentStatus: updateIntentStatus3,
+    createExecution: createExecution4,
+    updateExecution: updateExecution4,
+    linkExecutionToIntent: linkExecutionToIntent3
   } = await Promise.resolve().then(() => (init_db2(), db_exports2));
   const { buildExplorerUrl: buildExplorerUrl3 } = await Promise.resolve().then(() => (init_ledger(), ledger_exports));
-  const intent = getIntent2(intentId);
+  const intent = getIntent3(intentId);
   const existingMetadataJson = intent?.metadata_json;
   const now = Math.floor(Date.now() / 1e3);
   const startTime = Date.now();
   const solanaPrivateKey = process.env.SOLANA_PRIVATE_KEY;
   if (!solanaPrivateKey) {
-    updateIntentStatus2(intentId, {
+    await updateIntentStatus3(intentId, {
       status: "failed",
       failureStage: "execute",
       errorCode: "CONFIG_MISSING",
@@ -9488,7 +10047,7 @@ async function executeProofOnlySolana(intentId, parsed, route) {
     const privateKey = secretKey.slice(0, 32);
     const publicKey = secretKey.slice(32, 64);
     const senderPubkey = base58Encode2(publicKey);
-    const execution = createExecution3({
+    const execution = await createExecution4({
       chain: "solana",
       network: "devnet",
       kind: "proof",
@@ -9500,7 +10059,7 @@ async function executeProofOnlySolana(intentId, parsed, route) {
       usdEstimate: estimateIntentUsd(parsed),
       usdEstimateIsEstimate: true
     });
-    linkExecutionToIntent2(execution.id, intentId);
+    await linkExecutionToIntent3(execution.id, intentId);
     const client = new SolanaClient2();
     const DEVNET_RPC = "https://api.devnet.solana.com";
     const LAMPORTS_PER_SOL = 1e9;
@@ -9546,14 +10105,14 @@ async function executeProofOnlySolana(intentId, parsed, route) {
     const result = await client.confirmTransaction(txSignature, "confirmed", 6e4);
     const latencyMs = Date.now() - startTime;
     const explorerUrl = buildExplorerUrl3("solana", "devnet", txSignature);
-    updateExecution3(execution.id, {
+    await updateExecution4(execution.id, {
       status: "confirmed",
       txHash: txSignature,
       explorerUrl,
       blockNumber: result.slot,
       latencyMs
     });
-    updateIntentStatus2(intentId, {
+    await updateIntentStatus3(intentId, {
       status: "confirmed",
       confirmedAt: Math.floor(Date.now() / 1e3),
       metadataJson: mergeMetadata(existingMetadataJson, {
@@ -9579,7 +10138,7 @@ async function executeProofOnlySolana(intentId, parsed, route) {
       }
     };
   } catch (error) {
-    updateIntentStatus2(intentId, {
+    await updateIntentStatus3(intentId, {
       status: "failed",
       failureStage: "execute",
       errorCode: "SOLANA_PROOF_TX_FAILED",
@@ -9599,13 +10158,13 @@ async function executeProofOnlySolana(intentId, parsed, route) {
 }
 async function executeEthereum(intentId, parsed, route) {
   const {
-    getIntent: getIntent2,
-    updateIntentStatus: updateIntentStatus2,
-    createExecution: createExecution3,
-    updateExecution: updateExecution3,
-    linkExecutionToIntent: linkExecutionToIntent2
+    getIntent: getIntent3,
+    updateIntentStatus: updateIntentStatus3,
+    createExecution: createExecution4,
+    updateExecution: updateExecution4,
+    linkExecutionToIntent: linkExecutionToIntent3
   } = await Promise.resolve().then(() => (init_db2(), db_exports2));
-  const intent = getIntent2(intentId);
+  const intent = getIntent3(intentId);
   const existingMetadataJson = intent?.metadata_json;
   const now = Math.floor(Date.now() / 1e3);
   const {
@@ -9613,7 +10172,7 @@ async function executeEthereum(intentId, parsed, route) {
     ETH_TESTNET_RPC_URL: ETH_TESTNET_RPC_URL2
   } = await Promise.resolve().then(() => (init_config(), config_exports));
   if (!RELAYER_PRIVATE_KEY2 || !ETH_TESTNET_RPC_URL2) {
-    updateIntentStatus2(intentId, {
+    await updateIntentStatus3(intentId, {
       status: "failed",
       failureStage: "execute",
       errorCode: "CONFIG_MISSING",
@@ -9631,7 +10190,7 @@ async function executeEthereum(intentId, parsed, route) {
     };
   }
   const mappedKind = parsed.kind === "unknown" ? "proof" : parsed.kind;
-  const execution = createExecution3({
+  const execution = await createExecution4({
     chain: "ethereum",
     network: "sepolia",
     kind: mappedKind,
@@ -9645,7 +10204,7 @@ async function executeEthereum(intentId, parsed, route) {
     usdEstimate: estimateIntentUsd(parsed),
     usdEstimateIsEstimate: true
   });
-  linkExecutionToIntent2(execution.id, intentId);
+  await linkExecutionToIntent3(execution.id, intentId);
   try {
     const { createPublicClient: createPublicClient3, createWalletClient: createWalletClient4, http: http5 } = await import("viem");
     const { sepolia: sepolia5 } = await import("viem/chains");
@@ -9671,7 +10230,7 @@ async function executeEthereum(intentId, parsed, route) {
     });
     const explorerUrl = `https://sepolia.etherscan.io/tx/${txHash}`;
     const latencyMs = Date.now() - now * 1e3;
-    updateExecution3(execution.id, {
+    await updateExecution4(execution.id, {
       status: receipt.status === "success" ? "confirmed" : "failed",
       txHash,
       explorerUrl,
@@ -9680,7 +10239,7 @@ async function executeEthereum(intentId, parsed, route) {
       latencyMs
     });
     if (receipt.status === "success") {
-      updateIntentStatus2(intentId, {
+      await updateIntentStatus3(intentId, {
         status: "confirmed",
         confirmedAt: Math.floor(Date.now() / 1e3),
         metadataJson: mergeMetadata(existingMetadataJson, {
@@ -9704,7 +10263,7 @@ async function executeEthereum(intentId, parsed, route) {
         }
       };
     } else {
-      updateIntentStatus2(intentId, {
+      await updateIntentStatus3(intentId, {
         status: "failed",
         failureStage: "confirm",
         errorCode: "TX_REVERTED",
@@ -9725,12 +10284,12 @@ async function executeEthereum(intentId, parsed, route) {
       };
     }
   } catch (error) {
-    updateExecution3(execution.id, {
+    await updateExecution4(execution.id, {
       status: "failed",
       errorCode: "EXECUTION_ERROR",
       errorMessage: error.message?.slice(0, 200)
     });
-    updateIntentStatus2(intentId, {
+    await updateIntentStatus3(intentId, {
       status: "failed",
       failureStage: "execute",
       errorCode: "EXECUTION_ERROR",
@@ -9751,18 +10310,18 @@ async function executeEthereum(intentId, parsed, route) {
 }
 async function executeSolana(intentId, parsed, route) {
   const {
-    getIntent: getIntent2,
-    updateIntentStatus: updateIntentStatus2,
-    createExecution: createExecution3,
-    updateExecution: updateExecution3,
-    linkExecutionToIntent: linkExecutionToIntent2
+    getIntent: getIntent3,
+    updateIntentStatus: updateIntentStatus3,
+    createExecution: createExecution4,
+    updateExecution: updateExecution4,
+    linkExecutionToIntent: linkExecutionToIntent3
   } = await Promise.resolve().then(() => (init_db2(), db_exports2));
-  const existingIntent = getIntent2(intentId);
+  const existingIntent = getIntent3(intentId);
   const existingMetadataJson = existingIntent?.metadata_json;
   const now = Math.floor(Date.now() / 1e3);
   const solanaPrivateKey = process.env.SOLANA_PRIVATE_KEY;
   if (!solanaPrivateKey) {
-    updateIntentStatus2(intentId, {
+    await updateIntentStatus3(intentId, {
       status: "failed",
       failureStage: "execute",
       errorCode: "CONFIG_MISSING",
@@ -9780,7 +10339,7 @@ async function executeSolana(intentId, parsed, route) {
     };
   }
   const solanaKind = parsed.kind === "unknown" ? "proof" : parsed.kind;
-  const execution = createExecution3({
+  const execution = await createExecution4({
     chain: "solana",
     network: "devnet",
     kind: solanaKind,
@@ -9793,12 +10352,12 @@ async function executeSolana(intentId, parsed, route) {
     usdEstimate: estimateIntentUsd(parsed),
     usdEstimateIsEstimate: true
   });
-  linkExecutionToIntent2(execution.id, intentId);
-  updateExecution3(execution.id, {
+  await linkExecutionToIntent3(execution.id, intentId);
+  await updateExecution4(execution.id, {
     status: "confirmed",
     latencyMs: 100
   });
-  updateIntentStatus2(intentId, {
+  await updateIntentStatus3(intentId, {
     status: "confirmed",
     confirmedAt: Math.floor(Date.now() / 1e3),
     metadataJson: mergeMetadata(existingMetadataJson, {
@@ -9832,14 +10391,14 @@ async function runIntentBatch(intents, options = {}) {
   return results;
 }
 async function recordFailedIntent(params) {
-  const { createIntent: createIntent2, updateIntentStatus: updateIntentStatus2 } = await Promise.resolve().then(() => (init_db2(), db_exports2));
+  const { createIntent: createIntent3, updateIntentStatus: updateIntentStatus3 } = await Promise.resolve().then(() => (init_db2(), db_exports2));
   const now = Math.floor(Date.now() / 1e3);
-  const intent = createIntent2({
+  const intent = await createIntent3({
     intentText: params.intentText || "[empty]",
     intentKind: "unknown",
     metadataJson: JSON.stringify(params.metadata || {})
   });
-  updateIntentStatus2(intent.id, {
+  await updateIntentStatus3(intent.id, {
     status: "failed",
     failureStage: params.failureStage,
     errorCode: params.errorCode,
@@ -15959,8 +16518,8 @@ app.get("/api/ledger/wallets", checkLedgerSecret, async (req, res) => {
 });
 app.get("/api/ledger/stats/summary", checkLedgerSecret, async (req, res) => {
   try {
-    const { getSummaryStats: getSummaryStats2 } = await Promise.resolve().then(() => (init_db2(), db_exports2));
-    const stats = getSummaryStats2();
+    const { getSummaryStatsAsync: getSummaryStatsAsync2 } = await Promise.resolve().then(() => (init_db2(), db_exports2));
+    const stats = await getSummaryStatsAsync2();
     res.json({ ok: true, data: stats });
   } catch (error) {
     console.error("[ledger] Failed to fetch stats summary:", error);
@@ -16011,9 +16570,9 @@ app.get("/api/ledger/executions/:id/steps", checkLedgerSecret, async (req, res) 
 });
 app.get("/api/ledger/intents/recent", checkLedgerSecret, async (req, res) => {
   try {
-    const { getRecentIntents: getRecentIntents2 } = await Promise.resolve().then(() => (init_db2(), db_exports2));
+    const { getRecentIntentsAsync: getRecentIntentsAsync2 } = await Promise.resolve().then(() => (init_db2(), db_exports2));
     const limit = parseInt(req.query.limit) || 50;
-    const intents = getRecentIntents2(Math.min(limit, 100));
+    const intents = await getRecentIntentsAsync2(Math.min(limit, 100));
     res.json({ ok: true, data: intents });
   } catch (error) {
     console.error("[ledger] Failed to fetch recent intents:", error);
@@ -16022,12 +16581,12 @@ app.get("/api/ledger/intents/recent", checkLedgerSecret, async (req, res) => {
 });
 app.get("/api/ledger/intents/:id", checkLedgerSecret, async (req, res) => {
   try {
-    const { getIntent: getIntent2, getExecutionsForIntent: getExecutionsForIntent2 } = await Promise.resolve().then(() => (init_db2(), db_exports2));
-    const intent = getIntent2(req.params.id);
+    const { getIntentAsync: getIntentAsync2, getExecutionsForIntentAsync: getExecutionsForIntentAsync2 } = await Promise.resolve().then(() => (init_db2(), db_exports2));
+    const intent = await getIntentAsync2(req.params.id);
     if (!intent) {
       return res.status(404).json({ ok: false, error: "Intent not found", data: null });
     }
-    const executions = getExecutionsForIntent2(req.params.id);
+    const executions = await getExecutionsForIntentAsync2(req.params.id);
     res.json({
       ok: true,
       data: {
@@ -16042,8 +16601,8 @@ app.get("/api/ledger/intents/:id", checkLedgerSecret, async (req, res) => {
 });
 app.get("/api/ledger/stats/intents", checkLedgerSecret, async (req, res) => {
   try {
-    const { getIntentStatsSummary: getIntentStatsSummary2 } = await Promise.resolve().then(() => (init_db2(), db_exports2));
-    const stats = getIntentStatsSummary2();
+    const { getIntentStatsSummaryAsync: getIntentStatsSummaryAsync2 } = await Promise.resolve().then(() => (init_db2(), db_exports2));
+    const stats = await getIntentStatsSummaryAsync2();
     res.json({ ok: true, data: stats });
   } catch (error) {
     console.error("[ledger] Failed to fetch intent stats:", error);
@@ -16066,12 +16625,12 @@ app.get("/api/ledger/stats/intents", checkLedgerSecret, async (req, res) => {
 });
 app.get("/api/ledger/intents/:id/executions", checkLedgerSecret, async (req, res) => {
   try {
-    const { getIntent: getIntent2, getExecutionsForIntent: getExecutionsForIntent2 } = await Promise.resolve().then(() => (init_db2(), db_exports2));
-    const intent = getIntent2(req.params.id);
+    const { getIntent: getIntent3, getExecutionsForIntent: getExecutionsForIntent3 } = await Promise.resolve().then(() => (init_db2(), db_exports2));
+    const intent = getIntent3(req.params.id);
     if (!intent) {
       return res.status(404).json({ ok: false, error: "Intent not found", data: [] });
     }
-    const executions = getExecutionsForIntent2(req.params.id);
+    const executions = getExecutionsForIntent3(req.params.id);
     res.json({ ok: true, data: executions });
   } catch (error) {
     console.error("[ledger] Failed to fetch intent executions:", error);
@@ -16232,9 +16791,20 @@ app.post("/api/waitlist/join", async (req, res) => {
 });
 app.get("/api/stats/public", async (req, res) => {
   try {
-    const { getStatsSummary: getStatsSummary2, getIntentStats: getIntentStats2 } = await Promise.resolve().then(() => (init_db2(), db_exports2));
-    const summary = getStatsSummary2();
-    const intentStats = getIntentStats2();
+    const { getSummaryStatsAsync: getSummaryStatsAsync2, getIntentStatsSummaryAsync: getIntentStatsSummaryAsync2, getRecentIntentsAsync: getRecentIntentsAsync2 } = await Promise.resolve().then(() => (init_db2(), db_exports2));
+    const [summary, intentStats, recentIntents] = await Promise.all([
+      getSummaryStatsAsync2(),
+      getIntentStatsSummaryAsync2(),
+      getRecentIntentsAsync2(20)
+    ]);
+    const safeIntents = recentIntents.map((intent) => ({
+      id: intent.id,
+      status: intent.status,
+      intent_kind: intent.intent_kind,
+      requested_chain: intent.requested_chain,
+      created_at: intent.created_at,
+      confirmed_at: intent.confirmed_at
+    }));
     res.json({
       ok: true,
       data: {
@@ -16245,10 +16815,12 @@ app.get("/api/stats/public", async (req, res) => {
         successRate: summary.successRate || 0,
         totalUsdRouted: summary.totalUsdRouted || 0,
         chainsActive: summary.chainsActive || [],
+        recentIntents: safeIntents || [],
         lastUpdated: Date.now()
       }
     });
   } catch (error) {
+    console.error("Public stats error:", error.message);
     res.json({
       ok: true,
       data: {
@@ -16259,6 +16831,7 @@ app.get("/api/stats/public", async (req, res) => {
         successRate: 0,
         totalUsdRouted: 0,
         chainsActive: [],
+        recentIntents: [],
         lastUpdated: Date.now()
       }
     });

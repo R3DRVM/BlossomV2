@@ -353,12 +353,22 @@ export default function WhitepaperPage() {
           border-radius: 0.5rem;
           overflow-x: auto;
           margin: 1.5rem 0;
+          max-width: 100%;
         }
 
         .whitepaper-content pre code {
           background: transparent;
           padding: 0;
           color: inherit;
+          font-size: 0.75rem;
+          line-height: 1.4;
+        }
+
+        /* Make ASCII diagrams responsive on smaller screens */
+        @media (max-width: 768px) {
+          .whitepaper-content pre code {
+            font-size: 0.55rem;
+          }
         }
 
         .whitepaper-content blockquote {
