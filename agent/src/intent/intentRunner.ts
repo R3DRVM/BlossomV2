@@ -2126,10 +2126,10 @@ async function executeSolana(
 ): Promise<IntentExecutionResult> {
   const {
     getIntent,
-    updateIntentStatus,
-    createExecution,
-    updateExecution,
-    linkExecutionToIntent,
+    updateIntentStatusAsync,
+    createExecutionAsync,
+    updateExecutionAsync,
+    linkExecutionToIntentAsync,
   } = await import('../../execution-ledger/db');
 
   // Get intent's existing metadata to preserve caller info (source, domain, runId)
@@ -2142,7 +2142,7 @@ async function executeSolana(
   const solanaPrivateKey = process.env.SOLANA_PRIVATE_KEY;
 
   if (!solanaPrivateKey) {
-    await updateIntentStatus(intentId, {
+    await updateIntentStatusAsync(intentId, {
       status: 'failed',
       failureStage: 'execute',
       errorCode: 'CONFIG_MISSING',
@@ -2163,7 +2163,7 @@ async function executeSolana(
 
   // Create execution record
   const solanaKind = parsed.kind === 'unknown' ? 'proof' : parsed.kind;
-  const execution = await createExecution({
+  const execution = await createExecutionAsync({
     chain: 'solana',
     network: 'devnet',
     kind: solanaKind as ExecutionKind,
@@ -2176,16 +2176,16 @@ async function executeSolana(
     usdEstimateIsEstimate: true,
   });
 
-  await linkExecutionToIntent(execution.id, intentId);
+  await linkExecutionToIntentAsync(execution.id, intentId);
 
   // For MVP: Mark as confirmed without actual execution
   // Full Solana execution would use the SolanaClient
-  await updateExecution(execution.id, {
+  await updateExecutionAsync(execution.id, {
     status: 'confirmed',
     latencyMs: 100,
   });
 
-  await updateIntentStatus(intentId, {
+  await updateIntentStatusAsync(intentId, {
     status: 'confirmed',
     confirmedAt: Math.floor(Date.now() / 1000),
     metadataJson: mergeMetadata(existingMetadataJson, {
