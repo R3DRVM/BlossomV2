@@ -382,7 +382,7 @@ export async function finalizeExecutionTransaction(params: {
       params.execution.amountUnits || null,
       params.execution.amountDisplay || null,
       params.execution.usdEstimate || null,
-      params.execution.usdEstimateIsEstimate !== undefined ? params.execution.usdEstimateIsEstimate : true,
+      params.execution.usdEstimateIsEstimate !== undefined ? (params.execution.usdEstimateIsEstimate ? 1 : 0) : 1,
       params.execution.txHash || null,
       params.execution.status || 'confirmed',
       params.execution.errorCode || null,
