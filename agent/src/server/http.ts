@@ -351,8 +351,10 @@ function detectSuspectedIntent(userMessage: string): string | null {
   return null;
 }
 
-// Access gate feature flag
-const ACCESS_GATE_ENABLED = process.env.ACCESS_GATE_ENABLED === "true";
+// Access gate feature flag (fail-closed: enabled in production by default)
+const isProductionEnv = process.env.NODE_ENV === 'production' || process.env.VERCEL === '1';
+const accessGateDisabledEnv = process.env.ACCESS_GATE_DISABLED === 'true';
+const ACCESS_GATE_ENABLED = isProductionEnv ? !accessGateDisabledEnv : (process.env.ACCESS_GATE_ENABLED === 'true');
 const maybeCheckAccess = ACCESS_GATE_ENABLED ? checkAccess : (req: any, res: any, next: any) => next();
 
 // Initialize access gate on startup (Postgres-backed, with in-memory fallback)
@@ -6668,8 +6670,11 @@ app.post('/api/access/verify', async (req, res) => {
  */
 app.get('/api/access/status', async (req, res) => {
   try {
-    // Check if gate is enabled
-    const accessGateEnabled = process.env.ACCESS_GATE_ENABLED === 'true';
+    // Check if gate is enabled (default: ON in production, OFF in dev)
+    // Fail-closed: gate is enabled unless explicitly disabled
+    const isProduction = process.env.NODE_ENV === 'production' || process.env.VERCEL === '1';
+    const accessGateDisabled = process.env.ACCESS_GATE_DISABLED === 'true';
+    const accessGateEnabled = isProduction ? !accessGateDisabled : (process.env.ACCESS_GATE_ENABLED === 'true');
 
     if (!accessGateEnabled) {
       // Gate disabled, everyone authorized
