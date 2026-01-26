@@ -129,7 +129,36 @@ interface ExecutionStep {
   created_at: number;
 }
 
-const API_BASE = import.meta.env.VITE_AGENT_API_BASE_URL || import.meta.env.VITE_AGENT_BASE_URL || 'http://localhost:3001';
+// Determine API base URL
+// In production (stats.blossom.onl), use api.blossom.onl
+// In dev, use env var or localhost
+const getApiBase = () => {
+  // Check env vars first
+  if (import.meta.env.VITE_AGENT_API_BASE_URL) {
+    return import.meta.env.VITE_AGENT_API_BASE_URL;
+  }
+  if (import.meta.env.VITE_AGENT_BASE_URL) {
+    return import.meta.env.VITE_AGENT_BASE_URL;
+  }
+
+  // In production, infer from hostname
+  if (typeof window !== 'undefined') {
+    const hostname = window.location.hostname;
+    // If on stats.blossom.onl or blossom.onl, use api.blossom.onl
+    if (hostname.includes('blossom.onl')) {
+      return 'https://api.blossom.onl';
+    }
+    // If on Vercel deployment, use the deployment URL's API
+    if (hostname.includes('vercel.app')) {
+      return `https://${hostname}`;
+    }
+  }
+
+  // Default to localhost for local dev
+  return 'http://localhost:3001';
+};
+
+const API_BASE = getApiBase();
 const REFRESH_INTERVAL_MS = 30000;
 
 export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
@@ -178,54 +207,101 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
     setLoading(true);
     setError(null);
 
-    // In public mode, use read-only endpoints without secret (or minimal secret)
-    // In dev mode, use full secret for all operations
-    const headers: Record<string, string> = isPublic
-      ? { 'Content-Type': 'application/json' }
-      : { 'X-Ledger-Secret': LEDGER_SECRET };
-
     // Cache-busting param to ensure fresh data on manual refresh
     const cacheBust = `_t=${Date.now()}`;
 
     try {
-      const [statsRes, recentRes, intentStatsRes, intentsRes] = await Promise.all([
-        fetch(`${API_BASE}/api/ledger/stats/summary?${cacheBust}`, { headers, cache: 'no-store' }),
-        fetch(`${API_BASE}/api/ledger/stats/recent?limit=20&${cacheBust}`, { headers, cache: 'no-store' }),
-        fetch(`${API_BASE}/api/ledger/stats/intents?${cacheBust}`, { headers, cache: 'no-store' }),
-        fetch(`${API_BASE}/api/ledger/intents/recent?limit=50&${cacheBust}`, { headers, cache: 'no-store' }),
-      ]);
+      if (isPublic) {
+        // PUBLIC MODE: Use public read-only endpoint (no auth required)
+        const statsRes = await fetch(`${API_BASE}/api/stats/public?${cacheBust}`, {
+          cache: 'no-store',
+          headers: { 'Content-Type': 'application/json' }
+        });
 
-      if (!statsRes.ok || !recentRes.ok) {
-        throw new Error('Failed to fetch stats data');
-      }
+        if (!statsRes.ok) {
+          const status = statsRes.status;
+          const endpoint = `${API_BASE}/api/stats/public`;
+          throw new Error(`Failed to fetch stats (HTTP ${status} from ${endpoint})`);
+        }
 
-      const statsData = await statsRes.json();
-      const recentData = await recentRes.json();
-      const intentStatsData = await intentStatsRes.json();
-      const intentsData = await intentsRes.json();
+        const statsData = await statsRes.json();
 
-      if (statsData.ok) {
-        setStats(statsData.data);
-        setApiHealth('healthy');
-      }
-      if (recentData.ok) {
-        setExecutions(recentData.data);
-      }
-      if (intentStatsData.ok) {
-        setIntentStats(intentStatsData.data);
-      }
-      if (intentsData.ok) {
-        setIntents(intentsData.data);
+        if (statsData.ok) {
+          // Map public stats format to internal stats format
+          const publicData = statsData.data;
+          setStats({
+            totalExecutions: publicData.totalExecutions || 0,
+            successfulExecutions: publicData.successfulExecutions || 0,
+            failedExecutions: (publicData.totalExecutions || 0) - (publicData.successfulExecutions || 0),
+            successRate: publicData.successRate || 0,
+            totalUsdRouted: publicData.totalUsdRouted || 0,
+            relayedTxCount: 0, // Not in public stats
+            chainsActive: publicData.chainsActive || [],
+            byKind: [],
+            byVenue: [],
+            byChain: [],
+            avgLatencyMs: 0,
+            lastExecutionAt: null,
+          });
+          setIntentStats({
+            totalIntents: publicData.totalIntents || 0,
+            confirmedIntents: publicData.confirmedIntents || 0,
+            failedIntents: (publicData.totalIntents || 0) - (publicData.confirmedIntents || 0),
+            intentSuccessRate: publicData.totalIntents > 0
+              ? ((publicData.confirmedIntents || 0) / publicData.totalIntents) * 100
+              : 0,
+            byKind: [],
+            byStatus: [],
+            failuresByStage: [],
+            failuresByCode: [],
+          });
+          setApiHealth('healthy');
+        }
+      } else {
+        // DEV MODE: Use full authenticated endpoints
+        const headers = { 'X-Ledger-Secret': LEDGER_SECRET };
+
+        const [statsRes, recentRes, intentStatsRes, intentsRes] = await Promise.all([
+          fetch(`${API_BASE}/api/ledger/stats/summary?${cacheBust}`, { headers, cache: 'no-store' }),
+          fetch(`${API_BASE}/api/ledger/stats/recent?limit=20&${cacheBust}`, { headers, cache: 'no-store' }),
+          fetch(`${API_BASE}/api/ledger/stats/intents?${cacheBust}`, { headers, cache: 'no-store' }),
+          fetch(`${API_BASE}/api/ledger/intents/recent?limit=50&${cacheBust}`, { headers, cache: 'no-store' }),
+        ]);
+
+        if (!statsRes.ok || !recentRes.ok) {
+          throw new Error('Failed to fetch stats data');
+        }
+
+        const statsData = await statsRes.json();
+        const recentData = await recentRes.json();
+        const intentStatsData = await intentStatsRes.json();
+        const intentsData = await intentsRes.json();
+
+        if (statsData.ok) {
+          setStats(statsData.data);
+          setApiHealth('healthy');
+        }
+        if (recentData.ok) {
+          setExecutions(recentData.data);
+        }
+        if (intentStatsData.ok) {
+          setIntentStats(intentStatsData.data);
+        }
+        if (intentsData.ok) {
+          setIntents(intentsData.data);
+        }
       }
 
       setLastUpdated(new Date());
-    } catch (e) {
-      setError('Failed to fetch stats data. Is the agent running with ledger API enabled?');
+    } catch (e: any) {
+      const errorMsg = e.message || 'Failed to fetch stats data. Is the agent running with ledger API enabled?';
+      setError(errorMsg);
       setApiHealth('error');
+      console.error('[DevStatsPage] Fetch error:', e);
     } finally {
       setLoading(false);
     }
-  }, [isAuthorized]);
+  }, [isAuthorized, isPublic]);
 
   const fetchExecutionSteps = useCallback(async (executionId: string) => {
     if (executionSteps[executionId]) return; // Already fetched
