@@ -1168,6 +1168,20 @@ export async function updateExecutionAsync(id, updates) {
     return Promise.resolve();
 }
 /**
+ * Confirm intent with execution in a durable transaction
+ * Postgres-only: uses explicit transaction to ensure writes persist before serverless function exits
+ */
+export async function confirmIntentWithExecutionAsync(intentId, executionId, updates) {
+    if (dbType === 'postgres') {
+        const pgDb = await import('./db-pg.js');
+        return pgDb.confirmIntentWithExecution(intentId, executionId, updates);
+    }
+    // SQLite fallback: use separate calls (less reliable but functional)
+    await updateExecutionAsync(executionId, updates.executionStatus);
+    await updateIntentStatusAsync(intentId, updates.intentStatus);
+    return Promise.resolve();
+}
+/**
  * Async-capable get intent (uses Postgres if DATABASE_URL is set)
  */
 export async function getIntentAsync(id) {
