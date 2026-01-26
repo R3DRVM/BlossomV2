@@ -842,7 +842,7 @@ async function executeOffchain(intentId, parsed, route) {
  * Real on-chain execution with margin deposit and position opening
  */
 async function executePerpEthereum(intentId, parsed, route) {
-    const { getIntent, updateIntentStatus, createExecution, updateExecution, linkExecutionToIntent, } = await import('../../execution-ledger/db');
+    const { getIntent, updateIntentStatus, createExecution, updateExecution, linkExecutionToIntent, confirmIntentWithExecutionAsync, } = await import('../../execution-ledger/db');
     const { buildExplorerUrl } = await import('../ledger/ledger');
     const now = Math.floor(Date.now() / 1000);
     const startTime = Date.now();
@@ -1090,8 +1090,7 @@ async function executePerpEthereum(intentId, parsed, route) {
                 execution_id: execution.id,
             });
             // Use durable transaction wrapper to ensure confirm-stage writes persist
-            const { confirmIntentWithExecution } = await import('../../execution-ledger/db-pg.js');
-            await confirmIntentWithExecution(intentId, execution.id, {
+            await confirmIntentWithExecutionAsync(intentId, execution.id, {
                 executionStatus: {
                     status: 'confirmed',
                     txHash,
@@ -1574,7 +1573,7 @@ async function executeProofOnlySolana(intentId, parsed, route) {
  * Execute on Ethereum Sepolia
  */
 async function executeEthereum(intentId, parsed, route) {
-    const { getIntent, updateIntentStatus, createExecution, updateExecution, linkExecutionToIntent, } = await import('../../execution-ledger/db');
+    const { getIntent, updateIntentStatus, createExecution, updateExecution, linkExecutionToIntent, confirmIntentWithExecutionAsync, } = await import('../../execution-ledger/db');
     // Get intent's existing metadata to preserve caller info (source, domain, runId)
     const intent = getIntent(intentId);
     const existingMetadataJson = intent?.metadata_json;
@@ -1645,8 +1644,7 @@ async function executeEthereum(intentId, parsed, route) {
         const latencyMs = Date.now() - (now * 1000);
         if (receipt.status === 'success') {
             // Use durable transaction wrapper to ensure confirm-stage writes persist
-            const { confirmIntentWithExecution } = await import('../../execution-ledger/db-pg.js');
-            await confirmIntentWithExecution(intentId, execution.id, {
+            await confirmIntentWithExecutionAsync(intentId, execution.id, {
                 executionStatus: {
                     status: 'confirmed',
                     txHash,

@@ -1052,6 +1052,7 @@ async function executePerpEthereum(
     createExecution,
     updateExecution,
     linkExecutionToIntent,
+    confirmIntentWithExecutionAsync,
   } = await import('../../execution-ledger/db');
   const { buildExplorerUrl } = await import('../ledger/ledger');
 
@@ -1354,9 +1355,7 @@ async function executePerpEthereum(
       });
 
       // Use durable transaction wrapper to ensure confirm-stage writes persist
-      const { confirmIntentWithExecution } = await import('../../execution-ledger/db-pg.js');
-
-      await confirmIntentWithExecution(intentId, execution.id, {
+      await confirmIntentWithExecutionAsync(intentId, execution.id, {
         executionStatus: {
           status: 'confirmed',
           txHash,
@@ -1921,6 +1920,7 @@ async function executeEthereum(
     createExecution,
     updateExecution,
     linkExecutionToIntent,
+    confirmIntentWithExecutionAsync,
   } = await import('../../execution-ledger/db');
 
   // Get intent's existing metadata to preserve caller info (source, domain, runId)
@@ -2009,9 +2009,7 @@ async function executeEthereum(
 
     if (receipt.status === 'success') {
       // Use durable transaction wrapper to ensure confirm-stage writes persist
-      const { confirmIntentWithExecution } = await import('../../execution-ledger/db-pg.js');
-
-      await confirmIntentWithExecution(intentId, execution.id, {
+      await confirmIntentWithExecutionAsync(intentId, execution.id, {
         executionStatus: {
           status: 'confirmed',
           txHash,

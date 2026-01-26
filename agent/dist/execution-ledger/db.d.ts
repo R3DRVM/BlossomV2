@@ -585,6 +585,25 @@ export declare function updateExecutionAsync(id: string, updates: {
     latencyMs?: number;
 }): Promise<void>;
 /**
+ * Confirm intent with execution in a durable transaction
+ * Postgres-only: uses explicit transaction to ensure writes persist before serverless function exits
+ */
+export declare function confirmIntentWithExecutionAsync(intentId: string, executionId: string, updates: {
+    intentStatus: {
+        status?: any;
+        confirmedAt?: number;
+        metadataJson?: string;
+    };
+    executionStatus: {
+        status?: any;
+        txHash?: string;
+        explorerUrl?: string;
+        blockNumber?: number;
+        gasUsed?: string;
+        latencyMs?: number;
+    };
+}): Promise<void>;
+/**
  * Async-capable get intent (uses Postgres if DATABASE_URL is set)
  */
 export declare function getIntentAsync(id: string): Promise<Intent | undefined>;
