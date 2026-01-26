@@ -694,4 +694,9 @@ export declare function getSummaryStatsWithIntentsAsync(): Promise<StatsSummary 
     failedIntents: number;
     intentSuccessRate: number;
 }>;
+/**
+ * Get database identity hash for verifying same-DB across endpoints
+ * Returns a safe hash of non-secret DB identifiers (NEVER includes passwords)
+ */
+export declare function getDatabaseIdentityHash(): string;
 //# sourceMappingURL=db.d.ts.map

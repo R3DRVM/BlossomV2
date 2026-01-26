@@ -4873,18 +4873,23 @@ app.post('/api/demo/faucet', maybeCheckAccess, async (req, res) => {
  */
 app.get('/health', async (req, res) => {
   try {
-    const { 
-      EXECUTION_MODE, 
+    const {
+      EXECUTION_MODE,
       ETH_TESTNET_RPC_URL,
       EXECUTION_ROUTER_ADDRESS,
     } = await import('../config');
-    
+
+    // Get database identity hash for production verification
+    const { getDatabaseIdentityHash } = await import('../../execution-ledger/db');
+    const dbIdentityHash = getDatabaseIdentityHash();
+    const dbMode = process.env.DATABASE_URL ? 'postgres' : 'sqlite';
+
     // Check API keys
     const hasGeminiKey = !!process.env.BLOSSOM_GEMINI_API_KEY;
     const hasOpenAIKey = !!process.env.BLOSSOM_OPENAI_API_KEY;
     const hasAnthropicKey = !!process.env.BLOSSOM_ANTHROPIC_API_KEY;
     const hasAnyLLMKey = hasGeminiKey || hasOpenAIKey || hasAnthropicKey;
-    
+
     // Dev-safe debug info (no secrets, just lengths)
     const rpcUrlLen = ETH_TESTNET_RPC_URL ? ETH_TESTNET_RPC_URL.length : 0;
     const routerAddrLen = EXECUTION_ROUTER_ADDRESS ? EXECUTION_ROUTER_ADDRESS.length : 0;
@@ -4913,6 +4918,8 @@ app.get('/health', async (req, res) => {
       ts: Date.now(),
       service: 'blossom-agent',
       executionMode: EXECUTION_MODE || 'eth_testnet',
+      dbMode,
+      dbIdentityHash,
       // Dev-safe debug info
       debug: {
         rpcUrlLen,
@@ -4939,7 +4946,12 @@ app.get('/health', async (req, res) => {
 /**
  * Extended health check with LLM provider info (for debugging)
  */
-app.get('/api/health', (req, res) => {
+app.get('/api/health', async (req, res) => {
+  // Get database identity hash for production verification
+  const { getDatabaseIdentityHash } = await import('../../execution-ledger/db');
+  const dbIdentityHash = getDatabaseIdentityHash();
+  const dbMode = process.env.DATABASE_URL ? 'postgres' : 'sqlite';
+
   // Get LLM provider info (non-sensitive)
   const provider = process.env.BLOSSOM_MODEL_PROVIDER || 'stub';
   const hasGeminiKey = !!process.env.BLOSSOM_GEMINI_API_KEY;
@@ -4961,6 +4973,8 @@ app.get('/api/health', (req, res) => {
     ts: Date.now(),
     service: 'blossom-agent',
     llmProvider: effectiveProvider, // Non-sensitive: just the provider name
+    dbMode,
+    dbIdentityHash,
   };
 
   // Safe debug info (only when AUTH_DEBUG=1)
@@ -6672,7 +6686,10 @@ app.post('/api/waitlist/join', async (req, res) => {
  */
 app.get('/api/stats/public', async (req, res) => {
   try {
-    const { getSummaryStatsAsync, getIntentStatsSummaryAsync, getRecentIntentsAsync, getRecentExecutionsAsync } = await import('../../execution-ledger/db');
+    const { getSummaryStatsAsync, getIntentStatsSummaryAsync, getRecentIntentsAsync, getRecentExecutionsAsync, getDatabaseIdentityHash } = await import('../../execution-ledger/db');
+
+    // Get database identity hash for production verification
+    const dbIdentityHash = getDatabaseIdentityHash();
 
     // Return limited public stats (async for Postgres support)
     const [summary, intentStats, recentIntents, recentExecutions] = await Promise.all([
@@ -6718,6 +6735,7 @@ app.get('/api/stats/public', async (req, res) => {
         chainsActive: summary.chainsActive || [],
         recentIntents: safeIntents || [],
         recentExecutions: safeExecutions || [],
+        dbIdentityHash,
         lastUpdated: Date.now(),
       },
     });

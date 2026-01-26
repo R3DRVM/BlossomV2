@@ -6,6 +6,7 @@
 import pkg from 'pg';
 const { Pool } = pkg;
 import type { Pool as PgPool, PoolClient, QueryResult } from 'pg';
+import { createHash } from 'crypto';
 
 // Global pool cache for serverless (prevents connection exhaustion)
 declare global {
@@ -113,6 +114,42 @@ export async function closePgPool(): Promise<void> {
     pool = null;
     global.__pgPool = undefined;
     console.log('🗄️  PostgreSQL pool closed');
+  }
+}
+
+/**
+ * Get a safe database identity hash for verifying same-DB across endpoints
+ * SECURITY: This hash is computed from non-secret identifiers only (host, database name, SSL mode)
+ * NEVER includes passwords or sensitive connection parameters
+ */
+export function getDatabaseIdentityHash(): string {
+  const DATABASE_URL = process.env.DATABASE_URL;
+  if (!DATABASE_URL) {
+    return 'no-database-url';
+  }
+
+  try {
+    // Parse DATABASE_URL to extract non-secret identifiers
+    const url = new URL(DATABASE_URL);
+
+    // Build identity string from non-secret components
+    const identityString = [
+      url.hostname,           // e.g., "ep-cool-darkness-123456.us-east-2.aws.neon.tech"
+      url.pathname.slice(1),  // database name (remove leading /)
+      url.protocol,           // postgres: or postgresql:
+      'ssl:required',         // Our SSL mode (hardcoded in config)
+    ].join('|');
+
+    // Create SHA-256 hash
+    const hash = createHash('sha256')
+      .update(identityString)
+      .digest('hex');
+
+    // Return first 16 chars for brevity
+    return hash.slice(0, 16);
+  } catch (error) {
+    console.error('Error generating DB identity hash:', error);
+    return 'hash-error';
   }
 }
 
