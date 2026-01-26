@@ -31,7 +31,7 @@ import {
   Users,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { executeIntent, type IntentExecutionResult } from '../lib/apiClient';
+import { executeIntent, getAgentApiBaseUrl, type IntentExecutionResult } from '../lib/apiClient';
 
 // The secret MUST be configured in env for dev mode
 const LEDGER_SECRET = import.meta.env.VITE_DEV_LEDGER_SECRET || '';
@@ -129,34 +129,8 @@ interface ExecutionStep {
   created_at: number;
 }
 
-// Determine API base URL
-// PREFER SAME-ORIGIN (no CORS): In production, all subdomains (stats, app, api) map to the same Vercel deployment
-// So we use relative paths by default. Only use absolute URLs for local dev or cross-origin cases.
-const getApiBase = () => {
-  if (typeof window !== 'undefined') {
-    const hostname = window.location.hostname;
-
-    // PRODUCTION (Vercel): Use same-origin relative paths (no CORS)
-    // All *.blossom.onl and *.vercel.app domains map to the same deployment
-    if (hostname.includes('blossom.onl') || hostname.includes('vercel.app')) {
-      return ''; // Empty string = same-origin relative paths (/api/...)
-    }
-  }
-
-  // LOCAL DEV: Check env vars for explicit override
-  if (import.meta.env.VITE_AGENT_API_BASE_URL) {
-    return import.meta.env.VITE_AGENT_API_BASE_URL;
-  }
-  if (import.meta.env.VITE_AGENT_BASE_URL) {
-    return import.meta.env.VITE_AGENT_BASE_URL;
-  }
-
-  // LOCAL DEV FALLBACK: Default to localhost backend
-  return 'http://localhost:3001';
-};
-
-// Make this a function to ensure it's evaluated at runtime with window available
-const getApiBaseUrl = () => getApiBase();
+// Use shared API base URL function from apiClient.ts (single source of truth)
+const getApiBaseUrl = () => getAgentApiBaseUrl();
 const REFRESH_INTERVAL_MS = 30000;
 
 export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
