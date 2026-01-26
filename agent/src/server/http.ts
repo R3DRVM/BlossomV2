@@ -61,7 +61,7 @@ import * as eventSim from '../plugins/event-sim';
 import { resetAllSims, getPortfolioSnapshot } from '../services/state';
 import { getOnchainTicker, getEventMarketsTicker } from '../services/ticker';
 import { logExecutionArtifact, getExecutionArtifacts, dumpExecutionArtifacts } from '../utils/executionLogger';
-import { validateAccessCode, hasAccess, loadAccessCodesFromEnv, getAllAccessCodes, createAccessCode, revokeAccessCode, checkAccess } from '../utils/accessGate';
+import { validateAccessCode, hasAccess, initializeAccessGate, getAllAccessCodes, createAccessCode, revokeAccessCode, checkAccess } from '../utils/accessGate';
 import { logEvent, createRequestLogger, hashAddress } from '../telemetry/logger';
 import { waitForReceipt } from '../executors/evmReceipt';
 
@@ -353,8 +353,8 @@ function detectSuspectedIntent(userMessage: string): string | null {
 const ACCESS_GATE_ENABLED = process.env.ACCESS_GATE_ENABLED === "true";
 const maybeCheckAccess = ACCESS_GATE_ENABLED ? checkAccess : (req: any, res: any, next: any) => next();
 
-// Initialize access gate on startup (safe - won't crash if disabled)
-loadAccessCodesFromEnv();
+// Initialize access gate on startup (Postgres-backed, with in-memory fallback)
+initializeAccessGate();
 
 // Set up balance callbacks for DeFi and Event sims
 // Use perps sim as the source of truth for REDACTED balance
