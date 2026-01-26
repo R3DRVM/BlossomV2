@@ -37,6 +37,7 @@ else {
 }
 import express from 'express';
 import cors from 'cors';
+import cookieParser from 'cookie-parser';
 import { validateActions, buildBlossomPrompts } from '../utils/actionParser';
 import { callLlm } from '../services/llmClient';
 import * as perpsSim from '../plugins/perps-sim';
@@ -54,7 +55,7 @@ import * as eventSim from '../plugins/event-sim';
 import { resetAllSims, getPortfolioSnapshot } from '../services/state';
 import { getOnchainTicker, getEventMarketsTicker } from '../services/ticker';
 import { logExecutionArtifact, getExecutionArtifacts } from '../utils/executionLogger';
-import { validateAccessCode, loadAccessCodesFromEnv, checkAccess } from '../utils/accessGate';
+import { validateAccessCode, initializeAccessGate, checkAccess } from '../utils/accessGate';
 import { logEvent, hashAddress } from '../telemetry/logger';
 import { waitForReceipt } from '../executors/evmReceipt';
 const app = express();
@@ -88,6 +89,7 @@ app.use(cors({
     allowedHeaders: ['Content-Type', 'X-Ledger-Secret', 'X-Access-Code', 'X-Wallet-Address', 'x-correlation-id'],
 }));
 app.use(express.json());
+app.use(cookieParser());
 // ============================================
 // TELEMETRY-ONLY MODE: Block sensitive endpoints
 // ============================================
@@ -290,8 +292,8 @@ function detectSuspectedIntent(userMessage) {
 // Access gate feature flag
 const ACCESS_GATE_ENABLED = process.env.ACCESS_GATE_ENABLED === "true";
 const maybeCheckAccess = ACCESS_GATE_ENABLED ? checkAccess : (req, res, next) => next();
-// Initialize access gate on startup (safe - won't crash if disabled)
-loadAccessCodesFromEnv();
+// Initialize access gate on startup (Postgres-backed, with in-memory fallback)
+initializeAccessGate();
 // Set up balance callbacks for DeFi and Event sims
 // Use perps sim as the source of truth for REDACTED balance
 const getUsdcBalance = () => {
@@ -5890,21 +5892,61 @@ app.get('/api/ledger/positions/stats', checkLedgerSecret, async (req, res) => {
 // ACCESS GATE + WAITLIST ENDPOINTS
 // ============================================
 /**
- * POST /api/access/validate
- * Validate an access code (public endpoint)
+ * POST /api/access/verify
+ * Verify an access code and issue gate pass cookie (public endpoint)
  */
-app.post('/api/access/validate', async (req, res) => {
+app.post('/api/access/verify', async (req, res) => {
     try {
         const { code, walletAddress } = req.body;
         if (!code) {
-            return res.json({ ok: true, valid: false, error: 'Access code required' });
+            return res.json({ ok: false, authorized: false, error: 'Access code required' });
         }
-        const result = validateAccessCode(code, walletAddress);
-        res.json({ ok: true, valid: result.valid, error: result.error });
+        const result = await validateAccessCode(code, walletAddress);
+        if (result.valid) {
+            // Issue gate pass cookie (HTTP-only, secure in production)
+            const gatePass = `blossom_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+            res.cookie('blossom_gate_pass', gatePass, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === 'production',
+                sameSite: 'lax',
+                maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+            });
+            console.log('[access] Gate pass issued successfully');
+            return res.json({ ok: true, authorized: true });
+        }
+        else {
+            return res.json({ ok: false, authorized: false, error: result.error || 'Invalid access code' });
+        }
     }
     catch (error) {
-        console.error('[access] Validation error:', error.message);
-        res.json({ ok: false, valid: false, error: 'Validation failed' });
+        console.error('[access] Verification error:', error.message);
+        res.json({ ok: false, authorized: false, error: 'Verification failed' });
+    }
+});
+/**
+ * GET /api/access/status
+ * Check if user has valid gate pass (public endpoint)
+ */
+app.get('/api/access/status', async (req, res) => {
+    try {
+        // Check if gate is enabled
+        const accessGateEnabled = process.env.ACCESS_GATE_ENABLED === 'true';
+        if (!accessGateEnabled) {
+            // Gate disabled, everyone authorized
+            return res.json({ ok: true, authorized: true });
+        }
+        // Check for gate pass cookie
+        const gatePass = req.cookies?.blossom_gate_pass;
+        if (gatePass && gatePass.startsWith('blossom_')) {
+            // Valid gate pass format
+            return res.json({ ok: true, authorized: true });
+        }
+        // No gate pass
+        return res.json({ ok: true, authorized: false });
+    }
+    catch (error) {
+        console.error('[access] Status check error:', error.message);
+        res.json({ ok: false, authorized: false, error: 'Status check failed' });
     }
 });
 /**
@@ -5913,7 +5955,7 @@ app.post('/api/access/validate', async (req, res) => {
  */
 app.post('/api/waitlist/join', async (req, res) => {
     try {
-        const { email, walletAddress, source } = req.body;
+        const { email, walletAddress, telegramHandle, twitterHandle, source } = req.body;
         // Require at least one identifier
         if (!email && !walletAddress) {
             return res.status(400).json({ ok: false, error: 'Email or wallet address required' });
@@ -5933,7 +5975,18 @@ app.post('/api/waitlist/join', async (req, res) => {
         // Store in database (using execution ledger DB)
         try {
             const { addToWaitlist } = await import('../../execution-ledger/db');
-            const id = addToWaitlist({ email, walletAddress, source: source || 'landing' });
+            // Build metadata object for telegram/twitter handles
+            const metadata = {};
+            if (telegramHandle)
+                metadata.telegramHandle = telegramHandle;
+            if (twitterHandle)
+                metadata.twitterHandle = twitterHandle;
+            const id = addToWaitlist({
+                email,
+                walletAddress,
+                source: source || 'landing',
+                metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
+            });
             // Don't log actual email/wallet for privacy
             console.log(`[waitlist] New signup from ${source || 'landing'}: ${id.slice(0, 8)}...`);
             res.json({ ok: true, message: 'Successfully joined waitlist' });
@@ -5947,6 +6000,8 @@ app.post('/api/waitlist/join', async (req, res) => {
                 id: `wl_${Date.now()}`,
                 email,
                 walletAddress,
+                telegramHandle,
+                twitterHandle,
                 source: source || 'landing',
                 createdAt: Date.now(),
             });
@@ -5985,6 +6040,8 @@ app.get('/api/stats/public', async (req, res) => {
             confirmed_at: intent.confirmed_at,
         }));
         // Sanitize recent executions (include txHash, chain, network for explorer links, and USD estimate)
+        // Count executions with missing USD estimates for debugging
+        const missingUsdCount = recentExecutions.filter(exec => exec.status === 'confirmed' && (exec.usd_estimate === null || exec.usd_estimate === undefined)).length;
         const safeExecutions = recentExecutions.map(exec => ({
             id: exec.id,
             chain: exec.chain,
@@ -6008,9 +6065,11 @@ app.get('/api/stats/public', async (req, res) => {
                 successfulExecutions: summary.successfulExecutions || 0,
                 successRate: summary.successRate || 0,
                 totalUsdRouted: summary.totalUsdRouted || 0,
+                uniqueWallets: summary.uniqueWallets || 0,
                 chainsActive: summary.chainsActive || [],
                 recentIntents: safeIntents || [],
                 recentExecutions: safeExecutions || [],
+                missingUsdEstimateCount: missingUsdCount,
                 dbIdentityHash,
                 lastUpdated: Date.now(),
             },
