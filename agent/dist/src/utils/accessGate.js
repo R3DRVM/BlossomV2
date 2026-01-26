@@ -25,7 +25,9 @@ export async function initializeAccessGate() {
     }
     // Fallback to in-memory mode
     isPostgresMode = false;
-    const accessGateEnabled = process.env.ACCESS_GATE_ENABLED === "true";
+    const isProduction = process.env.NODE_ENV === 'production' || process.env.VERCEL === '1';
+    const accessGateDisabled = process.env.ACCESS_GATE_DISABLED === 'true';
+    const accessGateEnabled = isProduction ? !accessGateDisabled : (process.env.ACCESS_GATE_ENABLED === 'true');
     if (!accessGateEnabled) {
         console.log(`[accessGate] Access gate is disabled`);
         return;
@@ -273,7 +275,10 @@ export async function revokeAccessCode(code) {
  * Express middleware to check access
  */
 export function checkAccess(req, res, next) {
-    const accessGateEnabled = process.env.ACCESS_GATE_ENABLED === "true";
+    // Fail-closed: gate enabled in production by default
+    const isProduction = process.env.NODE_ENV === 'production' || process.env.VERCEL === '1';
+    const accessGateDisabled = process.env.ACCESS_GATE_DISABLED === 'true';
+    const accessGateEnabled = isProduction ? !accessGateDisabled : (process.env.ACCESS_GATE_ENABLED === 'true');
     // If gate is disabled, always allow
     if (!accessGateEnabled) {
         return next();
