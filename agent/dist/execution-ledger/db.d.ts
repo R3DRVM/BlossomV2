@@ -585,24 +585,58 @@ export declare function updateExecutionAsync(id: string, updates: {
     latencyMs?: number;
 }): Promise<void>;
 /**
- * Confirm intent with execution in a durable transaction
- * Postgres-only: uses explicit transaction to ensure writes persist before serverless function exits
+ * Finalize execution in atomic transaction
+ * Creates execution row + updates intent status in single transaction
+ * Ensures both writes persist before serverless function exits
  */
-export declare function confirmIntentWithExecutionAsync(intentId: string, executionId: string, updates: {
-    intentStatus: {
+export declare function finalizeExecutionTransactionAsync(params: {
+    intentId: string;
+    execution: {
+        id?: string;
+        chain: any;
+        network: any;
+        kind?: any;
+        venue?: any;
+        intent: string;
+        action: string;
+        fromAddress: string;
+        toAddress?: string;
+        token?: string;
+        amountUnits?: string;
+        amountDisplay?: string;
+        usdEstimate?: number;
+        usdEstimateIsEstimate?: boolean;
+        txHash?: string;
         status?: any;
-        confirmedAt?: number;
-        metadataJson?: string;
+        errorCode?: string;
+        errorMessage?: string;
+        explorerUrl?: string;
+        relayerAddress?: string;
+        sessionId?: string;
     };
-    executionStatus: {
-        status?: any;
+    steps?: Array<{
+        stepIndex: number;
+        action: string;
+        chain: string;
+        venue?: string;
+        status?: string;
         txHash?: string;
         explorerUrl?: string;
-        blockNumber?: number;
-        gasUsed?: string;
-        latencyMs?: number;
+        amount?: string;
+        token?: string;
+    }>;
+    intentStatus: {
+        status: any;
+        confirmedAt?: number;
+        failedAt?: number;
+        failureStage?: string;
+        errorCode?: string;
+        errorMessage?: string;
+        metadataJson?: string;
     };
-}): Promise<void>;
+}): Promise<{
+    executionId: string;
+}>;
 /**
  * Async-capable get intent (uses Postgres if DATABASE_URL is set)
  */

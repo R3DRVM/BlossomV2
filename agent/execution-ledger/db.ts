@@ -1989,37 +1989,65 @@ export async function updateExecutionAsync(
 }
 
 /**
- * Confirm intent with execution in a durable transaction
- * Postgres-only: uses explicit transaction to ensure writes persist before serverless function exits
+ * Finalize execution in atomic transaction
+ * Creates execution row + updates intent status in single transaction
+ * Ensures both writes persist before serverless function exits
  */
-export async function confirmIntentWithExecutionAsync(
-  intentId: string,
-  executionId: string,
-  updates: {
-    intentStatus: {
-      status?: any;
-      confirmedAt?: number;
-      metadataJson?: string;
-    };
-    executionStatus: {
-      status?: any;
-      txHash?: string;
-      explorerUrl?: string;
-      blockNumber?: number;
-      gasUsed?: string;
-      latencyMs?: number;
-    };
-  }
-): Promise<void> {
+export async function finalizeExecutionTransactionAsync(params: {
+  intentId: string;
+  execution: {
+    id?: string;
+    chain: any;
+    network: any;
+    kind?: any;
+    venue?: any;
+    intent: string;
+    action: string;
+    fromAddress: string;
+    toAddress?: string;
+    token?: string;
+    amountUnits?: string;
+    amountDisplay?: string;
+    usdEstimate?: number;
+    usdEstimateIsEstimate?: boolean;
+    txHash?: string;
+    status?: any;
+    errorCode?: string;
+    errorMessage?: string;
+    explorerUrl?: string;
+    relayerAddress?: string;
+    sessionId?: string;
+  };
+  steps?: Array<{
+    stepIndex: number;
+    action: string;
+    chain: string;
+    venue?: string;
+    status?: string;
+    txHash?: string;
+    explorerUrl?: string;
+    amount?: string;
+    token?: string;
+  }>;
+  intentStatus: {
+    status: any;
+    confirmedAt?: number;
+    failedAt?: number;
+    failureStage?: string;
+    errorCode?: string;
+    errorMessage?: string;
+    metadataJson?: string;
+  };
+}): Promise<{ executionId: string }> {
   if (dbType === 'postgres') {
     const pgDb = await import('./db-pg.js');
-    return pgDb.confirmIntentWithExecution(intentId, executionId, updates);
+    return pgDb.finalizeExecutionTransaction(params as any);
   }
 
   // SQLite fallback: use separate calls (less reliable but functional)
-  await updateExecutionAsync(executionId, updates.executionStatus);
-  await updateIntentStatusAsync(intentId, updates.intentStatus);
-  return Promise.resolve();
+  const execution = await createExecutionAsync(params.execution as any);
+  await updateIntentStatusAsync(params.intentId, params.intentStatus);
+  return { executionId: execution.id };
 }
 
 /**

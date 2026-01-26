@@ -1049,11 +1049,9 @@ async function executePerpEthereum(
   const {
     getIntent,
     updateIntentStatus,
-    createExecution,
-    updateExecution,
-    linkExecutionToIntent,
-    confirmIntentWithExecutionAsync,
+    finalizeExecutionTransactionAsync,
   } = await import('../../execution-ledger/db');
+  const { createPosition } = await import('../../execution-ledger/db');
   const { buildExplorerUrl } = await import('../ledger/ledger');
 
   const now = Math.floor(Date.now() / 1000);
@@ -1132,11 +1130,11 @@ async function executePerpEthereum(
     const publicClient = createFailoverPublicClient();
     const walletClient = createFailoverWalletClient(account);
 
-    // Create execution record
-    const execution = await createExecution({
-      chain: 'ethereum',
-      network: 'sepolia',
-      kind: 'perp',
+    // Prepare execution data (will be created in atomic transaction after TX succeeds)
+    const executionData = {
+      chain: 'ethereum' as const,
+      network: 'sepolia' as const,
+      kind: 'perp' as const,
       venue: 'demo_perp' as any,
       intent: parsed.rawParams.original || 'Perp position',
       action: parsed.action,
@@ -1145,9 +1143,7 @@ async function executePerpEthereum(
       amountDisplay: parsed.amount ? `${parsed.amount} REDACTED @ ${parsed.leverage}x` : undefined,
       usdEstimate: estimateIntentUsd(parsed),
       usdEstimateIsEstimate: true,
-    });
-
-    await linkExecutionToIntent(execution.id, intentId);
+    };
 
     // Map market string to enum value
     const marketMap: Record<string, number> = {
@@ -1222,24 +1218,29 @@ async function executePerpEthereum(
     });
 
     if (balance < marginAmount) {
-      await updateExecution(execution.id, {
-        status: 'failed',
-        errorCode: 'INSUFFICIENT_BALANCE',
-        errorMessage: `Insufficient DEMO_REDACTED balance: have ${balance}, need ${marginAmount}`,
-      });
-
-      await updateIntentStatus(intentId, {
-        status: 'failed',
-        failureStage: 'execute',
-        errorCode: 'INSUFFICIENT_BALANCE',
-        errorMessage: 'Insufficient DEMO_REDACTED balance for perp margin',
+      // Pre-flight check failed - create execution record showing why
+      const result = await finalizeExecutionTransactionAsync({
+        intentId,
+        execution: {
+          ...executionData,
+          status: 'failed',
+          errorCode: 'INSUFFICIENT_BALANCE',
+          errorMessage: `Insufficient DEMO_REDACTED balance: have ${balance}, need ${marginAmount}`,
+        },
+        intentStatus: {
+          status: 'failed',
+          failedAt: Math.floor(Date.now() / 1000),
+          failureStage: 'execute',
+          errorCode: 'INSUFFICIENT_BALANCE',
+          errorMessage: 'Insufficient DEMO_REDACTED balance for perp margin',
+        },
       });
 
       return {
         ok: false,
         intentId,
         status: 'failed',
-        executionId: execution.id,
+        executionId: result.executionId,
         error: {
           stage: 'execute',
           code: 'INSUFFICIENT_BALANCE',
@@ -1290,29 +1291,23 @@ async function executePerpEthereum(
     const explorerUrl = buildExplorerUrl('ethereum', 'sepolia', txHash);
 
     if (receipt.status === 'success') {
-      // Import position and step functions
-      const { createPosition, createExecutionStep, updateExecutionStep } = await import('../../execution-ledger/db');
-
-      // Create execution steps for tracking
-      const routeStep = await createExecutionStep({
-        executionId: execution.id,
-        stepIndex: 0,
-        action: 'route',
-        stage: 'route',
-      });
-      await updateExecutionStep(routeStep.id, { status: 'confirmed' });
-
-      const executeStep = await createExecutionStep({
-        executionId: execution.id,
-        stepIndex: 1,
-        action: 'open_position',
-        stage: 'execute',
-      });
-      await updateExecutionStep(executeStep.id, {
-        status: 'confirmed',
-        txHash: txHash,
-        explorerUrl: explorerUrl,
-      });
+      // Prepare execution steps data
+      const steps = [
+        {
+          stepIndex: 0,
+          action: 'route',
+          chain: 'ethereum',
+          status: 'confirmed',
+        },
+        {
+          stepIndex: 1,
+          action: 'open_position',
+          chain: 'ethereum',
+          status: 'confirmed',
+          txHash: txHash,
+          explorerUrl: explorerUrl,
+        },
+      ];
 
       // Parse position ID from logs (PerpPositionOpened event)
       let onChainPositionId: string | undefined;
@@ -1332,10 +1327,40 @@ async function executePerpEthereum(
         // Position ID extraction failed, continue without it
       }
 
-      // Create position in ledger (indexer will also catch it, but this is faster)
+      // Parse position details
       const marketName = parsed.targetAsset?.toUpperCase() || 'BTC';
       const positionSide = parsed.action === 'long' ? 'long' : 'short';
 
+      // ATOMIC TRANSACTION: Create execution + steps + update intent to confirmed
+      const result = await finalizeExecutionTransactionAsync({
+        intentId,
+        execution: {
+          ...executionData,
+          txHash,
+          explorerUrl,
+          status: 'confirmed',
+        },
+        steps,
+        intentStatus: {
+          status: 'confirmed',
+          confirmedAt: Math.floor(Date.now() / 1000),
+          metadataJson: mergeMetadata(existingMetadataJson, {
+            parsed,
+            route,
+            executedKind: 'real',
+            txHash,
+            explorerUrl,
+            perpDetails: {
+              market: marketName,
+              side: positionSide,
+              margin: marginAmount.toString(),
+              leverage,
+            },
+          }),
+        },
+      });
+
+      // Create position in ledger (indexer will also catch it, but this is faster)
       createPosition({
         chain: 'ethereum',
         network: 'sepolia',
@@ -1351,44 +1376,14 @@ async function executePerpEthereum(
         user_address: account.address,
         on_chain_position_id: onChainPositionId,
         intent_id: intentId,
-        execution_id: execution.id,
-      });
-
-      // Use durable transaction wrapper to ensure confirm-stage writes persist
-      await confirmIntentWithExecutionAsync(intentId, execution.id, {
-        executionStatus: {
-          status: 'confirmed',
-          txHash,
-          explorerUrl,
-          blockNumber: Number(receipt.blockNumber),
-          gasUsed: receipt.gasUsed.toString(),
-          latencyMs,
-        },
-        intentStatus: {
-          status: 'confirmed',
-          confirmedAt: Math.floor(Date.now() / 1000),
-          metadataJson: mergeMetadata(existingMetadataJson, {
-            parsed,
-            route,
-            executedKind: 'real',
-            executionId: execution.id,
-            txHash,
-            explorerUrl,
-            perpDetails: {
-              market: marketName,
-              side: positionSide,
-              margin: marginAmount.toString(),
-              leverage,
-            },
-          }),
-        },
+        execution_id: result.executionId,
       });
 
       return {
         ok: true,
         intentId,
         status: 'confirmed',
-        executionId: execution.id,
+        executionId: result.executionId,
         txHash,
         explorerUrl,
         metadata: {
@@ -1401,26 +1396,31 @@ async function executePerpEthereum(
         },
       };
     } else {
-      await updateExecution(execution.id, {
-        status: 'failed',
-        txHash,
-        explorerUrl,
-        errorCode: 'TX_REVERTED',
-        errorMessage: 'Perp position transaction reverted',
-      });
-
-      await updateIntentStatus(intentId, {
-        status: 'failed',
-        failureStage: 'confirm',
-        errorCode: 'TX_REVERTED',
-        errorMessage: 'Perp position transaction reverted on-chain',
+      // ATOMIC TRANSACTION: Create execution + update intent to failed
+      const result = await finalizeExecutionTransactionAsync({
+        intentId,
+        execution: {
+          ...executionData,
+          txHash,
+          explorerUrl,
+          status: 'failed',
+          errorCode: 'TX_REVERTED',
+          errorMessage: 'Perp position transaction reverted',
+        },
+        intentStatus: {
+          status: 'failed',
+          failedAt: Math.floor(Date.now() / 1000),
+          failureStage: 'confirm',
+          errorCode: 'TX_REVERTED',
+          errorMessage: 'Perp position transaction reverted on-chain',
+        },
       });
 
       return {
         ok: false,
         intentId,
         status: 'failed',
-        executionId: execution.id,
+        executionId: result.executionId,
         txHash,
         explorerUrl,
         error: {
@@ -1431,17 +1431,29 @@ async function executePerpEthereum(
       };
     }
   } catch (error: any) {
-    await updateIntentStatus(intentId, {
-      status: 'failed',
-      failureStage: 'execute',
-      errorCode: 'PERP_EXECUTION_ERROR',
-      errorMessage: error.message?.slice(0, 200),
+    // ATOMIC TRANSACTION: Create execution + update intent to failed
+    const result = await finalizeExecutionTransactionAsync({
+      intentId,
+      execution: {
+        ...executionData,
+        status: 'failed',
+        errorCode: 'PERP_EXECUTION_ERROR',
+        errorMessage: error.message?.slice(0, 200),
+      },
+      intentStatus: {
+        status: 'failed',
+        failedAt: Math.floor(Date.now() / 1000),
+        failureStage: 'execute',
+        errorCode: 'PERP_EXECUTION_ERROR',
+        errorMessage: error.message?.slice(0, 200),
+      },
     });
 
     return {
       ok: false,
       intentId,
       status: 'failed',
+      executionId: result.executionId,
       error: {
         stage: 'execute',
         code: 'PERP_EXECUTION_ERROR',
@@ -1917,10 +1929,7 @@ async function executeEthereum(
   const {
     getIntent,
     updateIntentStatus,
-    createExecution,
-    updateExecution,
-    linkExecutionToIntent,
-    confirmIntentWithExecutionAsync,
+    finalizeExecutionTransactionAsync,
   } = await import('../../execution-ledger/db');
 
   // Get intent's existing metadata to preserve caller info (source, domain, runId)
@@ -1955,11 +1964,11 @@ async function executeEthereum(
     };
   }
 
-  // Create execution record
+  // Prepare execution data (will be created in atomic transaction after TX succeeds)
   const mappedKind = parsed.kind === 'unknown' ? 'proof' : parsed.kind;
-  const execution = await createExecution({
-    chain: 'ethereum',
-    network: 'sepolia',
+  const executionData = {
+    chain: 'ethereum' as const,
+    network: 'sepolia' as const,
     kind: mappedKind as ExecutionKind,
     venue: route.venue as any,
     intent: parsed.rawParams.original || 'Intent execution',
@@ -1969,9 +1978,7 @@ async function executeEthereum(
     amountDisplay: parsed.amount ? `${parsed.amount} ${parsed.amountUnit}` : undefined,
     usdEstimate: estimateIntentUsd(parsed),
     usdEstimateIsEstimate: true,
-  });
-
-  await linkExecutionToIntent(execution.id, intentId);
+  };
 
   try {
     // Attempt real execution via viem
@@ -2008,15 +2015,14 @@ async function executeEthereum(
     const latencyMs = Date.now() - (now * 1000);
 
     if (receipt.status === 'success') {
-      // Use durable transaction wrapper to ensure confirm-stage writes persist
-      await confirmIntentWithExecutionAsync(intentId, execution.id, {
-        executionStatus: {
-          status: 'confirmed',
+      // ATOMIC TRANSACTION: Create execution row + update intent to confirmed
+      const result = await finalizeExecutionTransactionAsync({
+        intentId,
+        execution: {
+          ...executionData,
           txHash,
           explorerUrl,
-          blockNumber: Number(receipt.blockNumber),
-          gasUsed: receipt.gasUsed.toString(),
-          latencyMs,
+          status: 'confirmed',
         },
         intentStatus: {
           status: 'confirmed',
@@ -2025,7 +2031,6 @@ async function executeEthereum(
             parsed,
             route,
             executedKind: 'real',
-            executionId: execution.id,
             txHash,
             explorerUrl,
           }),
@@ -2036,7 +2041,7 @@ async function executeEthereum(
         ok: true,
         intentId,
         status: 'confirmed',
-        executionId: execution.id,
+        executionId: result.executionId,
         txHash,
         explorerUrl,
         metadata: {
@@ -2044,26 +2049,31 @@ async function executeEthereum(
         },
       };
     } else {
-      // Transaction failed - update both execution and intent
-      await updateExecution(execution.id, {
-        status: 'failed',
-        txHash,
-        explorerUrl,
-        blockNumber: Number(receipt.blockNumber),
-      });
-
-      await updateIntentStatus(intentId, {
-        status: 'failed',
-        failureStage: 'confirm',
-        errorCode: 'TX_REVERTED',
-        errorMessage: 'Transaction reverted on-chain',
+      // ATOMIC TRANSACTION: Create execution row + update intent to failed
+      const result = await finalizeExecutionTransactionAsync({
+        intentId,
+        execution: {
+          ...executionData,
+          txHash,
+          explorerUrl,
+          status: 'failed',
+          errorCode: 'TX_REVERTED',
+          errorMessage: 'Transaction reverted on-chain',
+        },
+        intentStatus: {
+          status: 'failed',
+          failedAt: Math.floor(Date.now() / 1000),
+          failureStage: 'confirm',
+          errorCode: 'TX_REVERTED',
+          errorMessage: 'Transaction reverted on-chain',
+        },
       });
 
       return {
         ok: false,
         intentId,
         status: 'failed',
-        executionId: execution.id,
+        executionId: result.executionId,
         txHash,
         explorerUrl,
         error: {
@@ -2074,24 +2084,29 @@ async function executeEthereum(
       };
     }
   } catch (error: any) {
-    await updateExecution(execution.id, {
-      status: 'failed',
-      errorCode: 'EXECUTION_ERROR',
-      errorMessage: error.message?.slice(0, 200),
-    });
-
-    await updateIntentStatus(intentId, {
-      status: 'failed',
-      failureStage: 'execute',
-      errorCode: 'EXECUTION_ERROR',
-      errorMessage: error.message?.slice(0, 200),
+    // ATOMIC TRANSACTION: Create execution row + update intent to failed
+    const result = await finalizeExecutionTransactionAsync({
+      intentId,
+      execution: {
+        ...executionData,
+        status: 'failed',
+        errorCode: 'EXECUTION_ERROR',
+        errorMessage: error.message?.slice(0, 200),
+      },
+      intentStatus: {
+        status: 'failed',
+        failedAt: Math.floor(Date.now() / 1000),
+        failureStage: 'execute',
+        errorCode: 'EXECUTION_ERROR',
+        errorMessage: error.message?.slice(0, 200),
+      },
     });
 
     return {
       ok: false,
       intentId,
       status: 'failed',
-      executionId: execution.id,
+      executionId: result.executionId,
       error: {
         stage: 'execute',
         code: 'EXECUTION_ERROR',

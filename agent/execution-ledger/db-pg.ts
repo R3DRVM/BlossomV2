@@ -323,92 +323,164 @@ export async function linkExecutionToIntent(executionId: string, intentId: strin
 }
 
 /**
- * DURABLE CONFIRM TRANSACTION
- * Wraps confirm-stage writes in explicit transaction to ensure commit before function exit
- * This fixes the serverless persistence bug where HTTP response was sent before Postgres flush
+ * ATOMIC EXECUTION FINALIZATION TRANSACTION
+ * Creates execution row + updates intent status in single transaction
+ * Ensures both writes persist before serverless function exits
  */
-export async function confirmIntentWithExecution(
-  intentId: string,
-  executionId: string,
-  updates: {
-    intentStatus: UpdateIntentStatusParams;
-    executionStatus: UpdateExecutionParams;
-  }
-): Promise<void> {
-  console.log(`[Postgres] BEGIN CONFIRM TRANSACTION for intent ${intentId.slice(0,8)}, exec ${executionId.slice(0,8)}`);
+export async function finalizeExecutionTransaction(params: {
+  intentId: string;
+  execution: CreateExecutionParams;
+  steps?: Array<{
+    stepIndex: number;
+    action: string;
+    chain: string;
+    venue?: string;
+    status?: string;
+    txHash?: string;
+    explorerUrl?: string;
+    amount?: string;
+    token?: string;
+  }>;
+  intentStatus: {
+    status: any;
+    confirmedAt?: number;
+    failedAt?: number;
+    failureStage?: string;
+    errorCode?: string;
+    errorMessage?: string;
+    metadataJson?: string;
+  };
+}): Promise<{ executionId: string }> {
+  const executionId = params.execution.id || randomUUID();
+  const now = Math.floor(Date.now() / 1000);
+
+  console.log(`[Postgres] BEGIN FINALIZE TRANSACTION for intent ${params.intentId.slice(0,8)}`);
 
   await transaction(async (client) => {
-    // Update execution status
-    const execFields: string[] = [];
-    const execValues: any[] = [];
-    let execParamIndex = 1;
+    // 1. Insert execution row
+    const execSql = convertPlaceholders(
+      `INSERT INTO executions (
+        id, chain, network, kind, venue, intent, action, from_address, to_address,
+        token, amount_units, amount_display, usd_estimate, usd_estimate_is_estimate,
+        tx_hash, status, error_code, error_message, explorer_url, relayer_address,
+        session_id, intent_id, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      RETURNING id`
+    );
 
-    if (updates.executionStatus.status !== undefined) {
-      execFields.push(`status = $${execParamIndex++}`);
-      execValues.push(updates.executionStatus.status);
-    }
-    if (updates.executionStatus.txHash !== undefined) {
-      execFields.push(`tx_hash = $${execParamIndex++}`);
-      execValues.push(updates.executionStatus.txHash);
-    }
-    if (updates.executionStatus.explorerUrl !== undefined) {
-      execFields.push(`explorer_url = $${execParamIndex++}`);
-      execValues.push(updates.executionStatus.explorerUrl);
-    }
-    if (updates.executionStatus.blockNumber !== undefined) {
-      execFields.push(`block_number = $${execParamIndex++}`);
-      execValues.push(updates.executionStatus.blockNumber);
-    }
-    if (updates.executionStatus.gasUsed !== undefined) {
-      execFields.push(`gas_used = $${execParamIndex++}`);
-      execValues.push(updates.executionStatus.gasUsed);
-    }
-    if (updates.executionStatus.latencyMs !== undefined) {
-      execFields.push(`latency_ms = $${execParamIndex++}`);
-      execValues.push(updates.executionStatus.latencyMs);
+    const execResult = await client.query(execSql, [
+      executionId,
+      params.execution.chain,
+      params.execution.network,
+      params.execution.kind || null,
+      params.execution.venue || null,
+      params.execution.intent,
+      params.execution.action,
+      params.execution.fromAddress,
+      params.execution.toAddress || null,
+      params.execution.token || null,
+      params.execution.amountUnits || null,
+      params.execution.amountDisplay || null,
+      params.execution.usdEstimate || null,
+      params.execution.usdEstimateIsEstimate !== undefined ? params.execution.usdEstimateIsEstimate : true,
+      params.execution.txHash || null,
+      params.execution.status || 'confirmed',
+      params.execution.errorCode || null,
+      params.execution.errorMessage || null,
+      params.execution.explorerUrl || null,
+      params.execution.relayerAddress || null,
+      params.execution.sessionId || null,
+      params.intentId,
+      now,
+      now,
+    ]);
+
+    console.log(`[Postgres]   Execution insert: ${execResult.rowCount || 0} rows (id: ${executionId.slice(0,8)})`);
+
+    if (execResult.rowCount === 0) {
+      throw new Error('Failed to insert execution row');
     }
 
-    if (execFields.length > 0) {
-      execFields.push(`updated_at = $${execParamIndex++}`);
-      execValues.push(Math.floor(Date.now() / 1000));
-      execValues.push(executionId);
+    // 2. Insert execution steps (if any)
+    if (params.steps && params.steps.length > 0) {
+      for (const step of params.steps) {
+        const stepId = randomUUID();
+        const stepSql = convertPlaceholders(
+          `INSERT INTO execution_steps (
+            id, execution_id, step_index, status, action, chain, venue,
+            amount, token, tx_hash, explorer_url, error_code, error_message,
+            created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        );
 
-      const execSql = `UPDATE executions SET ${execFields.join(', ')} WHERE id = $${execParamIndex}`;
-      const execResult = await client.query(execSql, execValues);
-      console.log(`[Postgres]   Execution update: ${execResult.rowCount || 0} rows`);
+        await client.query(stepSql, [
+          stepId,
+          executionId,
+          step.stepIndex || 0,
+          step.status || 'confirmed',
+          step.action,
+          step.chain,
+          step.venue || null,
+          step.amount || null,
+          step.token || null,
+          step.txHash || null,
+          step.explorerUrl || null,
+          null, // error_code
+          null, // error_message
+          now,
+          now,
+        ]);
+      }
+      console.log(`[Postgres]   Execution steps insert: ${params.steps.length} rows`);
     }
 
-    // Update intent status to confirmed
+    // 3. Update intent to final status (confirmed or failed)
     const intentFields: string[] = [];
     const intentValues: any[] = [];
     let intentParamIndex = 1;
 
-    if (updates.intentStatus.status !== undefined) {
+    if (params.intentStatus.status !== undefined) {
       intentFields.push(`status = $${intentParamIndex++}`);
-      intentValues.push(updates.intentStatus.status);
+      intentValues.push(params.intentStatus.status);
     }
-    if (updates.intentStatus.confirmedAt !== undefined) {
+    if (params.intentStatus.confirmedAt !== undefined) {
       intentFields.push(`confirmed_at = $${intentParamIndex++}`);
-      intentValues.push(updates.intentStatus.confirmedAt);
+      intentValues.push(params.intentStatus.confirmedAt);
     }
-    if (updates.intentStatus.metadataJson !== undefined) {
+    if (params.intentStatus.failedAt !== undefined) {
+      intentFields.push(`failed_at = $${intentParamIndex++}`);
+      intentValues.push(params.intentStatus.failedAt);
+    }
+    if (params.intentStatus.failureStage !== undefined) {
+      intentFields.push(`failure_stage = $${intentParamIndex++}`);
+      intentValues.push(params.intentStatus.failureStage);
+    }
+    if (params.intentStatus.errorCode !== undefined) {
+      intentFields.push(`error_code = $${intentParamIndex++}`);
+      intentValues.push(params.intentStatus.errorCode);
+    }
+    if (params.intentStatus.errorMessage !== undefined) {
+      intentFields.push(`error_message = $${intentParamIndex++}`);
+      intentValues.push(params.intentStatus.errorMessage);
+    }
+    if (params.intentStatus.metadataJson !== undefined) {
       intentFields.push(`metadata_json = $${intentParamIndex++}`);
-      intentValues.push(updates.intentStatus.metadataJson);
+      intentValues.push(params.intentStatus.metadataJson);
     }
 
-    if (intentFields.length > 0) {
-      intentValues.push(intentId);
-      const intentSql = `UPDATE intents SET ${intentFields.join(', ')} WHERE id = $${intentParamIndex}`;
-      const intentResult = await client.query(intentSql, intentValues);
-      console.log(`[Postgres]   Intent update: ${intentResult.rowCount || 0} rows`);
+    intentValues.push(params.intentId);
+    const intentSql = `UPDATE intents SET ${intentFields.join(', ')} WHERE id = $${intentParamIndex}`;
+    const intentResult = await client.query(intentSql, intentValues);
+    console.log(`[Postgres]   Intent update: ${intentResult.rowCount || 0} rows (status: ${params.intentStatus.status})`);
 
-      if (intentResult.rowCount === 0) {
-        throw new Error(`Intent ${intentId} not found for confirmation`);
-      }
+    if (intentResult.rowCount === 0) {
+      throw new Error(`Intent ${params.intentId} not found for finalization`);
     }
 
-    console.log(`[Postgres] COMMIT CONFIRM TRANSACTION`);
+    console.log(`[Postgres] COMMIT FINALIZE TRANSACTION`);
   });
+
+  return { executionId };
 }
 
 /**
