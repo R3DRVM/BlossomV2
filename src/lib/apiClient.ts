@@ -9,24 +9,52 @@ export function getAgentApiBaseUrl(): string {
   // PRODUCTION: Use same-origin relative paths for all deployed domains
   if (typeof window !== 'undefined') {
     const hostname = window.location.hostname;
-    if (hostname.includes('blossom.onl') || hostname.includes('vercel.app')) {
+    const isProduction = hostname.includes('blossom.onl') || hostname.includes('vercel.app');
+
+    if (isProduction) {
+      // HARD FAIL GUARD: Verify we're not accidentally using localhost in production
+      const envUrl = import.meta.env.VITE_AGENT_BASE_URL ?? import.meta.env.VITE_AGENT_API_URL ?? '';
+      if (envUrl && (envUrl.includes('localhost') || envUrl.includes('127.0.0.1') || envUrl.includes(':3001'))) {
+        console.error('[CRITICAL] Production environment detected localhost in VITE_AGENT_BASE_URL:', envUrl);
+        console.error('[CRITICAL] Forcing same-origin API base to prevent localhost calls');
+      }
       return ''; // Empty string = same-origin relative paths (/api/...)
     }
   }
 
   // LOCAL DEV: Check env vars or default to localhost
-  return import.meta.env.VITE_AGENT_BASE_URL ?? import.meta.env.VITE_AGENT_API_URL ?? 'http://localhost:3001';
+  const devUrl = import.meta.env.VITE_AGENT_BASE_URL ?? import.meta.env.VITE_AGENT_API_URL ?? 'http://localhost:3001';
+
+  // HARD FAIL GUARD: If running in production but window isn't available yet, don't use localhost
+  if (typeof window !== 'undefined' && window.location && import.meta.env.PROD) {
+    const hostname = window.location.hostname;
+    if ((hostname.includes('blossom.onl') || hostname.includes('vercel.app')) &&
+        (devUrl.includes('localhost') || devUrl.includes('127.0.0.1'))) {
+      console.error('[CRITICAL] Detected production domain but API base contains localhost. Forcing same-origin.');
+      return '';
+    }
+  }
+
+  return devUrl;
 }
 
 export const AGENT_API_BASE_URL = getAgentApiBaseUrl();
 
-// Log backend URL in dev mode (for debugging)
-if (import.meta.env.DEV) {
-  console.log(`🔗 [apiClient] Backend API base URL: ${AGENT_API_BASE_URL}`);
+// Log backend URL (in all modes for debugging)
+if (typeof window !== 'undefined') {
+  const isProduction = window.location.hostname.includes('blossom.onl') || window.location.hostname.includes('vercel.app');
+  console.log(`🔗 [apiClient] Backend API base URL: "${AGENT_API_BASE_URL}" (${AGENT_API_BASE_URL === '' ? 'same-origin' : 'absolute'})`);
+  console.log(`   Environment: ${isProduction ? 'PRODUCTION' : 'DEV'}`);
+  console.log(`   Hostname: ${window.location.hostname}`);
+
   if (import.meta.env.VITE_AGENT_BASE_URL || import.meta.env.VITE_AGENT_API_URL) {
-    console.log(`   (from env: ${import.meta.env.VITE_AGENT_BASE_URL || import.meta.env.VITE_AGENT_API_URL})`);
-  } else {
-    console.log(`   (default: http://127.0.0.1:3001)`);
+    console.log(`   Env var: ${import.meta.env.VITE_AGENT_BASE_URL || import.meta.env.VITE_AGENT_API_URL}`);
+  }
+
+  // FINAL VERIFICATION: Ensure no localhost in production
+  if (isProduction && AGENT_API_BASE_URL && (AGENT_API_BASE_URL.includes('localhost') || AGENT_API_BASE_URL.includes('127.0.0.1'))) {
+    console.error('[CRITICAL ERROR] Production detected but API base contains localhost!');
+    console.error('[CRITICAL ERROR] This should never happen. API calls will fail.');
   }
 }
 
