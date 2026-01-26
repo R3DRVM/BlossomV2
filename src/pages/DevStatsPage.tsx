@@ -257,6 +257,10 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
           if (publicData.recentIntents && Array.isArray(publicData.recentIntents)) {
             setIntents(publicData.recentIntents);
           }
+          // Set recent executions if available
+          if (publicData.recentExecutions && Array.isArray(publicData.recentExecutions)) {
+            setExecutions(publicData.recentExecutions);
+          }
           setApiHealth('healthy');
         }
       } else {
