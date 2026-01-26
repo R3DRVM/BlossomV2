@@ -790,219 +790,25 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
           </section>
         )}
 
-        {/* Recent Intents Table */}
-        {intents.length > 0 && (() => {
-          // Filter intents based on CLI run toggle
-          const filteredIntents = intents.filter((intent) => {
-            const metadata = parseMetadataJson(intent.metadata_json);
-            const isCliRun = metadata?.source === 'cli' || metadata?.source === 'torture_suite';
-            // Show CLI runs only if toggle is ON, hide them if toggle is OFF
-            return showTortureRuns ? true : !isCliRun;
-          });
-
-          const cliCount = intents.filter((intent) => {
-            const metadata = parseMetadataJson(intent.metadata_json);
-            return metadata?.source === 'cli' || metadata?.source === 'torture_suite';
-          }).length;
-
-          return (
-          <section>
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-white">Recent Intents</h2>
-              {cliCount > 0 && (
-                <span className="text-xs text-[#666]">
-                  {showTortureRuns ? (
-                    <span className="text-[#F25AA2]">{cliCount} CLI intents shown</span>
-                  ) : (
-                    <span>{cliCount} CLI intents hidden</span>
-                  )}
-                </span>
-              )}
-            </div>
-            <div className="bg-[#1a1a2e] rounded-xl border border-[#333] overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="bg-[#0f0f23]">
-                    <tr className="text-left text-[#888] border-b border-[#333]">
-                      <th className="px-4 py-3 font-medium w-8"></th>
-                      <th className="px-4 py-3 font-medium">Intent</th>
-                      <th className="px-4 py-3 font-medium">Kind</th>
-                      <th className="px-4 py-3 font-medium">Status</th>
-                      <th className="px-4 py-3 font-medium text-right">USD Est.</th>
-                      <th className="px-4 py-3 font-medium">Chain / Venue</th>
-                      <th className="px-4 py-3 font-medium">Created</th>
-                      <th className="px-4 py-3 font-medium">Failure</th>
-                    </tr>
-                  </thead>
-                  <tbody className="font-mono">
-                    {filteredIntents.map((intent) => (
-                      <React.Fragment key={intent.id}>
-                        <tr
-                          className={`border-b border-[#333] hover:bg-[#0f0f23] cursor-pointer ${
-                            expandedIntent === intent.id ? 'bg-[#0f0f23]' : ''
-                          }`}
-                          onClick={() => toggleIntentExpanded(intent.id)}
-                        >
-                          <td className="px-4 py-3">
-                            {expandedIntent === intent.id ? (
-                              <ChevronDown className="w-4 h-4 text-[#888]" />
-                            ) : (
-                              <ChevronRight className="w-4 h-4 text-[#888]" />
-                            )}
-                          </td>
-                          <td className="px-4 py-3 text-white max-w-[200px] truncate" title={intent.intent_text}>
-                            {intent.intent_text}
-                          </td>
-                          <td className="px-4 py-3">
-                            <div className="flex items-center gap-1">
-                              <span className={`px-2 py-0.5 rounded text-xs ${getKindColor(intent.intent_kind)}`}>
-                                {intent.intent_kind || 'unknown'}
-                              </span>
-                              {(() => {
-                                const meta = parseMetadataJson(intent.metadata_json);
-                                const source = meta?.source;
-                                if (source === 'cli') {
-                                  return (
-                                    <span className="px-1.5 py-0.5 rounded text-[9px] bg-blue-900/50 text-blue-400" title={`CLI: ${meta?.category || 'unknown'}`}>
-                                      CLI
-                                    </span>
-                                  );
-                                }
-                                if (source === 'torture_suite') {
-                                  return (
-                                    <span className="px-1.5 py-0.5 rounded text-[9px] bg-orange-900/50 text-orange-400" title="Torture Suite">
-                                      TS
-                                    </span>
-                                  );
-                                }
-                                if (source === 'ui') {
-                                  return (
-                                    <span className="px-1.5 py-0.5 rounded text-[9px] bg-green-900/50 text-green-400" title={`UI: ${meta?.domain || 'unknown'}`}>
-                                      UI
-                                    </span>
-                                  );
-                                }
-                                return null;
-                              })()}
-                            </div>
-                          </td>
-                          <td className="px-4 py-3">
-                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs ${getIntentStatusColor(intent.status)}`}>
-                              {intent.status === 'confirmed' && <CheckCircle className="w-3 h-3" />}
-                              {intent.status === 'failed' && <XCircle className="w-3 h-3" />}
-                              {intent.status}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 text-right text-green-400">
-                            {intent.usd_estimate ? formatUsd(intent.usd_estimate) : '-'}
-                          </td>
-                          <td className="px-4 py-3 text-[#888]">
-                            {intent.requested_chain || '-'} / {intent.requested_venue || '-'}
-                          </td>
-                          <td className="px-4 py-3 text-[#888]">
-                            <div className="flex items-center gap-1">
-                              <Clock className="w-3 h-3" />
-                              {formatTime(intent.created_at)}
-                            </div>
-                          </td>
-                          <td className="px-4 py-3">
-                            {intent.status === 'failed' ? (
-                              <div className="text-red-400 text-xs">
-                                <span className="font-medium">{intent.failure_stage}</span>
-                                {intent.error_code && <span className="ml-1">({intent.error_code})</span>}
-                              </div>
-                            ) : (
-                              <span className="text-[#666]">-</span>
-                            )}
-                          </td>
-                        </tr>
-                        {/* Expanded Row - Intent Details */}
-                        {expandedIntent === intent.id && (
-                          <tr key={`${intent.id}-details`}>
-                            <td colSpan={8} className="bg-[#0a0a15] p-4">
-                              <div className="pl-8">
-                                <h4 className="text-xs font-semibold text-[#888] uppercase tracking-wide mb-2">
-                                  Intent Details
-                                </h4>
-                                <div className="grid grid-cols-2 gap-4 text-xs mb-4">
-                                  <div>
-                                    <span className="text-[#666]">ID:</span>
-                                    <span className="text-white ml-2 font-mono">{intent.id}</span>
-                                  </div>
-                                  <div>
-                                    <span className="text-[#666]">Full Intent:</span>
-                                    <span className="text-white ml-2">{intent.intent_text}</span>
-                                  </div>
-                                  {intent.planned_at && (
-                                    <div>
-                                      <span className="text-[#666]">Planned At:</span>
-                                      <span className="text-white ml-2">{formatTime(intent.planned_at)}</span>
-                                    </div>
-                                  )}
-                                  {intent.executed_at && (
-                                    <div>
-                                      <span className="text-[#666]">Executed At:</span>
-                                      <span className="text-white ml-2">{formatTime(intent.executed_at)}</span>
-                                    </div>
-                                  )}
-                                  {intent.confirmed_at && (
-                                    <div>
-                                      <span className="text-[#666]">Confirmed At:</span>
-                                      <span className="text-white ml-2">{formatTime(intent.confirmed_at)}</span>
-                                    </div>
-                                  )}
-                                  {intent.error_message && (
-                                    <div className="col-span-2">
-                                      <span className="text-[#666]">Error:</span>
-                                      <span className="text-red-400 ml-2">{intent.error_message}</span>
-                                    </div>
-                                  )}
-                                </div>
-
-                                {/* Parsed Metadata */}
-                                {intent.metadata_json && (
-                                  <div className="mt-4">
-                                    <h4 className="text-xs font-semibold text-[#888] uppercase tracking-wide mb-2">
-                                      Metadata
-                                    </h4>
-                                    <pre className="text-xs text-[#888] bg-[#1a1a2e] p-2 rounded overflow-x-auto max-h-40">
-                                      {JSON.stringify(parseMetadataJson(intent.metadata_json), null, 2)}
-                                    </pre>
-                                  </div>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                        )}
-                      </React.Fragment>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </section>
-          );
-        })()}
-
         {/* Recent Executions Table */}
         <section>
           <h2 className="text-lg font-semibold text-white mb-4">Recent Executions</h2>
           <div className="bg-[#1a1a2e] rounded-xl border border-[#333] overflow-hidden">
             {executions.length > 0 ? (
               <div className="overflow-x-auto">
-                <table className="w-full text-sm">
+                <table className="w-full text-xs">
                   <thead className="bg-[#0f0f23]">
                     <tr className="text-left text-[#888] border-b border-[#333]">
-                      <th className="px-4 py-3 font-medium w-8"></th>
-                      <th className="px-4 py-3 font-medium">ID</th>
-                      <th className="px-4 py-3 font-medium">Chain</th>
-                      <th className="px-4 py-3 font-medium">Kind</th>
-                      <th className="px-4 py-3 font-medium">Venue</th>
-                      <th className="px-4 py-3 font-medium text-right">USD Est.</th>
-                      <th className="px-4 py-3 font-medium">Status</th>
-                      <th className="px-4 py-3 font-medium">Time</th>
-                      <th className="px-4 py-3 font-medium">Relayed</th>
-                      <th className="px-4 py-3 font-medium">Explorer</th>
+                      <th className="px-3 py-2 font-medium w-8"></th>
+                      <th className="px-3 py-2 font-medium">ID</th>
+                      <th className="px-3 py-2 font-medium">Chain</th>
+                      <th className="px-3 py-2 font-medium">Kind</th>
+                      <th className="px-3 py-2 font-medium">Venue</th>
+                      <th className="px-3 py-2 font-medium text-right">USD Est.</th>
+                      <th className="px-3 py-2 font-medium">Status</th>
+                      <th className="px-3 py-2 font-medium">Time</th>
+                      <th className="px-3 py-2 font-medium">Relayed</th>
+                      <th className="px-3 py-2 font-medium">Explorer</th>
                     </tr>
                   </thead>
                   <tbody className="font-mono">
@@ -1014,36 +820,36 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
                           }`}
                           onClick={() => !isPublic && toggleExpanded(exec.id)}
                         >
-                          <td className="px-4 py-3">
+                          <td className="px-3 py-2">
                             {!isPublic && (expandedExecution === exec.id ? (
                               <ChevronDown className="w-4 h-4 text-[#888]" />
                             ) : (
                               <ChevronRight className="w-4 h-4 text-[#888]" />
                             ))}
                           </td>
-                          <td className="px-4 py-3 text-[#888]" title={exec.id}>
+                          <td className="px-3 py-2 text-[#888]" title={exec.id}>
                             {exec.id.slice(0, 8)}...
                           </td>
-                          <td className="px-4 py-3">
+                          <td className="px-3 py-2">
                             <span className={`px-2 py-0.5 rounded text-xs ${
                               exec.chain === 'ethereum' ? 'bg-blue-900/50 text-blue-400' : 'bg-purple-900/50 text-purple-400'
                             }`}>
                               {exec.chain}/{exec.network}
                             </span>
                           </td>
-                          <td className="px-4 py-3">
+                          <td className="px-3 py-2">
                             <span className={`px-2 py-0.5 rounded text-xs ${getKindColor(exec.kind)}`}>
                               {exec.kind || '-'}
                             </span>
                           </td>
-                          <td className="px-4 py-3 text-white">{exec.venue || '-'}</td>
-                          <td className="px-4 py-3 text-right text-green-400">
+                          <td className="px-3 py-2 text-white">{exec.venue || '-'}</td>
+                          <td className="px-3 py-2 text-right text-green-400">
                             {exec.usd_estimate ? formatUsd(exec.usd_estimate) : '-'}
                             {exec.usd_estimate_is_estimate === 1 && (
                               <span className="text-[#666] text-xs ml-1">~</span>
                             )}
                           </td>
-                          <td className="px-4 py-3">
+                          <td className="px-3 py-2">
                             <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs ${
                               exec.status === 'confirmed' || exec.status === 'finalized'
                                 ? 'bg-green-900/50 text-green-400'
@@ -1058,13 +864,13 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
                               {exec.status}
                             </span>
                           </td>
-                          <td className="px-4 py-3 text-[#888]">
+                          <td className="px-3 py-2 text-[#888]">
                             <div className="flex items-center gap-1">
                               <Clock className="w-3 h-3" />
                               {formatTime(exec.created_at)}
                             </div>
                           </td>
-                          <td className="px-4 py-3">
+                          <td className="px-3 py-2">
                             {exec.relayer_address ? (
                               <span className="text-cyan-400" title={exec.relayer_address}>
                                 {truncateAddress(exec.relayer_address)}
@@ -1073,7 +879,7 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
                               <span className="text-[#666]">-</span>
                             )}
                           </td>
-                          <td className="px-4 py-3">
+                          <td className="px-3 py-2">
                             {exec.explorer_url ? (
                               <div className="flex items-center gap-2">
                                 {isValidExplorerUrl(exec.explorer_url) ? (
@@ -1406,6 +1212,200 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
           </div>
         </section>
         )}
+
+        {/* Recent Intents Table */}
+        {intents.length > 0 && (() => {
+          // Filter intents based on CLI run toggle
+          const filteredIntents = intents.filter((intent) => {
+            const metadata = parseMetadataJson(intent.metadata_json);
+            const isCliRun = metadata?.source === 'cli' || metadata?.source === 'torture_suite';
+            // Show CLI runs only if toggle is ON, hide them if toggle is OFF
+            return showTortureRuns ? true : !isCliRun;
+          });
+
+          const cliCount = intents.filter((intent) => {
+            const metadata = parseMetadataJson(intent.metadata_json);
+            return metadata?.source === 'cli' || metadata?.source === 'torture_suite';
+          }).length;
+
+          return (
+          <section>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-white">Recent Intents</h2>
+              {cliCount > 0 && (
+                <span className="text-xs text-[#666]">
+                  {showTortureRuns ? (
+                    <span className="text-[#F25AA2]">{cliCount} CLI intents shown</span>
+                  ) : (
+                    <span>{cliCount} CLI intents hidden</span>
+                  )}
+                </span>
+              )}
+            </div>
+            <div className="bg-[#1a1a2e] rounded-xl border border-[#333] overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-[#0f0f23]">
+                    <tr className="text-left text-[#888] border-b border-[#333]">
+                      <th className="px-3 py-2 font-medium w-8"></th>
+                      <th className="px-3 py-2 font-medium">Intent</th>
+                      <th className="px-3 py-2 font-medium">Kind</th>
+                      <th className="px-3 py-2 font-medium">Status</th>
+                      <th className="px-3 py-2 font-medium text-right">USD Est.</th>
+                      <th className="px-3 py-2 font-medium">Chain / Venue</th>
+                      <th className="px-3 py-2 font-medium">Created</th>
+                      <th className="px-3 py-2 font-medium">Failure</th>
+                    </tr>
+                  </thead>
+                  <tbody className="font-mono">
+                    {filteredIntents.map((intent) => (
+                      <React.Fragment key={intent.id}>
+                        <tr
+                          className={`border-b border-[#333] hover:bg-[#0f0f23] cursor-pointer ${
+                            expandedIntent === intent.id ? 'bg-[#0f0f23]' : ''
+                          }`}
+                          onClick={() => toggleIntentExpanded(intent.id)}
+                        >
+                          <td className="px-3 py-2">
+                            {expandedIntent === intent.id ? (
+                              <ChevronDown className="w-4 h-4 text-[#888]" />
+                            ) : (
+                              <ChevronRight className="w-4 h-4 text-[#888]" />
+                            )}
+                          </td>
+                          <td className="px-3 py-2 text-white max-w-[200px] truncate" title={intent.intent_text}>
+                            {intent.intent_text}
+                          </td>
+                          <td className="px-3 py-2">
+                            <div className="flex items-center gap-1">
+                              <span className={`px-2 py-0.5 rounded text-xs ${getKindColor(intent.intent_kind)}`}>
+                                {intent.intent_kind || 'unknown'}
+                              </span>
+                              {(() => {
+                                const meta = parseMetadataJson(intent.metadata_json);
+                                const source = meta?.source;
+                                if (source === 'cli') {
+                                  return (
+                                    <span className="px-1.5 py-0.5 rounded text-[9px] bg-blue-900/50 text-blue-400" title={`CLI: ${meta?.category || 'unknown'}`}>
+                                      CLI
+                                    </span>
+                                  );
+                                }
+                                if (source === 'torture_suite') {
+                                  return (
+                                    <span className="px-1.5 py-0.5 rounded text-[9px] bg-orange-900/50 text-orange-400" title="Torture Suite">
+                                      TS
+                                    </span>
+                                  );
+                                }
+                                if (source === 'ui') {
+                                  return (
+                                    <span className="px-1.5 py-0.5 rounded text-[9px] bg-green-900/50 text-green-400" title={`UI: ${meta?.domain || 'unknown'}`}>
+                                      UI
+                                    </span>
+                                  );
+                                }
+                                return null;
+                              })()}
+                            </div>
+                          </td>
+                          <td className="px-3 py-2">
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs ${getIntentStatusColor(intent.status)}`}>
+                              {intent.status === 'confirmed' && <CheckCircle className="w-3 h-3" />}
+                              {intent.status === 'failed' && <XCircle className="w-3 h-3" />}
+                              {intent.status}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2 text-right text-green-400">
+                            {intent.usd_estimate ? formatUsd(intent.usd_estimate) : '-'}
+                          </td>
+                          <td className="px-3 py-2 text-[#888]">
+                            {intent.requested_chain || '-'} / {intent.requested_venue || '-'}
+                          </td>
+                          <td className="px-3 py-2 text-[#888]">
+                            <div className="flex items-center gap-1">
+                              <Clock className="w-3 h-3" />
+                              {formatTime(intent.created_at)}
+                            </div>
+                          </td>
+                          <td className="px-3 py-2">
+                            {intent.status === 'failed' ? (
+                              <div className="text-red-400 text-xs">
+                                <span className="font-medium">{intent.failure_stage}</span>
+                                {intent.error_code && <span className="ml-1">({intent.error_code})</span>}
+                              </div>
+                            ) : (
+                              <span className="text-[#666]">-</span>
+                            )}
+                          </td>
+                        </tr>
+                        {/* Expanded Row - Intent Details */}
+                        {expandedIntent === intent.id && (
+                          <tr key={`${intent.id}-details`}>
+                            <td colSpan={8} className="bg-[#0a0a15] p-4">
+                              <div className="pl-8">
+                                <h4 className="text-xs font-semibold text-[#888] uppercase tracking-wide mb-2">
+                                  Intent Details
+                                </h4>
+                                <div className="grid grid-cols-2 gap-4 text-xs mb-4">
+                                  <div>
+                                    <span className="text-[#666]">ID:</span>
+                                    <span className="text-white ml-2 font-mono">{intent.id}</span>
+                                  </div>
+                                  <div>
+                                    <span className="text-[#666]">Full Intent:</span>
+                                    <span className="text-white ml-2">{intent.intent_text}</span>
+                                  </div>
+                                  {intent.planned_at && (
+                                    <div>
+                                      <span className="text-[#666]">Planned At:</span>
+                                      <span className="text-white ml-2">{formatTime(intent.planned_at)}</span>
+                                    </div>
+                                  )}
+                                  {intent.executed_at && (
+                                    <div>
+                                      <span className="text-[#666]">Executed At:</span>
+                                      <span className="text-white ml-2">{formatTime(intent.executed_at)}</span>
+                                    </div>
+                                  )}
+                                  {intent.confirmed_at && (
+                                    <div>
+                                      <span className="text-[#666]">Confirmed At:</span>
+                                      <span className="text-white ml-2">{formatTime(intent.confirmed_at)}</span>
+                                    </div>
+                                  )}
+                                  {intent.error_message && (
+                                    <div className="col-span-2">
+                                      <span className="text-[#666]">Error:</span>
+                                      <span className="text-red-400 ml-2">{intent.error_message}</span>
+                                    </div>
+                                  )}
+                                </div>
+
+                                {/* Parsed Metadata */}
+                                {intent.metadata_json && (
+                                  <div className="mt-4">
+                                    <h4 className="text-xs font-semibold text-[#888] uppercase tracking-wide mb-2">
+                                      Metadata
+                                    </h4>
+                                    <pre className="text-xs text-[#888] bg-[#1a1a2e] p-2 rounded overflow-x-auto max-h-40">
+                                      {JSON.stringify(parseMetadataJson(intent.metadata_json), null, 2)}
+                                    </pre>
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+          );
+        })()}
 
         {/* Last Execution Timestamp */}
         {stats?.lastExecutionAt && (
