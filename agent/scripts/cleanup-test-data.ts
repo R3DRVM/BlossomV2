@@ -10,6 +10,9 @@
 
 const args = process.argv.slice(2);
 const isDryRun = !args.includes('--execute');
+const sourcePrefix = args.find(a => a.startsWith('--sourcePrefix='))?.split('=')[1] || null;
+const olderThanHours = parseInt(args.find(a => a.startsWith('--olderThanHours='))?.split('=')[1] || '0');
+const keepLastN = parseInt(args.find(a => a.startsWith('--keepLastNPerSource='))?.split('=')[1] || '0');
 
 console.log('═══════════════════════════════════════════════════════════');
 console.log('STATS CLEANUP SCRIPT');
@@ -31,9 +34,7 @@ const CLEANUP_CRITERIA = {
 };
 
 async function main() {
-  const { initDatabase, query, queryOne, queryRows } = await import('../../execution-ledger/db-pg');
-
-  await initDatabase();
+  const { query, queryOne } = await import('../execution-ledger/db-pg-client');
 
   console.log('Cleanup Criteria:');
   console.log(`  - Test sources: ${CLEANUP_CRITERIA.testSources.join(', ')}`);
@@ -72,10 +73,12 @@ async function main() {
     );
 
     const execCount = await queryOne<{count: string}>(
-      `SELECT COUNT(*) as count FROM executions
-       WHERE (metadata_json::text LIKE '%dev_debug%'
-          OR metadata_json::text LIKE '%local_test%'
-          OR metadata_json::text LIKE '%old_prod_debug%')`,
+      `SELECT COUNT(*) as count FROM executions e
+       WHERE e.intent_id IN (
+         SELECT id FROM intents WHERE metadata_json::text LIKE '%dev_debug%'
+         OR metadata_json::text LIKE '%local_test%'
+         OR metadata_json::text LIKE '%old_prod_debug%'
+       )`,
       []
     );
 
@@ -93,9 +96,11 @@ async function main() {
       // Delete executions first (foreign key constraints)
       await query(
         `DELETE FROM executions
-         WHERE (metadata_json::text LIKE '%dev_debug%'
-            OR metadata_json::text LIKE '%local_test%'
-            OR metadata_json::text LIKE '%old_prod_debug%')`,
+         WHERE intent_id IN (
+           SELECT id FROM intents WHERE metadata_json::text LIKE '%dev_debug%'
+           OR metadata_json::text LIKE '%local_test%'
+           OR metadata_json::text LIKE '%old_prod_debug%'
+         )`,
         []
       );
 
