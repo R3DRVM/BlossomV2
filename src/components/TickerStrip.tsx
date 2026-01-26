@@ -177,7 +177,7 @@ export function TickerStrip({ venue }: TickerStripProps) {
       console.log('[TickerStrip] Config:', {
         USE_AGENT_BACKEND,
         VITE_AGENT_API_URL: import.meta.env.VITE_AGENT_API_URL,
-        AGENT_API_BASE_URL: import.meta.env.VITE_AGENT_API_URL ?? 'http://localhost:3001',
+        AGENT_API_BASE_URL,
         venue,
       });
       

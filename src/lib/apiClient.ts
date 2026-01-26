@@ -1,11 +1,24 @@
 /**
  * API Client Configuration
  * Centralized base URL for agent API calls
- * 
- * Uses VITE_AGENT_BASE_URL if set, else defaults to 127.0.0.1:3001
- * (127.0.0.1 instead of localhost to avoid hostname resolution issues)
+ *
+ * PRODUCTION: Uses same-origin relative paths (empty string) to avoid CORS
+ * LOCAL DEV: Uses VITE_AGENT_BASE_URL or falls back to http://localhost:3001
  */
-export const AGENT_API_BASE_URL = import.meta.env.VITE_AGENT_BASE_URL ?? import.meta.env.VITE_AGENT_API_URL ?? 'http://127.0.0.1:3001';
+export function getAgentApiBaseUrl(): string {
+  // PRODUCTION: Use same-origin relative paths for all deployed domains
+  if (typeof window !== 'undefined') {
+    const hostname = window.location.hostname;
+    if (hostname.includes('blossom.onl') || hostname.includes('vercel.app')) {
+      return ''; // Empty string = same-origin relative paths (/api/...)
+    }
+  }
+
+  // LOCAL DEV: Check env vars or default to localhost
+  return import.meta.env.VITE_AGENT_BASE_URL ?? import.meta.env.VITE_AGENT_API_URL ?? 'http://localhost:3001';
+}
+
+export const AGENT_API_BASE_URL = getAgentApiBaseUrl();
 
 // Log backend URL in dev mode (for debugging)
 if (import.meta.env.DEV) {

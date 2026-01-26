@@ -206,16 +206,40 @@ function generateCorrelationId(): string {
 }
 
 /**
+ * Get build SHA for version tracking
+ * Uses VERCEL_GIT_COMMIT_SHA in production, or generates from git if available
+ */
+function getBuildSha(): string {
+  // In Vercel production, use the git commit SHA from env
+  if (process.env.VERCEL_GIT_COMMIT_SHA) {
+    return process.env.VERCEL_GIT_COMMIT_SHA.slice(0, 7);
+  }
+
+  // Fallback: try to read from git (local dev)
+  try {
+    const { execSync } = require('child_process');
+    const sha = execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).trim();
+    return sha;
+  } catch {
+    return 'dev';
+  }
+}
+
+const BUILD_SHA = getBuildSha();
+
+/**
  * Correlation ID middleware
  * - Accepts x-correlation-id header if provided
  * - Generates one if not provided
  * - Attaches to req and response header
+ * - Adds build version header
  * - Logs request/response timing
  */
 app.use((req, res, next) => {
   const correlationId = (req.headers['x-correlation-id'] as string) || generateCorrelationId();
   req.correlationId = correlationId;
   res.setHeader('x-correlation-id', correlationId);
+  res.setHeader('x-build-sha', BUILD_SHA);
 
   const startTime = Date.now();
 

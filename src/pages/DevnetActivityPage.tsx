@@ -13,6 +13,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Activity, Users, Zap, RefreshCw, ArrowLeft, Clock, Server, CheckCircle, XCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { getAgentApiBaseUrl } from '../lib/apiClient';
 
 // Feature flag: hide execution metrics until meaningful tx volume exists
 const SHOW_EXECUTION_METRICS_FLAG = import.meta.env.VITE_SHOW_EXECUTION_METRICS === 'true';
@@ -88,7 +89,7 @@ interface RpcHealth {
   fallbacks: Array<{ url: string; healthy: boolean; circuitOpen: boolean }>;
 }
 
-const API_BASE = import.meta.env.VITE_AGENT_API_BASE_URL || 'http://localhost:3001';
+const API_BASE = getAgentApiBaseUrl();
 const REFRESH_INTERVAL_MS = 15000;
 
 export default function DevnetActivityPage() {
