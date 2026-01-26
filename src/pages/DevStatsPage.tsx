@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { executeIntent, getAgentApiBaseUrl, type IntentExecutionResult } from '../lib/apiClient';
+import { formatUsdDashboard, formatNumberDashboard, formatTime, truncateAddress, truncateHash } from '../utils/formatters';
 
 // The secret MUST be configured in env for dev mode
 const LEDGER_SECRET = import.meta.env.VITE_DEV_LEDGER_SECRET || '';
@@ -320,38 +321,7 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
     }
   }, [isAuthorized, fetchData]);
 
-  const formatNumber = (n: number | null | undefined): string => {
-    if (n == null) return '-';
-    if (n >= 1000000) return `${(n / 1000000).toFixed(2)}M`;
-    if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
-    return n.toLocaleString();
-  };
-
-  const formatUsd = (n: number | null | undefined): string => {
-    if (n == null || n === 0) return '$0.00';
-    if (n < 0.01) return '<$0.01';
-    return `$${n.toFixed(2)}`;
-  };
-
-  const formatTime = (timestamp: number | null | undefined): string => {
-    if (timestamp == null) return '-';
-    return new Date(timestamp * 1000).toLocaleString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  };
-
-  const truncateAddress = (addr: string): string => {
-    if (!addr) return '-';
-    return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
-  };
-
-  const truncateHash = (hash: string): string => {
-    if (!hash) return '-';
-    return `${hash.slice(0, 10)}...${hash.slice(-6)}`;
-  };
+  // Using formatters from utils/formatters.ts
 
   const isValidExplorerUrl = (url: string | undefined): boolean => {
     if (!url) return false;
@@ -375,26 +345,26 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
 
   const getKindColor = (kind: string | undefined): string => {
     switch (kind) {
-      case 'perp': return 'bg-orange-900/50 text-orange-400';
-      case 'deposit': return 'bg-green-900/50 text-green-400';
-      case 'bridge': return 'bg-purple-900/50 text-purple-400';
-      case 'swap': return 'bg-blue-900/50 text-blue-400';
-      case 'proof': return 'bg-pink-900/50 text-pink-400';
-      case 'relay': return 'bg-cyan-900/50 text-cyan-400';
-      case 'transfer': return 'bg-yellow-900/50 text-yellow-400';
-      default: return 'bg-gray-900/50 text-gray-400';
+      case 'perp': return 'bg-orange-100 text-orange-700';
+      case 'deposit': return 'bg-green-100 text-green-700';
+      case 'bridge': return 'bg-purple-100 text-purple-700';
+      case 'swap': return 'bg-blue-100 text-blue-700';
+      case 'proof': return 'bg-pink-100 text-pink-700';
+      case 'relay': return 'bg-cyan-100 text-cyan-700';
+      case 'transfer': return 'bg-yellow-100 text-yellow-700';
+      default: return 'bg-gray-200 text-gray-700';
     }
   };
 
   const getIntentStatusColor = (status: string | undefined): string => {
     switch (status) {
-      case 'confirmed': return 'bg-green-900/50 text-green-400';
-      case 'failed': return 'bg-red-900/50 text-red-400';
-      case 'executing': return 'bg-yellow-900/50 text-yellow-400';
-      case 'routed': return 'bg-cyan-900/50 text-cyan-400';
-      case 'planned': return 'bg-blue-900/50 text-blue-400';
-      case 'queued': return 'bg-gray-900/50 text-gray-400';
-      default: return 'bg-gray-900/50 text-gray-400';
+      case 'confirmed': return 'bg-green-100 text-green-700';
+      case 'failed': return 'bg-red-100 text-red-700';
+      case 'executing': return 'bg-yellow-100 text-yellow-700';
+      case 'routed': return 'bg-cyan-100 text-cyan-700';
+      case 'planned': return 'bg-blue-100 text-blue-700';
+      case 'queued': return 'bg-gray-200 text-gray-700';
+      default: return 'bg-gray-200 text-gray-700';
     }
   };
 
@@ -444,30 +414,31 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#1a1a2e] via-[#16213e] to-[#0f0f23]">
+    <div className="min-h-screen bg-gradient-to-br from-[#FDF6F9] via-white to-[#F0F4FF]">
       {/* Header */}
-      <header className="border-b border-[#333] bg-[#1a1a2e]/80 backdrop-blur-md sticky top-0 z-50">
+      <header className="border-b border-gray-200 bg-white/80 backdrop-blur-md sticky top-0 z-50 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
-              <Link to="/" className="flex items-center gap-2 text-[#888] hover:text-[#F25AA2] transition-colors">
+              <Link to="/" className="flex items-center gap-2 text-gray-500 hover:text-[#F25AA2] transition-colors">
                 <ArrowLeft className="w-4 h-4" />
                 Back
               </Link>
-              <div className="h-6 w-px bg-[#333]" />
+              <div className="h-6 w-px bg-gray-200" />
               <div className="flex items-center gap-2">
                 {isPublic ? (
                   <Globe className="w-5 h-5 text-[#F25AA2]" />
                 ) : (
                   <BarChart3 className="w-5 h-5 text-[#F25AA2]" />
                 )}
-                <h1 className="text-lg font-bold text-white">
+                <h1 className="text-lg font-bold text-gray-900">
                   {isPublic ? 'Blossom Statistics' : 'Execution Statistics'}
                 </h1>
-                {isPublic ? (
-                  <span className="px-2 py-0.5 text-xs bg-green-900/50 text-green-400 rounded-full">LIVE</span>
-                ) : (
-                  <span className="px-2 py-0.5 text-xs bg-[#F25AA2]/20 text-[#F25AA2] rounded-full">DEV</span>
+                <span className="px-2 py-0.5 text-xs bg-[#F25AA2]/10 text-[#F25AA2] rounded-full font-medium border border-[#F25AA2]/20">
+                  BETA
+                </span>
+                {!isPublic && (
+                  <span className="px-2 py-0.5 text-xs bg-gray-100 text-gray-600 rounded-full">DEV</span>
                 )}
               </div>
             </div>
@@ -475,12 +446,12 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
               {/* Health Indicator */}
               <div className="flex items-center gap-2 text-xs">
                 <div className={`w-2 h-2 rounded-full ${
-                  apiHealth === 'healthy' ? 'bg-green-400 animate-pulse' :
-                  apiHealth === 'error' ? 'bg-red-400' : 'bg-yellow-400'
+                  apiHealth === 'healthy' ? 'bg-green-500 animate-pulse' :
+                  apiHealth === 'error' ? 'bg-red-500' : 'bg-yellow-500'
                 }`} />
                 <span className={
-                  apiHealth === 'healthy' ? 'text-green-400' :
-                  apiHealth === 'error' ? 'text-red-400' : 'text-yellow-400'
+                  apiHealth === 'healthy' ? 'text-green-600' :
+                  apiHealth === 'error' ? 'text-red-600' : 'text-yellow-600'
                 }>
                   {apiHealth === 'healthy' ? 'API Healthy' :
                    apiHealth === 'error' ? 'API Error' : 'Checking...'}
@@ -492,19 +463,19 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
                   type="checkbox"
                   checked={showTortureRuns}
                   onChange={(e) => setShowTortureRuns(e.target.checked)}
-                  className="w-3 h-3 rounded bg-[#333] border-[#555] text-[#F25AA2] focus:ring-[#F25AA2]"
+                  className="w-3 h-3 rounded border-gray-300 text-[#F25AA2] focus:ring-[#F25AA2]"
                 />
-                <span className={showTortureRuns ? 'text-[#F25AA2]' : 'text-[#666]'}>
+                <span className={showTortureRuns ? 'text-[#F25AA2]' : 'text-gray-500'}>
                   Show CLI runs
                 </span>
               </label>
-              <span className="text-xs text-[#666]">
+              <span className="text-xs text-gray-500">
                 {lastUpdated ? `Updated ${lastUpdated.toLocaleTimeString()}` : ''}
               </span>
               <button
                 onClick={fetchData}
                 disabled={loading}
-                className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg bg-[#F25AA2]/20 text-[#F25AA2] hover:bg-[#F25AA2]/30 transition-colors disabled:opacity-50"
+                className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg bg-[#F25AA2] text-white hover:bg-[#E14A92] transition-colors disabled:opacity-50 shadow-sm"
               >
                 <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
                 Refresh
@@ -516,112 +487,112 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
         {error && (
-          <div className="bg-red-900/30 border border-red-500/50 rounded-lg p-4 text-red-400">
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-red-700">
             {error}
           </div>
         )}
 
         {/* Summary Cards */}
         <section>
-          <h2 className="text-lg font-semibold text-white mb-4">Summary</h2>
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">Summary</h2>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
             {/* Total Executions */}
-            <div className="bg-[#1a1a2e] rounded-xl border border-[#333] p-4">
+            <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
               <div className="flex items-center gap-2 mb-2">
                 <Zap className="w-4 h-4 text-[#F25AA2]" />
-                <span className="text-xs text-[#888] uppercase tracking-wide">Executions</span>
+                <span className="text-xs text-gray-500 uppercase tracking-wide">Executions</span>
               </div>
-              <div className="text-2xl font-mono font-bold text-white">
-                {stats ? formatNumber(stats.totalExecutions) : '-'}
+              <div className="text-2xl font-mono font-bold text-gray-900">
+                {stats ? formatNumberDashboard(stats.totalExecutions) : '-'}
               </div>
-              <div className="text-xs text-[#666] mt-1">
-                <span className="text-green-400">{stats?.successfulExecutions ?? 0}</span> successful
+              <div className="text-xs text-gray-500 mt-1">
+                <span className="text-green-600">{stats?.successfulExecutions ?? 0}</span> successful
               </div>
             </div>
 
             {/* USD Routed */}
-            <div className="bg-[#1a1a2e] rounded-xl border border-[#333] p-4">
+            <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
               <div className="flex items-center gap-2 mb-2">
-                <DollarSign className="w-4 h-4 text-green-400" />
-                <span className="text-xs text-[#888] uppercase tracking-wide">USD Routed</span>
+                <DollarSign className="w-4 h-4 text-green-600" />
+                <span className="text-xs text-gray-500 uppercase tracking-wide">USD Routed</span>
               </div>
-              <div className="text-2xl font-mono font-bold text-green-400">
-                {stats ? formatUsd(stats.totalUsdRouted) : '-'}
+              <div className="text-2xl font-mono font-bold text-green-600">
+                {stats ? formatUsdDashboard(stats.totalUsdRouted) : '-'}
               </div>
-              <div className="text-xs text-[#666] mt-1">
+              <div className="text-xs text-gray-500 mt-1">
                 estimated value
               </div>
             </div>
 
             {/* Success Rate */}
-            <div className="bg-[#1a1a2e] rounded-xl border border-[#333] p-4">
+            <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
               <div className="flex items-center gap-2 mb-2">
-                <CheckCircle className="w-4 h-4 text-green-400" />
-                <span className="text-xs text-[#888] uppercase tracking-wide">Success Rate</span>
+                <CheckCircle className="w-4 h-4 text-green-600" />
+                <span className="text-xs text-gray-500 uppercase tracking-wide">Success Rate</span>
               </div>
               <div className={`text-2xl font-mono font-bold ${
-                (stats?.successRateAdjusted ?? stats?.successRate ?? 0) >= 90 ? 'text-green-400' :
-                (stats?.successRateAdjusted ?? stats?.successRate ?? 0) >= 70 ? 'text-yellow-400' : 'text-red-400'
+                (stats?.successRateAdjusted ?? stats?.successRate ?? 0) >= 90 ? 'text-green-600' :
+                (stats?.successRateAdjusted ?? stats?.successRate ?? 0) >= 70 ? 'text-yellow-600' : 'text-red-600'
               }`}>
                 {(stats?.successRateAdjusted ?? stats?.successRate)?.toFixed(1) ?? '0.0'}%
               </div>
               {stats?.successRateAdjusted !== undefined && stats?.successRateRaw !== undefined &&
                Math.abs((stats?.successRateAdjusted ?? 0) - (stats?.successRateRaw ?? 0)) > 1 && (
-                <div className="text-xs text-[#666] mt-1">
+                <div className="text-xs text-gray-500 mt-1">
                   {stats?.successRateRaw?.toFixed(1)}% raw
                 </div>
               )}
             </div>
 
             {/* Relayed TX */}
-            <div className="bg-[#1a1a2e] rounded-xl border border-[#333] p-4">
+            <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
               <div className="flex items-center gap-2 mb-2">
-                <Send className="w-4 h-4 text-cyan-400" />
-                <span className="text-xs text-[#888] uppercase tracking-wide">Relayed TX</span>
+                <Send className="w-4 h-4 text-cyan-600" />
+                <span className="text-xs text-gray-500 uppercase tracking-wide">Relayed TX</span>
               </div>
-              <div className="text-2xl font-mono font-bold text-cyan-400">
-                {stats ? formatNumber(stats.relayedTxCount) : '-'}
+              <div className="text-2xl font-mono font-bold text-cyan-600">
+                {stats ? formatNumberDashboard(stats.relayedTxCount) : '-'}
               </div>
-              <div className="text-xs text-[#666] mt-1">
+              <div className="text-xs text-gray-500 mt-1">
                 via relayer
               </div>
             </div>
 
             {/* Failures */}
-            <div className="bg-[#1a1a2e] rounded-xl border border-[#333] p-4">
+            <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
               <div className="flex items-center gap-2 mb-2">
-                <AlertTriangle className="w-4 h-4 text-red-400" />
-                <span className="text-xs text-[#888] uppercase tracking-wide">Failures</span>
+                <AlertTriangle className="w-4 h-4 text-red-600" />
+                <span className="text-xs text-gray-500 uppercase tracking-wide">Failures</span>
               </div>
-              <div className="text-2xl font-mono font-bold text-red-400">
+              <div className="text-2xl font-mono font-bold text-red-600">
                 {stats?.failedExecutions ?? 0}
               </div>
             </div>
 
             {/* Chains Active */}
-            <div className="bg-[#1a1a2e] rounded-xl border border-[#333] p-4">
+            <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
               <div className="flex items-center gap-2 mb-2">
-                <Server className="w-4 h-4 text-purple-400" />
-                <span className="text-xs text-[#888] uppercase tracking-wide">Chains</span>
+                <Server className="w-4 h-4 text-purple-600" />
+                <span className="text-xs text-gray-500 uppercase tracking-wide">Chains</span>
               </div>
-              <div className="text-2xl font-mono font-bold text-purple-400">
+              <div className="text-2xl font-mono font-bold text-purple-600">
                 {stats?.chainsActive?.length ?? 0}
               </div>
-              <div className="text-xs text-[#666] mt-1">
+              <div className="text-xs text-gray-500 mt-1">
                 {stats?.chainsActive?.join(', ') || 'none'}
               </div>
             </div>
 
             {/* Unique Wallets */}
-            <div className="bg-[#1a1a2e] rounded-xl border border-[#333] p-4">
+            <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
               <div className="flex items-center gap-2 mb-2">
-                <Users className="w-4 h-4 text-blue-400" />
-                <span className="text-xs text-[#888] uppercase tracking-wide">Unique Wallets</span>
+                <Users className="w-4 h-4 text-blue-600" />
+                <span className="text-xs text-gray-500 uppercase tracking-wide">Unique Wallets</span>
               </div>
-              <div className="text-2xl font-mono font-bold text-blue-400">
+              <div className="text-2xl font-mono font-bold text-blue-600">
                 {stats?.uniqueWallets ?? 0}
               </div>
-              <div className="text-xs text-[#666] mt-1">
+              <div className="text-xs text-gray-500 mt-1">
                 distinct addresses
               </div>
             </div>
@@ -631,62 +602,62 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
         {/* Intent Summary Cards */}
         {intentStats && intentStats.totalIntents > 0 && (
           <section>
-            <h2 className="text-lg font-semibold text-white mb-4">Intent Tracking</h2>
+            <h2 className="text-lg font-semibold text-gray-900 mb-4">Intent Tracking</h2>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               {/* Total Intents */}
-              <div className="bg-[#1a1a2e] rounded-xl border border-[#333] p-4">
+              <div className="bg-white rounded-xl border border-gray-200 p-4">
                 <div className="flex items-center gap-2 mb-2">
                   <Activity className="w-4 h-4 text-[#F25AA2]" />
-                  <span className="text-xs text-[#888] uppercase tracking-wide">Intents</span>
+                  <span className="text-xs text-gray-500 uppercase tracking-wide">Intents</span>
                 </div>
-                <div className="text-2xl font-mono font-bold text-white">
-                  {formatNumber(intentStats.totalIntents)}
+                <div className="text-2xl font-mono font-bold text-gray-900">
+                  {formatNumberDashboard(intentStats.totalIntents)}
                 </div>
-                <div className="text-xs text-[#666] mt-1">
-                  <span className="text-green-400">{intentStats.confirmedIntents}</span> confirmed
+                <div className="text-xs text-gray-500 mt-1">
+                  <span className="text-green-600">{intentStats.confirmedIntents}</span> confirmed
                 </div>
               </div>
 
               {/* Intent Success Rate */}
-              <div className="bg-[#1a1a2e] rounded-xl border border-[#333] p-4">
+              <div className="bg-white rounded-xl border border-gray-200 p-4">
                 <div className="flex items-center gap-2 mb-2">
-                  <CheckCircle className="w-4 h-4 text-green-400" />
-                  <span className="text-xs text-[#888] uppercase tracking-wide">Intent Success</span>
+                  <CheckCircle className="w-4 h-4 text-green-600" />
+                  <span className="text-xs text-gray-500 uppercase tracking-wide">Intent Success</span>
                 </div>
                 <div className={`text-2xl font-mono font-bold ${
-                  intentStats.intentSuccessRate >= 90 ? 'text-green-400' :
-                  intentStats.intentSuccessRate >= 70 ? 'text-yellow-400' : 'text-red-400'
+                  intentStats.intentSuccessRate >= 90 ? 'text-green-600' :
+                  intentStats.intentSuccessRate >= 70 ? 'text-yellow-600' : 'text-red-600'
                 }`}>
                   {intentStats.intentSuccessRate.toFixed(1)}%
                 </div>
               </div>
 
               {/* Failed Intents */}
-              <div className="bg-[#1a1a2e] rounded-xl border border-[#333] p-4">
+              <div className="bg-white rounded-xl border border-gray-200 p-4">
                 <div className="flex items-center gap-2 mb-2">
-                  <XCircle className="w-4 h-4 text-red-400" />
-                  <span className="text-xs text-[#888] uppercase tracking-wide">Failed</span>
+                  <XCircle className="w-4 h-4 text-red-600" />
+                  <span className="text-xs text-gray-500 uppercase tracking-wide">Failed</span>
                 </div>
-                <div className="text-2xl font-mono font-bold text-red-400">
+                <div className="text-2xl font-mono font-bold text-red-600">
                   {intentStats.failedIntents}
                 </div>
               </div>
 
               {/* Failure Breakdown */}
-              <div className="bg-[#1a1a2e] rounded-xl border border-[#333] p-4">
+              <div className="bg-white rounded-xl border border-gray-200 p-4">
                 <div className="flex items-center gap-2 mb-2">
-                  <AlertTriangle className="w-4 h-4 text-yellow-400" />
-                  <span className="text-xs text-[#888] uppercase tracking-wide">By Stage</span>
+                  <AlertTriangle className="w-4 h-4 text-yellow-600" />
+                  <span className="text-xs text-gray-500 uppercase tracking-wide">By Stage</span>
                 </div>
                 <div className="text-xs space-y-1 mt-2">
                   {intentStats.failuresByStage.slice(0, 3).map(f => (
                     <div key={f.stage} className="flex justify-between">
-                      <span className="text-[#666]">{f.stage}</span>
-                      <span className="text-red-400">{f.count}</span>
+                      <span className="text-gray-500">{f.stage}</span>
+                      <span className="text-red-600">{f.count}</span>
                     </div>
                   ))}
                   {intentStats.failuresByStage.length === 0 && (
-                    <span className="text-[#666]">No failures</span>
+                    <span className="text-gray-500">No failures</span>
                   )}
                 </div>
               </div>
@@ -697,28 +668,28 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
         {/* Breakdown Cards */}
         {stats && (stats.byKind.length > 0 || stats.byChain.length > 0) && (
           <section>
-            <h2 className="text-lg font-semibold text-white mb-4">Breakdown</h2>
+            <h2 className="text-lg font-semibold text-gray-900 mb-4">Breakdown</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {/* By Kind */}
               {stats.byKind.length > 0 && (
-                <div className="bg-[#1a1a2e] rounded-xl border border-[#333] p-4">
-                  <h3 className="text-sm font-medium text-white mb-3 flex items-center gap-2">
+                <div className="bg-white rounded-xl border border-gray-200 p-4">
+                  <h3 className="text-sm font-medium text-gray-900 mb-3 flex items-center gap-2">
                     <Activity className="w-4 h-4 text-[#F25AA2]" />
                     By Kind
                   </h3>
                   <div className="space-y-2">
                     {stats.byKind.map((k) => (
-                      <div key={k.kind} className="flex items-center justify-between p-2 bg-[#0f0f23] rounded-lg">
+                      <div key={k.kind} className="flex items-center justify-between p-2 bg-gray-50 rounded-lg">
                         <div className="flex items-center gap-2">
                           <span className={`px-2 py-0.5 rounded text-xs ${getKindColor(k.kind)}`}>
                             {k.kind || 'unknown'}
                           </span>
                         </div>
                         <div className="text-right">
-                          <span className="text-white font-mono">{k.count}</span>
+                          <span className="text-gray-900 font-mono">{k.count}</span>
                           {k.usdTotal > 0 && (
-                            <span className="text-[#666] text-xs ml-2">
-                              ({formatUsd(k.usdTotal)})
+                            <span className="text-gray-500 text-xs ml-2">
+                              ({formatUsdDashboard(k.usdTotal)})
                             </span>
                           )}
                         </div>
@@ -730,27 +701,27 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
 
               {/* By Chain */}
               {stats.byChain.length > 0 && (
-                <div className="bg-[#1a1a2e] rounded-xl border border-[#333] p-4">
-                  <h3 className="text-sm font-medium text-white mb-3 flex items-center gap-2">
-                    <Server className="w-4 h-4 text-purple-400" />
+                <div className="bg-white rounded-xl border border-gray-200 p-4">
+                  <h3 className="text-sm font-medium text-gray-900 mb-3 flex items-center gap-2">
+                    <Server className="w-4 h-4 text-purple-600" />
                     By Chain
                   </h3>
                   <div className="space-y-2">
                     {stats.byChain.map((c) => (
-                      <div key={`${c.chain}-${c.network}`} className="flex items-center justify-between p-2 bg-[#0f0f23] rounded-lg">
+                      <div key={`${c.chain}-${c.network}`} className="flex items-center justify-between p-2 bg-gray-50 rounded-lg">
                         <div className="flex items-center gap-2">
                           <div className={`w-2 h-2 rounded-full ${
                             c.chain === 'ethereum' ? 'bg-blue-400' : 'bg-purple-400'
                           }`} />
-                          <span className="text-white capitalize">{c.chain}/{c.network}</span>
+                          <span className="text-gray-900 capitalize">{c.chain}/{c.network}</span>
                         </div>
                         <div className="text-right">
-                          <span className="text-white font-mono">{c.count}</span>
-                          <span className="text-green-400 text-xs ml-2">
+                          <span className="text-gray-900 font-mono">{c.count}</span>
+                          <span className="text-green-600 text-xs ml-2">
                             {c.successCount} ok
                           </span>
                           {c.failedCount > 0 && (
-                            <span className="text-red-400 text-xs ml-1">
+                            <span className="text-red-600 text-xs ml-1">
                               {c.failedCount} fail
                             </span>
                           )}
@@ -766,13 +737,13 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
 
         {/* Recent Executions Table */}
         <section>
-          <h2 className="text-lg font-semibold text-white mb-4">Recent Executions</h2>
-          <div className="bg-[#1a1a2e] rounded-xl border border-[#333] overflow-hidden">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">Recent Executions</h2>
+          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
             {executions.length > 0 ? (
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
-                  <thead className="bg-[#0f0f23]">
-                    <tr className="text-left text-[#888] border-b border-[#333]">
+                  <thead className="bg-gray-50">
+                    <tr className="text-left text-gray-500 border-b border-gray-200">
                       <th className="px-3 py-2 font-medium w-8"></th>
                       <th className="px-3 py-2 font-medium">ID</th>
                       <th className="px-3 py-2 font-medium">Chain</th>
@@ -789,24 +760,24 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
                     {executions.map((exec) => (
                       <React.Fragment key={exec.id}>
                         <tr
-                          className={`border-b border-[#333] ${!isPublic ? 'hover:bg-[#0f0f23] cursor-pointer' : ''} ${
-                            expandedExecution === exec.id ? 'bg-[#0f0f23]' : ''
+                          className={`border-b border-gray-200 ${!isPublic ? 'hover:bg-gray-50 cursor-pointer' : ''} ${
+                            expandedExecution === exec.id ? 'bg-gray-50' : ''
                           }`}
                           onClick={() => !isPublic && toggleExpanded(exec.id)}
                         >
                           <td className="px-3 py-2">
                             {!isPublic && (expandedExecution === exec.id ? (
-                              <ChevronDown className="w-4 h-4 text-[#888]" />
+                              <ChevronDown className="w-4 h-4 text-gray-500" />
                             ) : (
-                              <ChevronRight className="w-4 h-4 text-[#888]" />
+                              <ChevronRight className="w-4 h-4 text-gray-500" />
                             ))}
                           </td>
-                          <td className="px-3 py-2 text-[#888]" title={exec.id}>
+                          <td className="px-3 py-2 text-gray-500" title={exec.id}>
                             {exec.id.slice(0, 8)}...
                           </td>
                           <td className="px-3 py-2">
                             <span className={`px-2 py-0.5 rounded text-xs ${
-                              exec.chain === 'ethereum' ? 'bg-blue-900/50 text-blue-400' : 'bg-purple-900/50 text-purple-400'
+                              exec.chain === 'ethereum' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'
                             }`}>
                               {exec.chain}/{exec.network}
                             </span>
@@ -816,29 +787,29 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
                               {exec.kind || '-'}
                             </span>
                           </td>
-                          <td className="px-3 py-2 text-white">{exec.venue || '-'}</td>
-                          <td className="px-3 py-2 text-right text-green-400">
-                            {exec.usd_estimate ? formatUsd(exec.usd_estimate) : '-'}
+                          <td className="px-3 py-2 text-gray-900">{exec.venue || '-'}</td>
+                          <td className="px-3 py-2 text-right text-green-600">
+                            {exec.usd_estimate ? formatUsdDashboard(exec.usd_estimate) : '-'}
                             {exec.usd_estimate_is_estimate === 1 && (
-                              <span className="text-[#666] text-xs ml-1">~</span>
+                              <span className="text-gray-500 text-xs ml-1">~</span>
                             )}
                           </td>
                           <td className="px-3 py-2">
                             <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs ${
                               exec.status === 'confirmed' || exec.status === 'finalized'
-                                ? 'bg-green-900/50 text-green-400'
+                                ? 'bg-green-100 text-green-700'
                                 : exec.status === 'failed'
-                                ? 'bg-red-900/50 text-red-400'
+                                ? 'bg-red-100 text-red-700'
                                 : exec.status === 'submitted'
-                                ? 'bg-yellow-900/50 text-yellow-400'
-                                : 'bg-gray-900/50 text-gray-400'
+                                ? 'bg-yellow-100 text-yellow-700'
+                                : 'bg-gray-200 text-gray-700'
                             }`}>
                               {exec.status === 'confirmed' && <CheckCircle className="w-3 h-3" />}
                               {exec.status === 'failed' && <XCircle className="w-3 h-3" />}
                               {exec.status}
                             </span>
                           </td>
-                          <td className="px-3 py-2 text-[#888]">
+                          <td className="px-3 py-2 text-gray-500">
                             <div className="flex items-center gap-1">
                               <Clock className="w-3 h-3" />
                               {formatTime(exec.created_at)}
@@ -846,11 +817,11 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
                           </td>
                           <td className="px-3 py-2">
                             {exec.relayer_address ? (
-                              <span className="text-cyan-400" title={exec.relayer_address}>
+                              <span className="text-cyan-600" title={exec.relayer_address}>
                                 {truncateAddress(exec.relayer_address)}
                               </span>
                             ) : (
-                              <span className="text-[#666]">-</span>
+                              <span className="text-gray-500">-</span>
                             )}
                           </td>
                           <td className="px-3 py-2">
@@ -868,7 +839,7 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
                                     <ExternalLink className="w-3 h-3" />
                                   </a>
                                 ) : (
-                                  <span className="flex items-center gap-1 text-yellow-400" title="Invalid explorer URL">
+                                  <span className="flex items-center gap-1 text-yellow-600" title="Invalid explorer URL">
                                     {truncateHash(exec.tx_hash || '')}
                                     <AlertOctagon className="w-3 h-3" />
                                   </span>
@@ -876,7 +847,7 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
                                 {exec.tx_hash && (
                                   <button
                                     onClick={(e) => copyToClipboard(exec.tx_hash!, e)}
-                                    className="text-[#666] hover:text-white p-1 rounded"
+                                    className="text-gray-500 hover:text-gray-900 p-1 rounded"
                                     title="Copy tx hash"
                                   >
                                     <Copy className="w-3 h-3" />
@@ -884,65 +855,65 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
                                 )}
                               </div>
                             ) : (
-                              <span className="text-[#666]">-</span>
+                              <span className="text-gray-500">-</span>
                             )}
                           </td>
                         </tr>
                         {/* Expanded Row - Execution Steps */}
                         {expandedExecution === exec.id && (
                           <tr key={`${exec.id}-steps`}>
-                            <td colSpan={10} className="bg-[#0a0a15] p-4">
+                            <td colSpan={10} className="bg-gray-100 p-4">
                               <div className="pl-8">
-                                <h4 className="text-xs font-semibold text-[#888] uppercase tracking-wide mb-2">
+                                <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
                                   Execution Details
                                 </h4>
                                 <div className="grid grid-cols-2 gap-4 text-xs mb-4">
                                   <div>
-                                    <span className="text-[#666]">Intent:</span>
-                                    <span className="text-white ml-2">{exec.intent}</span>
+                                    <span className="text-gray-500">Intent:</span>
+                                    <span className="text-gray-900 ml-2">{exec.intent}</span>
                                   </div>
                                   <div>
-                                    <span className="text-[#666]">Action:</span>
-                                    <span className="text-white ml-2">{exec.action}</span>
+                                    <span className="text-gray-500">Action:</span>
+                                    <span className="text-gray-900 ml-2">{exec.action}</span>
                                   </div>
                                   <div>
-                                    <span className="text-[#666]">From:</span>
-                                    <span className="text-white ml-2 font-mono">{truncateAddress(exec.from_address)}</span>
+                                    <span className="text-gray-500">From:</span>
+                                    <span className="text-gray-900 ml-2 font-mono">{truncateAddress(exec.from_address)}</span>
                                   </div>
                                   {exec.to_address && (
                                     <div>
-                                      <span className="text-[#666]">To:</span>
-                                      <span className="text-white ml-2 font-mono">{truncateAddress(exec.to_address)}</span>
+                                      <span className="text-gray-500">To:</span>
+                                      <span className="text-gray-900 ml-2 font-mono">{truncateAddress(exec.to_address)}</span>
                                     </div>
                                   )}
                                   {exec.token && (
                                     <div>
-                                      <span className="text-[#666]">Token:</span>
-                                      <span className="text-white ml-2">{exec.token}</span>
+                                      <span className="text-gray-500">Token:</span>
+                                      <span className="text-gray-900 ml-2">{exec.token}</span>
                                     </div>
                                   )}
                                   {exec.amount_display && (
                                     <div>
-                                      <span className="text-[#666]">Amount:</span>
-                                      <span className="text-white ml-2">{exec.amount_display}</span>
+                                      <span className="text-gray-500">Amount:</span>
+                                      <span className="text-gray-900 ml-2">{exec.amount_display}</span>
                                     </div>
                                   )}
                                   {exec.latency_ms && (
                                     <div>
-                                      <span className="text-[#666]">Latency:</span>
-                                      <span className="text-white ml-2">{exec.latency_ms}ms</span>
+                                      <span className="text-gray-500">Latency:</span>
+                                      <span className="text-gray-900 ml-2">{exec.latency_ms}ms</span>
                                     </div>
                                   )}
                                   {exec.gas_used && (
                                     <div>
-                                      <span className="text-[#666]">Gas:</span>
-                                      <span className="text-white ml-2">{exec.gas_used}</span>
+                                      <span className="text-gray-500">Gas:</span>
+                                      <span className="text-gray-900 ml-2">{exec.gas_used}</span>
                                     </div>
                                   )}
                                   {exec.error_message && (
                                     <div className="col-span-2">
-                                      <span className="text-[#666]">Error:</span>
-                                      <span className="text-red-400 ml-2">{exec.error_message}</span>
+                                      <span className="text-gray-500">Error:</span>
+                                      <span className="text-red-600 ml-2">{exec.error_message}</span>
                                     </div>
                                   )}
                                 </div>
@@ -950,21 +921,21 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
                                 {/* Execution Steps */}
                                 {executionSteps[exec.id] && executionSteps[exec.id].length > 0 && (
                                   <div className="mt-4">
-                                    <h4 className="text-xs font-semibold text-[#888] uppercase tracking-wide mb-2">
+                                    <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
                                       Steps
                                     </h4>
                                     <div className="space-y-2">
                                       {executionSteps[exec.id].map((step) => (
-                                        <div key={step.id} className="flex items-center justify-between p-2 bg-[#1a1a2e] rounded-lg">
+                                        <div key={step.id} className="flex items-center justify-between p-2 bg-white rounded-lg">
                                           <div className="flex items-center gap-3">
-                                            <span className="text-[#666] text-xs w-6">#{step.step_index}</span>
-                                            <span className="text-white capitalize">{step.action}</span>
+                                            <span className="text-gray-500 text-xs w-6">#{step.step_index}</span>
+                                            <span className="text-gray-900 capitalize">{step.action}</span>
                                           </div>
                                           <div className="flex items-center gap-4">
                                             <span className={`px-2 py-0.5 rounded-full text-xs ${
-                                              step.status === 'confirmed' ? 'bg-green-900/50 text-green-400' :
-                                              step.status === 'failed' ? 'bg-red-900/50 text-red-400' :
-                                              'bg-gray-900/50 text-gray-400'
+                                              step.status === 'confirmed' ? 'bg-green-100 text-green-700' :
+                                              step.status === 'failed' ? 'bg-red-100 text-red-700' :
+                                              'bg-gray-200 text-gray-700'
                                             }`}>
                                               {step.status}
                                             </span>
@@ -981,7 +952,7 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
                                                     <ExternalLink className="w-3 h-3" />
                                                   </a>
                                                 ) : (
-                                                  <span className="flex items-center gap-1 text-yellow-400 text-xs" title="Invalid URL">
+                                                  <span className="flex items-center gap-1 text-yellow-600 text-xs" title="Invalid URL">
                                                     {truncateHash(step.tx_hash || '')}
                                                     <AlertOctagon className="w-3 h-3" />
                                                   </span>
@@ -989,7 +960,7 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
                                                 {step.tx_hash && (
                                                   <button
                                                     onClick={(e) => copyToClipboard(step.tx_hash!, e)}
-                                                    className="text-[#666] hover:text-white p-1"
+                                                    className="text-gray-500 hover:text-gray-900 p-1"
                                                     title="Copy tx hash"
                                                   >
                                                     <Copy className="w-3 h-3" />
@@ -1005,7 +976,7 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
                                 )}
 
                                 {executionSteps[exec.id] && executionSteps[exec.id].length === 0 && (
-                                  <p className="text-[#666] text-xs">No steps recorded for this execution.</p>
+                                  <p className="text-gray-500 text-xs">No steps recorded for this execution.</p>
                                 )}
                               </div>
                             </td>
@@ -1017,7 +988,7 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
                 </table>
               </div>
             ) : (
-              <div className="p-8 text-center text-[#666]">
+              <div className="p-8 text-center text-gray-500">
                 <p>No executions recorded yet.</p>
                 <p className="text-sm mt-2">Run a smoke test to see data here.</p>
               </div>
@@ -1027,38 +998,38 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
 
         {/* Internal Verification Panel - Hidden in public mode */}
         {!isPublic && (
-        <section className="bg-[#1a1a2e] rounded-xl border border-[#333] p-4">
-          <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-            <Zap className="w-5 h-5 text-yellow-400" />
+        <section className="bg-white rounded-xl border border-gray-200 p-4">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+            <Zap className="w-5 h-5 text-yellow-600" />
             Internal Verification
           </h2>
-          <p className="text-sm text-[#888] mb-4">
+          <p className="text-sm text-gray-500 mb-4">
             Test intent execution directly from the UI. Results are recorded in the ledger.
           </p>
 
           <div className="space-y-3">
             {/* Intent Input */}
             <div>
-              <label className="block text-sm text-[#888] mb-1">Intent Text</label>
+              <label className="block text-sm text-gray-500 mb-1">Intent Text</label>
               <input
                 type="text"
                 value={verifyIntent}
                 onChange={(e) => setVerifyIntent(e.target.value)}
                 placeholder="e.g., swap 0.001 ETH to USDC"
-                className="w-full px-3 py-2 bg-[#0f0f23] border border-[#333] rounded-lg text-white placeholder-[#555] focus:border-[#666] focus:outline-none text-sm"
+                className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-gray-900 placeholder-[#555] focus:border-[#666] focus:outline-none text-sm"
               />
             </div>
 
             {/* Chain Selection */}
             <div>
-              <label className="block text-sm text-[#888] mb-1">Chain</label>
+              <label className="block text-sm text-gray-500 mb-1">Chain</label>
               <div className="flex gap-2">
                 <button
                   onClick={() => setVerifyChain('ethereum')}
                   className={`px-3 py-1.5 rounded-lg text-sm transition-colors ${
                     verifyChain === 'ethereum'
                       ? 'bg-blue-600 text-white'
-                      : 'bg-[#0f0f23] border border-[#333] text-[#888] hover:border-[#555]'
+                      : 'bg-gray-50 border border-gray-200 text-gray-500 hover:border-gray-300'
                   }`}
                 >
                   Ethereum (Sepolia)
@@ -1068,7 +1039,7 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
                   className={`px-3 py-1.5 rounded-lg text-sm transition-colors ${
                     verifyChain === 'solana'
                       ? 'bg-purple-600 text-white'
-                      : 'bg-[#0f0f23] border border-[#333] text-[#888] hover:border-[#555]'
+                      : 'bg-gray-50 border border-gray-200 text-gray-500 hover:border-gray-300'
                   }`}
                 >
                   Solana (Devnet)
@@ -1105,7 +1076,7 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
               disabled={verifyRunning || !verifyIntent.trim()}
               className={`w-full px-4 py-2 rounded-lg font-medium transition-colors flex items-center justify-center gap-2 ${
                 verifyRunning || !verifyIntent.trim()
-                  ? 'bg-[#333] text-[#666] cursor-not-allowed'
+                  ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
                   : 'bg-gradient-to-r from-pink-500 to-purple-500 text-white hover:from-pink-600 hover:to-purple-600'
               }`}
             >
@@ -1133,15 +1104,15 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
               >
                 <div className="flex items-center gap-2 mb-2">
                   {verifyResult.ok ? (
-                    <CheckCircle className="w-4 h-4 text-green-400" />
+                    <CheckCircle className="w-4 h-4 text-green-600" />
                   ) : (
-                    <XCircle className="w-4 h-4 text-red-400" />
+                    <XCircle className="w-4 h-4 text-red-600" />
                   )}
-                  <span className={verifyResult.ok ? 'text-green-400' : 'text-red-400'}>
+                  <span className={verifyResult.ok ? 'text-green-600' : 'text-red-600'}>
                     {verifyResult.ok ? 'Execution Successful' : 'Execution Failed'}
                   </span>
                   {verifyResult.metadata?.executedKind === 'proof_only' && (
-                    <span className="px-2 py-0.5 rounded text-xs bg-amber-900/30 text-amber-400">
+                    <span className="px-2 py-0.5 rounded text-xs bg-amber-100 text-amber-700">
                       proof_only
                     </span>
                   )}
@@ -1149,9 +1120,9 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
 
                 {verifyResult.ok && verifyResult.txHash && (
                   <div className="space-y-1 text-sm">
-                    <div className="flex items-center gap-2 text-[#888]">
+                    <div className="flex items-center gap-2 text-gray-500">
                       <span>TX:</span>
-                      <code className="text-white font-mono">
+                      <code className="text-gray-900 font-mono">
                         {verifyResult.txHash.slice(0, 12)}...{verifyResult.txHash.slice(-8)}
                       </code>
                       {verifyResult.explorerUrl && (
@@ -1159,16 +1130,16 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
                           href={verifyResult.explorerUrl}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="text-blue-400 hover:text-blue-300 flex items-center gap-1"
+                          className="text-blue-600 hover:text-blue-300 flex items-center gap-1"
                         >
                           <ExternalLink className="w-3 h-3" />
                           View
                         </a>
                       )}
                     </div>
-                    <div className="flex items-center gap-2 text-[#888]">
+                    <div className="flex items-center gap-2 text-gray-500">
                       <span>Intent ID:</span>
-                      <code className="text-white font-mono text-xs">{verifyResult.intentId}</code>
+                      <code className="text-gray-900 font-mono text-xs">{verifyResult.intentId}</code>
                     </div>
                   </div>
                 )}
@@ -1178,7 +1149,7 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
                     <p className="text-red-300">
                       {verifyResult.error.stage}: {verifyResult.error.code}
                     </p>
-                    <p className="text-[#888] mt-1">{verifyResult.error.message}</p>
+                    <p className="text-gray-500 mt-1">{verifyResult.error.message}</p>
                   </div>
                 )}
               </div>
@@ -1205,9 +1176,9 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
           return (
           <section>
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-white">Recent Intents</h2>
+              <h2 className="text-lg font-semibold text-gray-900">Recent Intents</h2>
               {cliCount > 0 && (
-                <span className="text-xs text-[#666]">
+                <span className="text-xs text-gray-500">
                   {showTortureRuns ? (
                     <span className="text-[#F25AA2]">{cliCount} CLI intents shown</span>
                   ) : (
@@ -1216,11 +1187,11 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
                 </span>
               )}
             </div>
-            <div className="bg-[#1a1a2e] rounded-xl border border-[#333] overflow-hidden">
+            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
-                  <thead className="bg-[#0f0f23]">
-                    <tr className="text-left text-[#888] border-b border-[#333]">
+                  <thead className="bg-gray-50">
+                    <tr className="text-left text-gray-500 border-b border-gray-200">
                       <th className="px-3 py-2 font-medium w-8"></th>
                       <th className="px-3 py-2 font-medium">Intent</th>
                       <th className="px-3 py-2 font-medium">Kind</th>
@@ -1235,19 +1206,19 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
                     {filteredIntents.map((intent) => (
                       <React.Fragment key={intent.id}>
                         <tr
-                          className={`border-b border-[#333] hover:bg-[#0f0f23] cursor-pointer ${
-                            expandedIntent === intent.id ? 'bg-[#0f0f23]' : ''
+                          className={`border-b border-gray-200 hover:bg-gray-50 cursor-pointer ${
+                            expandedIntent === intent.id ? 'bg-gray-50' : ''
                           }`}
                           onClick={() => toggleIntentExpanded(intent.id)}
                         >
                           <td className="px-3 py-2">
                             {expandedIntent === intent.id ? (
-                              <ChevronDown className="w-4 h-4 text-[#888]" />
+                              <ChevronDown className="w-4 h-4 text-gray-500" />
                             ) : (
-                              <ChevronRight className="w-4 h-4 text-[#888]" />
+                              <ChevronRight className="w-4 h-4 text-gray-500" />
                             )}
                           </td>
-                          <td className="px-3 py-2 text-white max-w-[200px] truncate" title={intent.intent_text}>
+                          <td className="px-3 py-2 text-gray-900 max-w-[200px] truncate" title={intent.intent_text}>
                             {intent.intent_text}
                           </td>
                           <td className="px-3 py-2">
@@ -1260,21 +1231,21 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
                                 const source = meta?.source;
                                 if (source === 'cli') {
                                   return (
-                                    <span className="px-1.5 py-0.5 rounded text-[9px] bg-blue-900/50 text-blue-400" title={`CLI: ${meta?.category || 'unknown'}`}>
+                                    <span className="px-1.5 py-0.5 rounded text-[9px] bg-blue-100 text-blue-700" title={`CLI: ${meta?.category || 'unknown'}`}>
                                       CLI
                                     </span>
                                   );
                                 }
                                 if (source === 'torture_suite') {
                                   return (
-                                    <span className="px-1.5 py-0.5 rounded text-[9px] bg-orange-900/50 text-orange-400" title="Torture Suite">
+                                    <span className="px-1.5 py-0.5 rounded text-[9px] bg-orange-100 text-orange-700" title="Torture Suite">
                                       TS
                                     </span>
                                   );
                                 }
                                 if (source === 'ui') {
                                   return (
-                                    <span className="px-1.5 py-0.5 rounded text-[9px] bg-green-900/50 text-green-400" title={`UI: ${meta?.domain || 'unknown'}`}>
+                                    <span className="px-1.5 py-0.5 rounded text-[9px] bg-green-100 text-green-700" title={`UI: ${meta?.domain || 'unknown'}`}>
                                       UI
                                     </span>
                                   );
@@ -1290,13 +1261,13 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
                               {intent.status}
                             </span>
                           </td>
-                          <td className="px-3 py-2 text-right text-green-400">
-                            {intent.usd_estimate ? formatUsd(intent.usd_estimate) : '-'}
+                          <td className="px-3 py-2 text-right text-green-600">
+                            {intent.usd_estimate ? formatUsdDashboard(intent.usd_estimate) : '-'}
                           </td>
-                          <td className="px-3 py-2 text-[#888]">
+                          <td className="px-3 py-2 text-gray-500">
                             {intent.requested_chain || '-'} / {intent.requested_venue || '-'}
                           </td>
-                          <td className="px-3 py-2 text-[#888]">
+                          <td className="px-3 py-2 text-gray-500">
                             <div className="flex items-center gap-1">
                               <Clock className="w-3 h-3" />
                               {formatTime(intent.created_at)}
@@ -1304,54 +1275,54 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
                           </td>
                           <td className="px-3 py-2">
                             {intent.status === 'failed' ? (
-                              <div className="text-red-400 text-xs">
+                              <div className="text-red-600 text-xs">
                                 <span className="font-medium">{intent.failure_stage}</span>
                                 {intent.error_code && <span className="ml-1">({intent.error_code})</span>}
                               </div>
                             ) : (
-                              <span className="text-[#666]">-</span>
+                              <span className="text-gray-500">-</span>
                             )}
                           </td>
                         </tr>
                         {/* Expanded Row - Intent Details */}
                         {expandedIntent === intent.id && (
                           <tr key={`${intent.id}-details`}>
-                            <td colSpan={8} className="bg-[#0a0a15] p-4">
+                            <td colSpan={8} className="bg-gray-100 p-4">
                               <div className="pl-8">
-                                <h4 className="text-xs font-semibold text-[#888] uppercase tracking-wide mb-2">
+                                <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
                                   Intent Details
                                 </h4>
                                 <div className="grid grid-cols-2 gap-4 text-xs mb-4">
                                   <div>
-                                    <span className="text-[#666]">ID:</span>
-                                    <span className="text-white ml-2 font-mono">{intent.id}</span>
+                                    <span className="text-gray-500">ID:</span>
+                                    <span className="text-gray-900 ml-2 font-mono">{intent.id}</span>
                                   </div>
                                   <div>
-                                    <span className="text-[#666]">Full Intent:</span>
-                                    <span className="text-white ml-2">{intent.intent_text}</span>
+                                    <span className="text-gray-500">Full Intent:</span>
+                                    <span className="text-gray-900 ml-2">{intent.intent_text}</span>
                                   </div>
                                   {intent.planned_at && (
                                     <div>
-                                      <span className="text-[#666]">Planned At:</span>
-                                      <span className="text-white ml-2">{formatTime(intent.planned_at)}</span>
+                                      <span className="text-gray-500">Planned At:</span>
+                                      <span className="text-gray-900 ml-2">{formatTime(intent.planned_at)}</span>
                                     </div>
                                   )}
                                   {intent.executed_at && (
                                     <div>
-                                      <span className="text-[#666]">Executed At:</span>
-                                      <span className="text-white ml-2">{formatTime(intent.executed_at)}</span>
+                                      <span className="text-gray-500">Executed At:</span>
+                                      <span className="text-gray-900 ml-2">{formatTime(intent.executed_at)}</span>
                                     </div>
                                   )}
                                   {intent.confirmed_at && (
                                     <div>
-                                      <span className="text-[#666]">Confirmed At:</span>
-                                      <span className="text-white ml-2">{formatTime(intent.confirmed_at)}</span>
+                                      <span className="text-gray-500">Confirmed At:</span>
+                                      <span className="text-gray-900 ml-2">{formatTime(intent.confirmed_at)}</span>
                                     </div>
                                   )}
                                   {intent.error_message && (
                                     <div className="col-span-2">
-                                      <span className="text-[#666]">Error:</span>
-                                      <span className="text-red-400 ml-2">{intent.error_message}</span>
+                                      <span className="text-gray-500">Error:</span>
+                                      <span className="text-red-600 ml-2">{intent.error_message}</span>
                                     </div>
                                   )}
                                 </div>
@@ -1359,10 +1330,10 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
                                 {/* Parsed Metadata */}
                                 {intent.metadata_json && (
                                   <div className="mt-4">
-                                    <h4 className="text-xs font-semibold text-[#888] uppercase tracking-wide mb-2">
+                                    <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
                                       Metadata
                                     </h4>
-                                    <pre className="text-xs text-[#888] bg-[#1a1a2e] p-2 rounded overflow-x-auto max-h-40">
+                                    <pre className="text-xs text-gray-500 bg-white p-2 rounded overflow-x-auto max-h-40">
                                       {JSON.stringify(parseMetadataJson(intent.metadata_json), null, 2)}
                                     </pre>
                                   </div>
@@ -1383,7 +1354,7 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
 
         {/* Last Execution Timestamp */}
         {stats?.lastExecutionAt && (
-          <div className="text-center text-xs text-[#666]">
+          <div className="text-center text-xs text-gray-500">
             Last execution: {formatTime(stats.lastExecutionAt)}
           </div>
         )}
