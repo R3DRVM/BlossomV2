@@ -1294,4 +1294,17 @@ export async function getSummaryStatsWithIntentsAsync() {
     // SQLite: use synchronous version
     return Promise.resolve(getSummaryStatsWithIntents());
 }
+/**
+ * Get database identity hash for verifying same-DB across endpoints
+ * Returns a safe hash of non-secret DB identifiers (NEVER includes passwords)
+ */
+export function getDatabaseIdentityHash() {
+    if (dbType === 'postgres') {
+        // Import synchronously for Postgres
+        const { getDatabaseIdentityHash: getPgHash } = require('./db-pg-client.js');
+        return getPgHash();
+    }
+    // SQLite: return fixed identifier
+    return 'sqlite-local';
+}
 //# sourceMappingURL=db.js.map
