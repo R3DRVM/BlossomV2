@@ -325,6 +325,11 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
   }, [executionSteps]);
 
   const toggleExpanded = (executionId: string) => {
+    // In public mode, disable expansion (requires auth to fetch execution steps)
+    if (isPublic) {
+      return;
+    }
+
     if (expandedExecution === executionId) {
       setExpandedExecution(null);
     } else {
@@ -1004,17 +1009,17 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
                     {executions.map((exec) => (
                       <React.Fragment key={exec.id}>
                         <tr
-                          className={`border-b border-[#333] hover:bg-[#0f0f23] cursor-pointer ${
+                          className={`border-b border-[#333] ${!isPublic ? 'hover:bg-[#0f0f23] cursor-pointer' : ''} ${
                             expandedExecution === exec.id ? 'bg-[#0f0f23]' : ''
                           }`}
-                          onClick={() => toggleExpanded(exec.id)}
+                          onClick={() => !isPublic && toggleExpanded(exec.id)}
                         >
                           <td className="px-4 py-3">
-                            {expandedExecution === exec.id ? (
+                            {!isPublic && (expandedExecution === exec.id ? (
                               <ChevronDown className="w-4 h-4 text-[#888]" />
                             ) : (
                               <ChevronRight className="w-4 h-4 text-[#888]" />
-                            )}
+                            ))}
                           </td>
                           <td className="px-4 py-3 text-[#888]" title={exec.id}>
                             {exec.id.slice(0, 8)}...

@@ -6709,7 +6709,7 @@ app.get('/api/stats/public', async (req, res) => {
       confirmed_at: intent.confirmed_at,
     }));
 
-    // Sanitize recent executions (include txHash, chain, network for explorer links)
+    // Sanitize recent executions (include txHash, chain, network for explorer links, and USD estimate)
     const safeExecutions = recentExecutions.map(exec => ({
       id: exec.id,
       chain: exec.chain,
@@ -6721,6 +6721,8 @@ app.get('/api/stats/public', async (req, res) => {
       explorer_url: exec.explorer_url,
       created_at: exec.created_at,
       intent_id: exec.intent_id,
+      usd_estimate: exec.usd_estimate || null,
+      amount_display: exec.amount_display || null,
     }));
 
     res.json({
