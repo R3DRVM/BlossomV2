@@ -87,7 +87,8 @@ interface ProofBundle {
   solana: { txHash: string; explorerUrl: string; action: string; createdAt: number }[];
 }
 
-const API_BASE = import.meta.env.VITE_AGENT_API_BASE_URL || 'http://localhost:3001';
+import { getAgentApiBaseUrl } from '../lib/apiClient';
+const API_BASE = getAgentApiBaseUrl();
 
 export default function DevLedgerPage() {
   const [searchParams] = useSearchParams();
