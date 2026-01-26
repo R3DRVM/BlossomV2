@@ -6672,13 +6672,14 @@ app.post('/api/waitlist/join', async (req, res) => {
  */
 app.get('/api/stats/public', async (req, res) => {
   try {
-    const { getSummaryStatsAsync, getIntentStatsSummaryAsync, getRecentIntentsAsync } = await import('../../execution-ledger/db');
+    const { getSummaryStatsAsync, getIntentStatsSummaryAsync, getRecentIntentsAsync, getRecentExecutionsAsync } = await import('../../execution-ledger/db');
 
     // Return limited public stats (async for Postgres support)
-    const [summary, intentStats, recentIntents] = await Promise.all([
+    const [summary, intentStats, recentIntents, recentExecutions] = await Promise.all([
       getSummaryStatsAsync(),
       getIntentStatsSummaryAsync(),
       getRecentIntentsAsync(20),
+      getRecentExecutionsAsync(20),
     ]);
 
     // Sanitize recent intents (remove metadata, keep only safe fields)
@@ -6689,6 +6690,20 @@ app.get('/api/stats/public', async (req, res) => {
       requested_chain: intent.requested_chain,
       created_at: intent.created_at,
       confirmed_at: intent.confirmed_at,
+    }));
+
+    // Sanitize recent executions (include txHash, chain, network for explorer links)
+    const safeExecutions = recentExecutions.map(exec => ({
+      id: exec.id,
+      chain: exec.chain,
+      network: exec.network,
+      kind: exec.kind,
+      venue: exec.venue,
+      status: exec.status,
+      tx_hash: exec.tx_hash,
+      explorer_url: exec.explorer_url,
+      created_at: exec.created_at,
+      intent_id: exec.intent_id,
     }));
 
     res.json({
@@ -6702,6 +6717,7 @@ app.get('/api/stats/public', async (req, res) => {
         totalUsdRouted: summary.totalUsdRouted || 0,
         chainsActive: summary.chainsActive || [],
         recentIntents: safeIntents || [],
+        recentExecutions: safeExecutions || [],
         lastUpdated: Date.now(),
       },
     });
@@ -6719,6 +6735,7 @@ app.get('/api/stats/public', async (req, res) => {
         totalUsdRouted: 0,
         chainsActive: [],
         recentIntents: [],
+        recentExecutions: [],
         lastUpdated: Date.now(),
       },
     });
