@@ -6257,8 +6257,8 @@ app.get('/api/ledger/wallets', checkLedgerSecret, async (req, res) => {
  */
 app.get('/api/ledger/stats/summary', checkLedgerSecret, async (req, res) => {
   try {
-    const { getSummaryStats } = await import('../../execution-ledger/db');
-    const stats = getSummaryStats();
+    const { getSummaryStatsAsync } = await import('../../execution-ledger/db');
+    const stats = await getSummaryStatsAsync();
     res.json({ ok: true, data: stats });
   } catch (error) {
     console.error('[ledger] Failed to fetch stats summary:', error);
@@ -6336,9 +6336,9 @@ app.get('/api/ledger/executions/:id/steps', checkLedgerSecret, async (req, res) 
  */
 app.get('/api/ledger/intents/recent', checkLedgerSecret, async (req, res) => {
   try {
-    const { getRecentIntents } = await import('../../execution-ledger/db');
+    const { getRecentIntentsAsync } = await import('../../execution-ledger/db');
     const limit = parseInt(req.query.limit as string) || 50;
-    const intents = getRecentIntents(Math.min(limit, 100));
+    const intents = await getRecentIntentsAsync(Math.min(limit, 100));
     res.json({ ok: true, data: intents });
   } catch (error) {
     console.error('[ledger] Failed to fetch recent intents:', error);
@@ -6352,15 +6352,15 @@ app.get('/api/ledger/intents/recent', checkLedgerSecret, async (req, res) => {
  */
 app.get('/api/ledger/intents/:id', checkLedgerSecret, async (req, res) => {
   try {
-    const { getIntent, getExecutionsForIntent } = await import('../../execution-ledger/db');
-    const intent = getIntent(req.params.id);
+    const { getIntentAsync, getExecutionsForIntentAsync } = await import('../../execution-ledger/db');
+    const intent = await getIntentAsync(req.params.id);
 
     if (!intent) {
       return res.status(404).json({ ok: false, error: 'Intent not found', data: null });
     }
 
     // Include linked executions
-    const executions = getExecutionsForIntent(req.params.id);
+    const executions = await getExecutionsForIntentAsync(req.params.id);
 
     res.json({
       ok: true,
@@ -6381,8 +6381,8 @@ app.get('/api/ledger/intents/:id', checkLedgerSecret, async (req, res) => {
  */
 app.get('/api/ledger/stats/intents', checkLedgerSecret, async (req, res) => {
   try {
-    const { getIntentStatsSummary } = await import('../../execution-ledger/db');
-    const stats = getIntentStatsSummary();
+    const { getIntentStatsSummaryAsync } = await import('../../execution-ledger/db');
+    const stats = await getIntentStatsSummaryAsync();
     res.json({ ok: true, data: stats });
   } catch (error) {
     console.error('[ledger] Failed to fetch intent stats:', error);
@@ -6672,11 +6672,24 @@ app.post('/api/waitlist/join', async (req, res) => {
  */
 app.get('/api/stats/public', async (req, res) => {
   try {
-    const { getStatsSummary, getIntentStats } = await import('../../execution-ledger/db');
+    const { getSummaryStatsAsync, getIntentStatsSummaryAsync, getRecentIntentsAsync } = await import('../../execution-ledger/db');
 
-    // Return limited public stats
-    const summary = getStatsSummary();
-    const intentStats = getIntentStats();
+    // Return limited public stats (async for Postgres support)
+    const [summary, intentStats, recentIntents] = await Promise.all([
+      getSummaryStatsAsync(),
+      getIntentStatsSummaryAsync(),
+      getRecentIntentsAsync(20),
+    ]);
+
+    // Sanitize recent intents (remove metadata, keep only safe fields)
+    const safeIntents = recentIntents.map(intent => ({
+      id: intent.id,
+      status: intent.status,
+      intent_kind: intent.intent_kind,
+      requested_chain: intent.requested_chain,
+      created_at: intent.created_at,
+      confirmed_at: intent.confirmed_at,
+    }));
 
     res.json({
       ok: true,
@@ -6688,10 +6701,12 @@ app.get('/api/stats/public', async (req, res) => {
         successRate: summary.successRate || 0,
         totalUsdRouted: summary.totalUsdRouted || 0,
         chainsActive: summary.chainsActive || [],
+        recentIntents: safeIntents || [],
         lastUpdated: Date.now(),
       },
     });
   } catch (error: any) {
+    console.error('Public stats error:', error.message);
     // Return empty stats on error (don't expose internal errors)
     res.json({
       ok: true,
@@ -6703,6 +6718,7 @@ app.get('/api/stats/public', async (req, res) => {
         successRate: 0,
         totalUsdRouted: 0,
         chainsActive: [],
+        recentIntents: [],
         lastUpdated: Date.now(),
       },
     });

@@ -1873,3 +1873,258 @@ export const getStatsSummary = getSummaryStats;
 
 // Alias for getIntentStatsSummary
 export const getIntentStats = getIntentStatsSummary;
+
+/**
+ * ============================================================
+ * ASYNC/POSTGRES SUPPORT
+ * Async-capable exports that route to Postgres in production
+ * ============================================================
+ */
+
+/**
+ * Async-capable intent creation (uses Postgres if DATABASE_URL is set)
+ */
+export async function createIntentAsync(params: {
+  intentText: string;
+  intentKind?: string;
+  requestedChain?: string;
+  requestedVenue?: string;
+  usdEstimate?: number;
+  metadataJson?: string;
+}): Promise<Intent> {
+  if (dbType === 'postgres') {
+    const pgDb = await import('./db-pg.js');
+    return pgDb.createIntent(params) as Promise<Intent>;
+  }
+
+  // SQLite: use synchronous version, wrap in Promise
+  return Promise.resolve(createIntent(params));
+}
+
+/**
+ * Async-capable intent status update (uses Postgres if DATABASE_URL is set)
+ */
+export async function updateIntentStatusAsync(
+  id: string,
+  updates: {
+    status?: string;
+    plannedAt?: number;
+    executedAt?: number;
+    confirmedAt?: number;
+    failureStage?: string;
+    errorCode?: string;
+    errorMessage?: string;
+    metadataJson?: string;
+  }
+): Promise<void> {
+  if (dbType === 'postgres') {
+    const pgDb = await import('./db-pg.js');
+    return pgDb.updateIntentStatus(id, updates);
+  }
+
+  // SQLite: use synchronous version
+  updateIntentStatus(id, updates);
+  return Promise.resolve();
+}
+
+/**
+ * Async-capable execution creation (uses Postgres if DATABASE_URL is set)
+ */
+export async function createExecutionAsync(params: {
+  id?: string;
+  chain: Chain;
+  network: Network;
+  kind?: string;
+  venue?: string;
+  intent: string;
+  action: string;
+  fromAddress: string;
+  toAddress?: string;
+  token?: string;
+  amountUnits?: string;
+  amountDisplay?: string;
+  usdEstimate?: number;
+  txHash?: string;
+  status?: string;
+  errorCode?: string;
+  errorMessage?: string;
+  explorerUrl?: string;
+  relayerAddress?: string;
+  sessionId?: string;
+  intentId?: string;
+}): Promise<Execution> {
+  if (dbType === 'postgres') {
+    const pgDb = await import('./db-pg.js');
+    return pgDb.createExecution(params as any) as Promise<Execution>;
+  }
+
+  // SQLite: use synchronous version
+  return Promise.resolve(createExecution(params));
+}
+
+/**
+ * Async-capable execution update (uses Postgres if DATABASE_URL is set)
+ */
+export async function updateExecutionAsync(
+  id: string,
+  updates: {
+    txHash?: string;
+    status?: string;
+    errorCode?: string;
+    errorMessage?: string;
+    explorerUrl?: string;
+    gasUsed?: string;
+    blockNumber?: number;
+    latencyMs?: number;
+  }
+): Promise<void> {
+  if (dbType === 'postgres') {
+    const pgDb = await import('./db-pg.js');
+    return pgDb.updateExecution(id, updates as any);
+  }
+
+  // SQLite: use synchronous version
+  updateExecution(id, updates);
+  return Promise.resolve();
+}
+
+/**
+ * Async-capable get intent (uses Postgres if DATABASE_URL is set)
+ */
+export async function getIntentAsync(id: string): Promise<Intent | undefined> {
+  if (dbType === 'postgres') {
+    const pgDb = await import('./db-pg.js');
+    return pgDb.getIntent(id) as Promise<Intent | undefined>;
+  }
+
+  // SQLite: use synchronous version
+  return Promise.resolve(getIntent(id));
+}
+
+/**
+ * Async-capable get recent intents (uses Postgres if DATABASE_URL is set)
+ */
+export async function getRecentIntentsAsync(limit: number = 50): Promise<Intent[]> {
+  if (dbType === 'postgres') {
+    const pgDb = await import('./db-pg.js');
+    return pgDb.getRecentIntents(limit) as Promise<Intent[]>;
+  }
+
+  // SQLite: use synchronous version
+  return Promise.resolve(getRecentIntents(limit));
+}
+
+/**
+ * Async-capable get summary stats (uses Postgres if DATABASE_URL is set)
+ */
+export async function getSummaryStatsAsync(): Promise<StatsSummary> {
+  if (dbType === 'postgres') {
+    const pgDb = await import('./db-pg.js');
+    return pgDb.getSummaryStats() as Promise<StatsSummary>;
+  }
+
+  // SQLite: use synchronous version
+  return Promise.resolve(getSummaryStats());
+}
+
+/**
+ * Async-capable get intent stats summary (uses Postgres if DATABASE_URL is set)
+ */
+export async function getIntentStatsSummaryAsync(): Promise<IntentStatsSummary> {
+  if (dbType === 'postgres') {
+    const pgDb = await import('./db-pg.js');
+    return pgDb.getIntentStatsSummary() as Promise<IntentStatsSummary>;
+  }
+
+  // SQLite: use synchronous version
+  return Promise.resolve(getIntentStatsSummary());
+}
+
+/**
+ * Async-capable get executions for intent (uses Postgres if DATABASE_URL is set)
+ */
+export async function getExecutionsForIntentAsync(intentId: string): Promise<Execution[]> {
+  if (dbType === 'postgres') {
+    const pgDb = await import('./db-pg.js');
+    return pgDb.getExecutionsForIntent(intentId) as Promise<Execution[]>;
+  }
+
+  // SQLite: use synchronous version
+  return Promise.resolve(getExecutionsForIntent(intentId));
+}
+
+/**
+ * Async-capable link execution to intent (uses Postgres if DATABASE_URL is set)
+ */
+export async function linkExecutionToIntentAsync(executionId: string, intentId: string): Promise<void> {
+  if (dbType === 'postgres') {
+    const pgDb = await import('./db-pg.js');
+    return pgDb.linkExecutionToIntent(executionId, intentId);
+  }
+
+  // SQLite: use synchronous version
+  linkExecutionToIntent(executionId, intentId);
+  return Promise.resolve();
+}
+
+/**
+ * Async-capable create execution step (uses Postgres if DATABASE_URL is set)
+ */
+export async function createExecutionStepAsync(params: {
+  executionId: string;
+  stepIndex: number;
+  action: string;
+  stage?: string;
+  status?: string;
+}): Promise<ExecutionStep> {
+  if (dbType === 'postgres') {
+    const pgDb = await import('./db-pg.js');
+    return pgDb.createExecutionStep(params) as Promise<ExecutionStep>;
+  }
+
+  // SQLite: use synchronous version
+  return Promise.resolve(createExecutionStep(params));
+}
+
+/**
+ * Async-capable update execution step (uses Postgres if DATABASE_URL is set)
+ */
+export async function updateExecutionStepAsync(
+  id: string,
+  updates: {
+    status?: string;
+    txHash?: string;
+    errorCode?: string;
+    errorMessage?: string;
+    explorerUrl?: string;
+  }
+): Promise<void> {
+  if (dbType === 'postgres') {
+    const pgDb = await import('./db-pg.js');
+    return pgDb.updateExecutionStep(id, updates);
+  }
+
+  // SQLite: use synchronous version
+  updateExecutionStep(id, updates);
+  return Promise.resolve();
+}
+
+/**
+ * Async-capable get summary stats with intents (uses Postgres if DATABASE_URL is set)
+ */
+export async function getSummaryStatsWithIntentsAsync(): Promise<
+  StatsSummary & {
+    totalIntents: number;
+    confirmedIntents: number;
+    failedIntents: number;
+    intentSuccessRate: number;
+  }
+> {
+  if (dbType === 'postgres') {
+    const pgDb = await import('./db-pg.js');
+    return pgDb.getSummaryStatsWithIntents() as Promise<any>;
+  }
+
+  // SQLite: use synchronous version
+  return Promise.resolve(getSummaryStatsWithIntents());
+}

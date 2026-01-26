@@ -211,14 +211,14 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
     try {
       if (isPublic) {
         // PUBLIC MODE: Use public read-only endpoint (no auth required)
-        const statsRes = await fetch(`${getApiBaseUrl()}/api/stats/public?${cacheBust}`, {
+        const statsRes = await fetch(`${API_BASE}/api/stats/public?${cacheBust}`, {
           cache: 'no-store',
           headers: { 'Content-Type': 'application/json' }
         });
 
         if (!statsRes.ok) {
           const status = statsRes.status;
-          const endpoint = `${getApiBaseUrl()}/api/stats/public`;
+          const endpoint = `${API_BASE}/api/stats/public`;
           throw new Error(`Failed to fetch stats (HTTP ${status} from ${endpoint})`);
         }
 
@@ -253,10 +253,6 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
             failuresByStage: [],
             failuresByCode: [],
           });
-          // Set recent intents if available
-          if (publicData.recentIntents && Array.isArray(publicData.recentIntents)) {
-            setIntents(publicData.recentIntents);
-          }
           setApiHealth('healthy');
         }
       } else {
@@ -264,10 +260,10 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
         const headers = { 'X-Ledger-Secret': LEDGER_SECRET };
 
         const [statsRes, recentRes, intentStatsRes, intentsRes] = await Promise.all([
-          fetch(`${getApiBaseUrl()}/api/ledger/stats/summary?${cacheBust}`, { headers, cache: 'no-store' }),
-          fetch(`${getApiBaseUrl()}/api/ledger/stats/recent?limit=20&${cacheBust}`, { headers, cache: 'no-store' }),
-          fetch(`${getApiBaseUrl()}/api/ledger/stats/intents?${cacheBust}`, { headers, cache: 'no-store' }),
-          fetch(`${getApiBaseUrl()}/api/ledger/intents/recent?limit=50&${cacheBust}`, { headers, cache: 'no-store' }),
+          fetch(`${API_BASE}/api/ledger/stats/summary?${cacheBust}`, { headers, cache: 'no-store' }),
+          fetch(`${API_BASE}/api/ledger/stats/recent?limit=20&${cacheBust}`, { headers, cache: 'no-store' }),
+          fetch(`${API_BASE}/api/ledger/stats/intents?${cacheBust}`, { headers, cache: 'no-store' }),
+          fetch(`${API_BASE}/api/ledger/intents/recent?limit=50&${cacheBust}`, { headers, cache: 'no-store' }),
         ]);
 
         if (!statsRes.ok || !recentRes.ok) {
@@ -310,7 +306,7 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
 
     const headers = { 'X-Ledger-Secret': LEDGER_SECRET };
     try {
-      const res = await fetch(`${getApiBaseUrl()}/api/ledger/executions/${executionId}/steps`, { headers });
+      const res = await fetch(`${API_BASE}/api/ledger/executions/${executionId}/steps`, { headers });
       const data = await res.json();
       if (data.ok) {
         setExecutionSteps(prev => ({ ...prev, [executionId]: data.data }));
