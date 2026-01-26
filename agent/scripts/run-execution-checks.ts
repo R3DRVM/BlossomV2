@@ -43,15 +43,21 @@ if (!BASE_URL.includes('api.blossom.onl') && !BASE_URL.includes('blossom-v2') &&
 interface TestCase {
   name: string;
   intent: string;
+  chain?: 'ethereum' | 'solana' | 'both';
   planOnly?: boolean;
+  category?: string;
 }
 
 const TEST_CASES: TestCase[] = [
-  // Use smaller amounts and mix of plan-only and real executions
-  { name: 'Plan: Swap REDACTED→WETH', intent: 'swap 1 REDACTED for WETH', planOnly: true },
-  { name: 'Plan: Deposit to vault', intent: 'deposit 5 REDACTED to aave', planOnly: true },
-  { name: 'Execute: Proof swap', intent: 'swap 0.5 REDACTED for WETH', planOnly: false },
-  { name: 'Execute: Proof deposit', intent: 'deposit 2 REDACTED to aave', planOnly: false },
+  // ETHEREUM TESTS
+  { name: 'ETH: Plan swap', intent: 'swap 1 REDACTED for WETH', chain: 'ethereum', planOnly: true, category: 'swap' },
+  { name: 'ETH: Plan deposit', intent: 'deposit 5 REDACTED to aave', chain: 'ethereum', planOnly: true, category: 'defi' },
+  { name: 'ETH: Execute swap', intent: 'swap 0.5 REDACTED for WETH', chain: 'ethereum', planOnly: false, category: 'swap' },
+  { name: 'ETH: Execute deposit', intent: 'deposit 2 REDACTED to aave', chain: 'ethereum', planOnly: false, category: 'defi' },
+
+  // SOLANA TESTS (proof-only on devnet)
+  { name: 'SOL: Plan swap', intent: 'swap 1 REDACTED for SOL on solana', chain: 'solana', planOnly: true, category: 'swap' },
+  { name: 'SOL: Execute swap', intent: 'swap 0.5 REDACTED for SOL on solana', chain: 'solana', planOnly: false, category: 'swap' },
 ];
 
 /**
@@ -156,12 +162,13 @@ async function runTest(test: TestCase): Promise<boolean> {
       },
       body: JSON.stringify({
         intentText: test.intent,
-        chain: 'ethereum',
+        chain: test.chain || 'ethereum',
         planOnly: test.planOnly ?? false,
         metadata: {
           source: SOURCE,
           runId: RUN_ID,
           testName: test.name,
+          category: test.category,
         },
       }),
     });
