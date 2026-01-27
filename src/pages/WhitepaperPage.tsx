@@ -20,7 +20,28 @@ const WHITEPAPER_CONTENT = `
 
 ## Executive Summary
 
-Blossom is an **AI-powered trading copilot** that enables users to execute trades across multiple venues through natural language conversation. The platform transforms complex DeFi operations into simple conversational commands, making sophisticated trading strategies accessible to everyone.
+Blossom is an **intelligent execution layer** that allows users to deploy, hedge, and manage capital across markets through a unified, non-custodial interface. Blossom sits above execution venues, translating user intent into deterministic, auditable execution plans across chains, protocols, and asset classes.
+Beyond serving end users directly, Blossom provides its execution intelligence as infrastructure. Any wallet, dApp, trading terminal, or DeFi protocol can integrate Blossom through an API key—instantly gaining access to smart routing, intent processing, and cross-chain coordination without building complex trading infrastructure from scratch.
+
+### The Execution Gap
+
+On-chain markets have reached infrastructure maturity. Block times measured in milliseconds, liquidity pools rivaling centralized exchanges, and sophisticated financial primitives spanning perpetuals, options, and prediction markets now exist across dozens of chains. Yet the tools for deploying capital across this infrastructure remain primitive.
+Today’s on-chain trader faces a fragmented landscape: perpetual DEXs on Hyperliquid, spot liquidity on Uniswap, prediction markets on Polymarket and Kalshi, yield opportunities across DeFi protocols—each requiring separate interfaces, wallets, and mental models. Executing a hedged position across these venues requires manual coordination, introduces operational risk, and provides no unified view of portfolio exposure.
+This gap between infrastructure capability and execution tooling represents the core opportunity Blossom addresses.
+
+### The Blossom Thesis
+
+**Execution intelligence** is the missing layer in on-chain finance.
+Protocols solve for liquidity and settlement. Chains solve for throughput and finality. No layer exists to solve for user intent, translating what a trader wants to achieve into optimal execution across the available infrastructure.
+Blossom fills this gap by functioning as:
+
+- **Intent-to-Execution Translation Engine**: Converting natural language and structured inputs into deterministic, auditable execution plans
+- **Cross-Protocol Coordinator**: Orchestrating trades across chains, venues, and asset classes without custody
+- **Unified Risk Interface**: Aggregating exposure across fragmented positions into coherent portfolio analytics
+- **API Infrastructure Layer**: Providing programmatic access so any protocol can build on Blossom’s execution intelligence
+Blossom is both a product and a platform. Users can interact with Blossom directly for intelligent execution. Developers integrate Blossom’s API to bring that same execution intelligence to their own applications.
+---
+
 
 ### Core Value Proposition
 
@@ -92,29 +113,28 @@ Execute strategies that span multiple chains:
 ### System Overview
 
 \`\`\`
-┌─────────────────────────────────────────────────────────────┐
-│                     User Interface                          │
-│              (Chat + Portfolio Dashboard)                   │
-└─────────────────────────┬───────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    AI Planner Layer                         │
-│         (Intent Parsing + Strategy Generation)              │
-└─────────────────────────┬───────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│                   Execution Router                          │
-│        (Venue Selection + Transaction Building)             │
-└─────────────────────────┬───────────────────────────────────┘
-                          │
-        ┌─────────────────┼─────────────────┐
-        ▼                 ▼                 ▼
-┌───────────────┐ ┌───────────────┐ ┌───────────────┐
-│   Ethereum    │ │    Solana     │ │     L2s       │
-│   (Sepolia)   │ │   (Devnet)    │ │  (Arbitrum)   │
-└───────────────┘ └───────────────┘ └───────────────┘
+┌─────────────────────────────────────┐
+│        User Interface               │
+│  (Chat + Portfolio Dashboard)       │
+└─────────────────┬───────────────────┘
+                  │
+                  ▼
+┌─────────────────────────────────────┐
+│        AI Planner Layer             │
+│  (Intent Parsing + Strategy Gen)    │
+└─────────────────┬───────────────────┘
+                  │
+                  ▼
+┌─────────────────────────────────────┐
+│       Execution Router              │
+│  (Venue Selection + Tx Building)    │
+└─────────────────┬───────────────────┘
+                  │
+      ┌───────────┼───────────┐
+      ▼           ▼           ▼
+┌──────────┐ ┌──────────┐ ┌──────────┐
+│ Ethereum │ │  Solana  │ │   L2s    │
+└──────────┘ └──────────┘ └──────────┘
 \`\`\`
 
 ### Security Model
@@ -196,23 +216,22 @@ Execute strategies that span multiple chains:
 
 ## Roadmap
 
-### Phase 1: Foundation (Q1 2025) ✅
+### Phase 1: Foundation (Q1 2025) 
 - Core chat interface
-- Simulated execution
-- Portfolio tracking
-- Basic AI planning
+- Beta execution engine
+- Complete AI execution logic and testing
+- Private beta deployment
 
-### Phase 2: Testnet MVP (Q1 2025) ✅
-- Ethereum Sepolia deployment
-- Real transaction execution
-- Session mode
+### Phase 2: Testnet MVP (Q1 2025) 
+- Public beta deployment
+- Developer API testing
 - Hybrid routing
 
 ### Phase 3: Production (Q2 2025)
 - Mainnet deployment
 - Additional venues
 - Advanced strategies
-- Mobile app
+- API & SDK private beta
 
 ### Phase 4: Scale (Q3 2025)
 - Multi-chain expansion
@@ -230,9 +249,11 @@ Blossom is built by a team of experienced DeFi developers and AI researchers wit
 
 ## Conclusion
 
-Blossom represents the future of DeFi trading—where complex strategies become simple conversations, where risk management is automated, and where sophisticated trading is accessible to everyone.
+On-chain finance has matured technically but remains primitive in execution. Users interact with protocols individually, manage risk manually, and piece together fragmented interfaces to execute coherent strategies.
 
-**Join the waitlist at [blossom.onl](https://blossom.onl)**
+Blossom introduces execution intelligence as a new primitive, translating what users want to achieve into how to achieve it optimally. By sitting above protocols and coordinating across them, Blossom can deliver institutional-grade execution to any participant while remaining fully on-chain and non-custodial.
+
+**Join the waitlist at [blossom.onl](https://app.blossom.onl)**
 
 ---
 
