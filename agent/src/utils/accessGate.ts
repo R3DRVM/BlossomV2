@@ -302,6 +302,7 @@ export async function revokeAccessCode(code: string): Promise<boolean> {
 
 /**
  * Express middleware to check access
+ * Checks for valid gate pass cookie OR access code
  */
 export function checkAccess(req: any, res: any, next: any): void {
   // Fail-closed: gate enabled in production by default
@@ -314,14 +315,21 @@ export function checkAccess(req: any, res: any, next: any): void {
     return next();
   }
 
-  // Get access code from header or body
+  // PRIORITY 1: Check for gate pass cookie (already authorized users)
+  const gatePass = req.cookies?.blossom_gate_pass;
+  if (gatePass && gatePass.startsWith('blossom_')) {
+    // Valid gate pass cookie - user already authorized
+    return next();
+  }
+
+  // PRIORITY 2: Check for access code in header or body (initial authorization)
   const accessCode = req.headers['x-access-code'] || req.body?.accessCode;
   const walletAddress = req.headers['x-wallet-address'] || req.body?.walletAddress;
 
   if (!accessCode) {
     return res.status(401).json({
-      error: 'Access code required',
-      errorCode: 'ACCESS_CODE_REQUIRED'
+      error: 'Access required - please unlock via access gate',
+      errorCode: 'UNAUTHORIZED_BETA'
     });
   }
 
