@@ -10,7 +10,12 @@ export default function Header() {
         <div className="flex items-center gap-2">
           <BlossomLogo size={24} className="drop-shadow-sm" />
           <div className="flex flex-col">
-            <h1 className="text-sm font-semibold text-blossom-ink leading-tight">Blossom</h1>
+            <div className="flex items-center gap-1.5">
+              <h1 className="text-sm font-semibold text-blossom-ink leading-tight">Blossom</h1>
+              <span className="px-1.5 py-0.5 text-[10px] font-bold tracking-wide bg-blossom-pink/15 text-blossom-pink border border-blossom-pink/30 rounded">
+                BETA
+              </span>
+            </div>
             <p className="text-xs text-blossom-slate leading-tight">AI Trading Copilot</p>
           </div>
         </div>
