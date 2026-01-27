@@ -32,8 +32,12 @@ interface ClassifyResult {
   decision: RouteDecision;
   reason: string;
   confidence: 'high' | 'medium' | 'low';
+  forced?: boolean; // True if user explicitly forced routing via /chat or /execute
   strippedText?: string; // Text after removing escape prefix
 }
+
+// Execution force hatch - ALWAYS force execution routing
+const EXECUTE_FORCE_PATTERN = /^\/execute\s+/i;
 
 // Chat escape hatches - ALWAYS treat as normal chat
 const CHAT_ESCAPE_PATTERNS = [
@@ -96,41 +100,61 @@ const EXECUTE_PATTERNS = [
 function classifyMessage(text: string): ClassifyResult {
   const normalized = text.toLowerCase().trim();
 
-  // 1. Check escape hatches first - ALWAYS chat
+  // 1. Check execution force hatch FIRST - /execute command
+  if (EXECUTE_FORCE_PATTERN.test(normalized)) {
+    const strippedText = normalized.replace(EXECUTE_FORCE_PATTERN, '').trim();
+    const result = {
+      decision: 'execute' as RouteDecision,
+      reason: 'force_execute',
+      confidence: 'high' as const,
+      forced: true,
+      strippedText: strippedText || text
+    };
+    console.log('[Chat Router] decision=execute reason=force_execute forced=true');
+    return result;
+  }
+
+  // 2. Check chat escape hatches - ALWAYS chat
   for (const pattern of CHAT_ESCAPE_PATTERNS) {
     if (pattern.test(normalized)) {
       const strippedText = normalized.replace(pattern, '').trim();
-      return {
-        decision: 'chat',
+      const result = {
+        decision: 'chat' as RouteDecision,
         reason: 'escape_hatch',
-        confidence: 'high',
+        confidence: 'high' as const,
+        forced: pattern === CHAT_ESCAPE_PATTERNS[0], // /chat is forced
         strippedText: strippedText || text
       };
+      if (result.forced) {
+        console.log('[Chat Router] decision=chat reason=escape_hatch forced=true');
+      }
+      return result;
     }
   }
 
-  // 2. Check if it's clearly a question - route to chat
+  // 3. Check if it's clearly a question - route to chat
   for (const pattern of QUESTION_PATTERNS) {
     if (pattern.test(normalized)) {
       return { decision: 'chat', reason: 'question_pattern', confidence: 'high' };
     }
   }
 
-  // 3. Check if it's info/education request - route to chat
+  // 4. Check if it's info/education request - route to chat
   for (const pattern of INFO_PATTERNS) {
     if (pattern.test(normalized)) {
       return { decision: 'chat', reason: 'info_request', confidence: 'high' };
     }
   }
 
-  // 4. Check for EXPLICIT execution patterns - these are the ONLY ones that execute
+  // 5. Check for EXPLICIT execution patterns - these are the ONLY ones that execute
   for (const pattern of EXECUTE_PATTERNS) {
     if (pattern.test(normalized)) {
+      console.log('[Chat Router] decision=execute reason=explicit_action confidence=high');
       return { decision: 'execute', reason: 'explicit_action', confidence: 'high' };
     }
   }
 
-  // 5. Default: treat as chat (fail-safe, chat-first approach)
+  // 6. Default: treat as chat (fail-safe, chat-first approach)
   // This is intentional - we want Blossom to feel like a normal LLM chat first
   return { decision: 'chat', reason: 'default_chat', confidence: 'medium' };
 }
@@ -1147,23 +1171,27 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
     const classification = classifyMessage(userText);
     const ledgerSecretConfigured = Boolean(import.meta.env.VITE_DEV_LEDGER_SECRET);
 
+    // Use stripped text if available (for /chat or /execute commands)
+    const effectiveText = classification.strippedText || userText;
+
     // Log routing decision for debugging and analytics
     console.log('[Chat Router]', {
-      message: userText.slice(0, 50) + (userText.length > 50 ? '...' : ''),
+      message: effectiveText.slice(0, 50) + (effectiveText.length > 50 ? '...' : ''),
       decision: classification.decision,
       reason: classification.reason,
       confidence: classification.confidence,
+      forced: classification.forced || false,
       timestamp: new Date().toISOString(),
     });
 
     // Only route to ledger system for EXPLICIT execution intents
     if (ledgerSecretConfigured && classification.decision === 'execute') {
       if (import.meta.env.DEV) {
-        console.log('[Chat] Routing to ledger intent system:', userText.slice(0, 50));
+        console.log('[Chat] Routing to ledger intent system:', effectiveText.slice(0, 50));
       }
 
       // Determine which chain this intent requires
-      const normalizedText = userText.toLowerCase();
+      const normalizedText = effectiveText.toLowerCase();
       const isBridgeIntent = normalizedText.includes('bridge') || normalizedText.includes('from eth') || normalizedText.includes('to sol');
       const isSolanaIntent = normalizedText.includes('solana') || normalizedText.includes('sol ') || normalizedText.includes(' sol');
       const intentChain = isSolanaIntent ? 'solana' : 'ethereum';
@@ -1187,7 +1215,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
           isUser: false,
           timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
           intentExecution: {
-            intentText: userText,
+            intentText: effectiveText,
             result: {
               ok: false,
               intentId: '',
@@ -1212,7 +1240,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
           isUser: false,
           timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
           intentExecution: {
-            intentText: userText,
+            intentText: effectiveText,
             result: {
               ok: false,
               intentId: '',
@@ -1238,7 +1266,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
           isUser: false,
           timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
           intentExecution: {
-            intentText: userText,
+            intentText: effectiveText,
             result: {
               ok: false,
               intentId: '',
@@ -1267,7 +1295,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
         isUser: false,
         timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
         intentExecution: {
-          intentText: userText,
+          intentText: effectiveText,
           result: null,
           isExecuting: true,
         },
@@ -1284,7 +1312,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
             updateMessageInChat(targetChatId, intentMsgId, {
               text: `Planning failed: ${planResult.error?.code || 'Unknown error'}`,
               intentExecution: {
-                intentText: userText,
+                intentText: effectiveText,
                 result: planResult,
                 isExecuting: false,
               },
@@ -1299,7 +1327,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
             updateMessageInChat(targetChatId, intentMsgId, {
               text: `Ready to execute: ${planDesc}`,
               intentExecution: {
-                intentText: userText,
+                intentText: effectiveText,
                 result: planResult,
                 isExecuting: false,
               },
@@ -1314,7 +1342,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
             updateMessageInChat(targetChatId, intentMsgId, {
               text: "One-click execution not authorized. Enable it in the wallet panel to execute trades.",
               intentExecution: {
-                intentText: userText,
+                intentText: effectiveText,
                 result: {
                   ok: false,
                   intentId: '',
@@ -1342,7 +1370,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
           updateMessageInChat(targetChatId, intentMsgId, {
             text: resultText,
             intentExecution: {
-              intentText: userText,
+              intentText: effectiveText,
               result: result,
               isExecuting: false,
             },
@@ -1370,7 +1398,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
         updateMessageInChat(targetChatId, intentMsgId, {
           text: `Execution failed: ${error.message || 'Network error'}`,
           intentExecution: {
-            intentText: userText,
+            intentText: effectiveText,
             result: {
               ok: false,
               intentId: '',
