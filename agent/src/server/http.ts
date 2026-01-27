@@ -358,7 +358,13 @@ const ACCESS_GATE_ENABLED = isProductionEnv ? !accessGateDisabledEnv : (process.
 const maybeCheckAccess = ACCESS_GATE_ENABLED ? checkAccess : (req: any, res: any, next: any) => next();
 
 // Initialize access gate on startup (Postgres-backed, with in-memory fallback)
-initializeAccessGate();
+// CRITICAL: Use top-level await to ensure Postgres connection test completes before handling requests
+try {
+  await initializeAccessGate();
+} catch (error) {
+  console.error('[http] Failed to initialize access gate:', error);
+  console.error('[http] Continuing with in-memory fallback mode');
+}
 
 // Set up balance callbacks for DeFi and Event sims
 // Use perps sim as the source of truth for REDACTED balance
