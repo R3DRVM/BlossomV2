@@ -83,6 +83,8 @@ export default function RightPanel(_props: RightPanelProps) {
   // Demo token faucet state
   const [faucetStatus, setFaucetStatus] = useState<'idle' | 'minting' | 'success' | 'error'>('idle');
   const [faucetError, setFaucetError] = useState<string>('');
+  const [faucetConfigured, setFaucetConfigured] = useState<boolean>(true); // Assume configured until checked
+  const [faucetConfigChecked, setFaucetConfigChecked] = useState<boolean>(false);
 
   // Debug instrumentation: track API call timings
   const [lastHealth, setLastHealth] = useState<{ status: number; duration: number; ok: boolean; timestamp: number } | null>(null);
@@ -97,6 +99,31 @@ export default function RightPanel(_props: RightPanelProps) {
   const isEthTestnetMode = executionMode === 'eth_testnet' && !forceDemoPortfolio;
   const isSessionMode = executionAuthMode === 'session';
   const isOnSepolia = chainId === ethTestnetChainId;
+
+  // Check faucet configuration on mount
+  useEffect(() => {
+    if (!isEthTestnetMode) return;
+
+    const checkFaucetConfig = async () => {
+      try {
+        const response = await fetch(`${AGENT_API_BASE_URL}/api/demo/config`);
+        const data = await response.json();
+
+        setFaucetConfigured(data.configured);
+        setFaucetConfigChecked(true);
+
+        if (!data.configured && import.meta.env.DEV) {
+          console.log('[RightPanel] Demo faucet not configured:', data.missing);
+        }
+      } catch (error) {
+        console.error('[RightPanel] Failed to check faucet config:', error);
+        setFaucetConfigured(false);
+        setFaucetConfigChecked(true);
+      }
+    };
+
+    checkFaucetConfig();
+  }, [isEthTestnetMode]);
 
   // Sync wagmi state with local wallet state machine
   useEffect(() => {
@@ -1098,13 +1125,18 @@ export default function RightPanel(_props: RightPanelProps) {
               const faucetClaimedKey = walletAddress ? `blossom_faucet_claimed_${walletAddress.toLowerCase()}` : null;
               const wasClaimed = faucetClaimedKey && localStorage.getItem(faucetClaimedKey) === 'true';
               if (!hasLowUsdc || wasClaimed) return null;
+
+              const isDisabled = !faucetConfigured || faucetStatus === 'minting' || faucetStatus === 'success';
+
               return (
                 <span className="flex items-center gap-1.5 text-[9px] text-slate-500">
                   <span>Need REDACTED?</span>
                   <button
-                    onClick={handleGetDemoTokens}
-                    disabled={faucetStatus === 'minting' || faucetStatus === 'success'}
+                    onClick={faucetConfigured ? handleGetDemoTokens : undefined}
+                    disabled={isDisabled}
+                    title={!faucetConfigured ? 'Faucet temporarily unavailable' : undefined}
                     className={`flex items-center gap-1 font-medium ${
+                      !faucetConfigured ? 'text-slate-400 cursor-not-allowed' :
                       faucetStatus === 'minting' ? 'text-slate-400' :
                       faucetStatus === 'success' ? 'text-emerald-600' :
                       faucetStatus === 'error' ? 'text-rose-500' :
@@ -1119,7 +1151,7 @@ export default function RightPanel(_props: RightPanelProps) {
                     )}
                     {faucetStatus === 'success' && <span>Sent!</span>}
                     {faucetStatus === 'error' && <span>Failed</span>}
-                    {faucetStatus === 'idle' && <span>Mint</span>}
+                    {faucetStatus === 'idle' && <span>{faucetConfigured ? 'Mint' : 'Unavailable'}</span>}
                   </button>
                 </span>
               );

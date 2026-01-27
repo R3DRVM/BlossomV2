@@ -64,27 +64,14 @@ export async function validateAccessCode(code, walletAddress) {
     }
 }
 /**
- * Postgres-backed validation with atomic single-use enforcement
+ * Postgres-backed validation with reusable code support
+ * Codes can be used multiple times across different devices/wallets
+ * Each redemption is logged in access_code_redemptions table
  */
 async function validateAccessCodePostgres(code, walletAddress) {
     try {
-        // Atomic check and increment in single transaction
-        const result = await pgQuery(`
-      UPDATE access_codes
-      SET
-        times_used = times_used + 1,
-        last_used_at = $2
-      WHERE code = $1
-        AND (expires_at IS NULL OR expires_at > $2)
-        AND times_used < max_uses
-      RETURNING id, code, max_uses, times_used
-    `, [code, Math.floor(Date.now() / 1000)]);
-        if (result.rows && result.rows.length > 0) {
-            const row = result.rows[0];
-            logAccessEvent('validation_success', code, 'postgres', walletAddress);
-            return { valid: true };
-        }
-        // Code not found or already used - check which
+        const now = Math.floor(Date.now() / 1000);
+        // Check if code exists and is not expired
         const checkResult = await pgQuery(`
       SELECT code, max_uses, times_used, expires_at
       FROM access_codes
@@ -94,17 +81,41 @@ async function validateAccessCodePostgres(code, walletAddress) {
             logAccessEvent('validation_failed', code, 'not_found', walletAddress);
             return { valid: false, error: 'Invalid access code' };
         }
-        const checkRow = checkResult.rows[0];
-        if (checkRow.times_used >= checkRow.max_uses) {
-            logAccessEvent('validation_failed', code, 'already_used', walletAddress);
-            return { valid: false, error: 'Access code already used' };
-        }
-        if (checkRow.expires_at && checkRow.expires_at <= Math.floor(Date.now() / 1000)) {
+        const codeRow = checkResult.rows[0];
+        // Check expiration
+        if (codeRow.expires_at && codeRow.expires_at <= now) {
             logAccessEvent('validation_failed', code, 'expired', walletAddress);
             return { valid: false, error: 'Access code expired' };
         }
-        logAccessEvent('validation_failed', code, 'unknown', walletAddress);
-        return { valid: false, error: 'Invalid access code' };
+        // For beta codes, allow unlimited redemptions (max_uses should be set high, e.g. 1000)
+        // The per-device limiting is handled by cookie (blossom_gate_pass)
+        // This allows investors to share codes across their team
+        // Log this redemption in the redemptions table
+        const redemptionId = `red_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        try {
+            await pgQuery(`
+        INSERT INTO access_code_redemptions (id, code, redeemed_at, wallet_address, metadata_json)
+        VALUES ($1, $2, $3, $4, $5)
+      `, [redemptionId, code, now, walletAddress || null, null]);
+        }
+        catch (insertError) {
+            // Non-fatal: continue even if redemption logging fails
+            console.warn('[accessGate] Failed to log redemption:', insertError.message);
+        }
+        // Update times_used counter for analytics (non-blocking)
+        try {
+            await pgQuery(`
+        UPDATE access_codes
+        SET times_used = times_used + 1, last_used_at = $2
+        WHERE code = $1
+      `, [code, now]);
+        }
+        catch (updateError) {
+            // Non-fatal: continue even if counter update fails
+            console.warn('[accessGate] Failed to update times_used:', updateError.message);
+        }
+        logAccessEvent('validation_success', code, 'postgres_reusable', walletAddress);
+        return { valid: true };
     }
     catch (error) {
         console.error('[accessGate] Postgres validation error:', error.message);
@@ -210,8 +221,9 @@ export async function getAllAccessCodes() {
 }
 /**
  * Create a new access code (admin utility)
+ * Default maxUses=1000 for reusable beta codes (per-device limiting via cookie)
  */
-export async function createAccessCode(maxUses = 1, expiresAt = null, metadata) {
+export async function createAccessCode(maxUses = 1000, expiresAt = null, metadata) {
     if (isPostgresMode) {
         try {
             const code = `BLOSSOM-${generateCodeSuffix()}`;
@@ -273,6 +285,7 @@ export async function revokeAccessCode(code) {
 }
 /**
  * Express middleware to check access
+ * Checks for valid gate pass cookie OR access code
  */
 export function checkAccess(req, res, next) {
     // Fail-closed: gate enabled in production by default
@@ -283,13 +296,19 @@ export function checkAccess(req, res, next) {
     if (!accessGateEnabled) {
         return next();
     }
-    // Get access code from header or body
+    // PRIORITY 1: Check for gate pass cookie (already authorized users)
+    const gatePass = req.cookies?.blossom_gate_pass;
+    if (gatePass && gatePass.startsWith('blossom_')) {
+        // Valid gate pass cookie - user already authorized
+        return next();
+    }
+    // PRIORITY 2: Check for access code in header or body (initial authorization)
     const accessCode = req.headers['x-access-code'] || req.body?.accessCode;
     const walletAddress = req.headers['x-wallet-address'] || req.body?.walletAddress;
     if (!accessCode) {
         return res.status(401).json({
-            error: 'Access code required',
-            errorCode: 'ACCESS_CODE_REQUIRED'
+            error: 'Access required - please unlock via access gate',
+            errorCode: 'UNAUTHORIZED_BETA'
         });
     }
     // Validate access code (async)

@@ -295,7 +295,14 @@ const accessGateDisabledEnv = process.env.ACCESS_GATE_DISABLED === 'true';
 const ACCESS_GATE_ENABLED = isProductionEnv ? !accessGateDisabledEnv : (process.env.ACCESS_GATE_ENABLED === 'true');
 const maybeCheckAccess = ACCESS_GATE_ENABLED ? checkAccess : (req, res, next) => next();
 // Initialize access gate on startup (Postgres-backed, with in-memory fallback)
-initializeAccessGate();
+// CRITICAL: Use top-level await to ensure Postgres connection test completes before handling requests
+try {
+    await initializeAccessGate();
+}
+catch (error) {
+    console.error('[http] Failed to initialize access gate:', error);
+    console.error('[http] Continuing with in-memory fallback mode');
+}
 // Set up balance callbacks for DeFi and Event sims
 // Use perps sim as the source of truth for REDACTED balance
 const getUsdcBalance = () => {
@@ -4260,6 +4267,33 @@ app.get('/api/wallet/balances', maybeCheckAccess, async (req, res) => {
     }
 });
 /**
+ * GET /api/demo/config
+ * Returns demo faucet configuration status
+ */
+app.get('/api/demo/config', async (req, res) => {
+    try {
+        const { EXECUTION_MODE, DEMO_REDACTED_ADDRESS, DEMO_WETH_ADDRESS } = await import('../config');
+        const missing = [];
+        if (!DEMO_REDACTED_ADDRESS)
+            missing.push('DEMO_REDACTED_ADDRESS');
+        if (!DEMO_WETH_ADDRESS)
+            missing.push('DEMO_WETH_ADDRESS');
+        res.json({
+            ok: true,
+            configured: missing.length === 0 && EXECUTION_MODE === 'eth_testnet',
+            executionMode: EXECUTION_MODE,
+            missing: missing
+        });
+    }
+    catch (error) {
+        console.error('[api/demo/config] Error:', error);
+        res.status(500).json({
+            ok: false,
+            error: 'Failed to check demo config'
+        });
+    }
+});
+/**
  * POST /api/demo/faucet
  * Mints demo tokens (REDACTED and WETH) to a user address
  * Only available in eth_testnet mode
@@ -4270,25 +4304,34 @@ app.post('/api/demo/faucet', maybeCheckAccess, async (req, res) => {
         // Only allow in testnet mode
         if (EXECUTION_MODE !== 'eth_testnet') {
             return res.status(400).json({
+                ok: false,
                 error: 'Faucet only available in eth_testnet mode'
             });
         }
         // Validate demo token addresses are configured
         if (!DEMO_REDACTED_ADDRESS || !DEMO_WETH_ADDRESS) {
-            return res.status(500).json({
-                error: 'Demo token addresses not configured',
-                message: 'DEMO_REDACTED_ADDRESS and DEMO_WETH_ADDRESS must be set in .env.local'
+            const missing = [];
+            if (!DEMO_REDACTED_ADDRESS)
+                missing.push('DEMO_REDACTED_ADDRESS');
+            if (!DEMO_WETH_ADDRESS)
+                missing.push('DEMO_WETH_ADDRESS');
+            return res.status(503).json({
+                ok: false,
+                error: 'Faucet not configured',
+                missing: missing
             });
         }
         const { userAddress } = req.body;
         if (!userAddress || typeof userAddress !== 'string') {
             return res.status(400).json({
+                ok: false,
                 error: 'userAddress is required'
             });
         }
         // Validate address format
         if (!/^0x[a-fA-F0-9]{40}$/i.test(userAddress)) {
             return res.status(400).json({
+                ok: false,
                 error: 'Invalid userAddress format'
             });
         }
@@ -4298,6 +4341,7 @@ app.post('/api/demo/faucet', maybeCheckAccess, async (req, res) => {
         const result = await mintDemoTokens(userAddress);
         console.log(`[api/demo/faucet] Successfully minted tokens:`, result);
         res.json({
+            ok: true,
             success: true,
             txHashes: result.txHashes,
             amounts: result.amounts
@@ -4306,8 +4350,9 @@ app.post('/api/demo/faucet', maybeCheckAccess, async (req, res) => {
     catch (error) {
         console.error('[api/demo/faucet] Error:', error);
         res.status(500).json({
+            ok: false,
             error: 'Failed to mint demo tokens',
-            message: error.message
+            details: error.message
         });
     }
 });
@@ -5977,21 +6022,29 @@ app.post('/api/waitlist/join', async (req, res) => {
                 return res.status(400).json({ ok: false, error: 'Invalid wallet address format' });
             }
         }
-        // Store in database (using execution ledger DB)
+        // Store in database (using Postgres-compatible query)
         try {
-            const { addToWaitlist } = await import('../../execution-ledger/db');
+            const dbPgClient = await import('../../execution-ledger/db-pg-client');
+            const pgQuery = dbPgClient.query;
             // Build metadata object for telegram/twitter handles
             const metadata = {};
             if (telegramHandle)
                 metadata.telegramHandle = telegramHandle;
             if (twitterHandle)
                 metadata.twitterHandle = twitterHandle;
-            const id = addToWaitlist({
-                email,
-                walletAddress,
-                source: source || 'landing',
-                metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
-            });
+            const id = `wl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+            const now = Math.floor(Date.now() / 1000);
+            await pgQuery(`
+        INSERT INTO waitlist (id, email, wallet_address, created_at, source, metadata_json)
+        VALUES ($1, $2, $3, $4, $5, $6)
+      `, [
+                id,
+                email || null,
+                walletAddress || null,
+                now,
+                source || 'landing',
+                Object.keys(metadata).length > 0 ? JSON.stringify(metadata) : null
+            ]);
             // Don't log actual email/wallet for privacy
             console.log(`[waitlist] New signup from ${source || 'landing'}: ${id.slice(0, 8)}...`);
             res.json({ ok: true, message: 'Successfully joined waitlist' });

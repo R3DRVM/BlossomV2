@@ -1,0 +1,65 @@
+[34m╔═══════════════════════════════════════════════════════════════════════════════╗[0m
+[34m║                    E2E Sepolia Smoke Test                                     ║[0m
+[34m╚═══════════════════════════════════════════════════════════════════════════════╝[0m
+
+Base URL: http://localhost:3001
+Execution Mode: eth_testnet
+Auth Mode: direct
+Test User: 0x7abFA1E1c78DfAd99A0428D9437dF05157c08FcC
+
+[34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[0m
+[34mTest 1: Health Check[0m
+[34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[0m
+[32m✓ PASS[0m Health endpoint
+Response: {
+  "status": "ok",
+  "service": "blossom-agent"
+}
+
+[34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[0m
+[34mTest 2: Preflight Check[0m
+[34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[0m
+Response: {
+  "mode": "eth_testnet",
+  "ok": false,
+  "chainId": 11155111,
+  "router": null,
+  "adapter": null,
+  "rpc": false,
+  "notes": [
+    "Config error: ETH testnet mode requires the following environment variables: EXECUTION_ROUTER_ADDRESS, MOCK_SWAP_ADAPTER_ADDRESS. Please set them in your .env file or environment.",
+    "ETH_TESTNET_RPC_URL not configured",
+    "Cannot check router: missing EXECUTION_ROUTER_ADDRESS or RPC"
+  ]
+}
+[31m✗ FAIL[0m Preflight check (ok: false - missing required configuration)
+Missing configuration:
+  - Config error: ETH testnet mode requires the following environment variables: EXECUTION_ROUTER_ADDRESS, MOCK_SWAP_ADAPTER_ADDRESS. Please set them in your .env file or environment.
+  - ETH_TESTNET_RPC_URL not configured
+  - Cannot check router: missing EXECUTION_ROUTER_ADDRESS or RPC
+
+Required environment variables:
+  - EXECUTION_ROUTER_ADDRESS
+  - MOCK_SWAP_ADAPTER_ADDRESS
+  - ETH_TESTNET_RPC_URL
+
+[34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[0m
+[34mTest 3: Portfolio Endpoint[0m
+[34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[0m
+[31m✗ FAIL[0m Portfolio endpoint (requires full config - missing environment variables)
+
+[34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[0m
+[34mTest 4: Execute Prepare (swap_usdc_weth)[0m
+[34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[0m
+[31m✗ FAIL[0m Execute prepare (requires full config - missing environment variables)
+[33m⏭  SKIP[0m Session prepare (not in session mode)
+[33m⏭  SKIP[0m Execute relayed (not in session mode)
+
+[34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[0m
+[34mTest Summary[0m
+[34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[0m
+[32mPassed:[0m 1
+[33mSkipped:[0m 2
+[31mFailed:[0m 3
+
+[31m❌ E2E smoke test failed![0m

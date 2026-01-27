@@ -101,8 +101,18 @@ export const WETH_WRAP_ADAPTER_ADDRESS = process.env.WETH_WRAP_ADAPTER_ADDRESS;
 export const REDACTED_ADDRESS_SEPOLIA = process.env.REDACTED_ADDRESS_SEPOLIA;
 export const WETH_ADDRESS_SEPOLIA = process.env.WETH_ADDRESS_SEPOLIA;
 // Demo swap venue (deterministic for investor demos)
-export const DEMO_REDACTED_ADDRESS = process.env.DEMO_REDACTED_ADDRESS;
-export const DEMO_WETH_ADDRESS = process.env.DEMO_WETH_ADDRESS;
+// Default addresses for Sepolia (safe fallback)
+const DEFAULT_DEMO_TOKENS = {
+    sepolia: {
+        usdc: '0x942eF9C37469a43077C6Fb5f23a258a6D88599cD',
+        weth: '0x5FB58E6E0adB7002a6E0792BE3aBE084922c9939',
+    }
+};
+// Use env vars if set, otherwise fallback to defaults for Sepolia
+export const DEMO_REDACTED_ADDRESS = process.env.DEMO_REDACTED_ADDRESS ||
+    (ETH_TESTNET_CHAIN_ID === 11155111 ? DEFAULT_DEMO_TOKENS.sepolia.usdc : undefined);
+export const DEMO_WETH_ADDRESS = process.env.DEMO_WETH_ADDRESS ||
+    (ETH_TESTNET_CHAIN_ID === 11155111 ? DEFAULT_DEMO_TOKENS.sepolia.weth : undefined);
 export const DEMO_SWAP_ROUTER_ADDRESS = process.env.DEMO_SWAP_ROUTER_ADDRESS;
 // Demo lending venue (deterministic for investor demos)
 export const DEMO_LEND_VAULT_ADDRESS = process.env.DEMO_LEND_VAULT_ADDRESS;

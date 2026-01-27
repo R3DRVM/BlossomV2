@@ -4840,6 +4840,33 @@ app.get('/api/wallet/balances', maybeCheckAccess, async (req, res) => {
 });
 
 /**
+ * GET /api/demo/config
+ * Returns demo faucet configuration status
+ */
+app.get('/api/demo/config', async (req, res) => {
+  try {
+    const { EXECUTION_MODE, DEMO_REDACTED_ADDRESS, DEMO_WETH_ADDRESS } = await import('../config');
+
+    const missing: string[] = [];
+    if (!DEMO_REDACTED_ADDRESS) missing.push('DEMO_REDACTED_ADDRESS');
+    if (!DEMO_WETH_ADDRESS) missing.push('DEMO_WETH_ADDRESS');
+
+    res.json({
+      ok: true,
+      configured: missing.length === 0 && EXECUTION_MODE === 'eth_testnet',
+      executionMode: EXECUTION_MODE,
+      missing: missing
+    });
+  } catch (error: any) {
+    console.error('[api/demo/config] Error:', error);
+    res.status(500).json({
+      ok: false,
+      error: 'Failed to check demo config'
+    });
+  }
+});
+
+/**
  * POST /api/demo/faucet
  * Mints demo tokens (REDACTED and WETH) to a user address
  * Only available in eth_testnet mode
@@ -4851,15 +4878,21 @@ app.post('/api/demo/faucet', maybeCheckAccess, async (req, res) => {
     // Only allow in testnet mode
     if (EXECUTION_MODE !== 'eth_testnet') {
       return res.status(400).json({
+        ok: false,
         error: 'Faucet only available in eth_testnet mode'
       });
     }
 
     // Validate demo token addresses are configured
     if (!DEMO_REDACTED_ADDRESS || !DEMO_WETH_ADDRESS) {
-      return res.status(500).json({
-        error: 'Demo token addresses not configured',
-        message: 'DEMO_REDACTED_ADDRESS and DEMO_WETH_ADDRESS must be set in .env.local'
+      const missing: string[] = [];
+      if (!DEMO_REDACTED_ADDRESS) missing.push('DEMO_REDACTED_ADDRESS');
+      if (!DEMO_WETH_ADDRESS) missing.push('DEMO_WETH_ADDRESS');
+
+      return res.status(503).json({
+        ok: false,
+        error: 'Faucet not configured',
+        missing: missing
       });
     }
 
@@ -4867,6 +4900,7 @@ app.post('/api/demo/faucet', maybeCheckAccess, async (req, res) => {
 
     if (!userAddress || typeof userAddress !== 'string') {
       return res.status(400).json({
+        ok: false,
         error: 'userAddress is required'
       });
     }
@@ -4874,6 +4908,7 @@ app.post('/api/demo/faucet', maybeCheckAccess, async (req, res) => {
     // Validate address format
     if (!/^0x[a-fA-F0-9]{40}$/i.test(userAddress)) {
       return res.status(400).json({
+        ok: false,
         error: 'Invalid userAddress format'
       });
     }
@@ -4888,6 +4923,7 @@ app.post('/api/demo/faucet', maybeCheckAccess, async (req, res) => {
     console.log(`[api/demo/faucet] Successfully minted tokens:`, result);
 
     res.json({
+      ok: true,
       success: true,
       txHashes: result.txHashes,
       amounts: result.amounts
@@ -4895,8 +4931,9 @@ app.post('/api/demo/faucet', maybeCheckAccess, async (req, res) => {
   } catch (error: any) {
     console.error('[api/demo/faucet] Error:', error);
     res.status(500).json({
+      ok: false,
       error: 'Failed to mint demo tokens',
-      message: error.message
+      details: error.message
     });
   }
 });

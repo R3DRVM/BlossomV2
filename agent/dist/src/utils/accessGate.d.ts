@@ -37,6 +37,7 @@ export declare function hasAccess(walletAddress: string): Promise<boolean>;
 export declare function getAllAccessCodes(): Promise<AccessCode[]>;
 /**
  * Create a new access code (admin utility)
+ * Default maxUses=1000 for reusable beta codes (per-device limiting via cookie)
  */
 export declare function createAccessCode(maxUses?: number, expiresAt?: number | null, metadata?: any): Promise<AccessCode | null>;
 /**
@@ -45,6 +46,7 @@ export declare function createAccessCode(maxUses?: number, expiresAt?: number | 
 export declare function revokeAccessCode(code: string): Promise<boolean>;
 /**
  * Express middleware to check access
+ * Checks for valid gate pass cookie OR access code
  */
 export declare function checkAccess(req: any, res: any, next: any): void;
 export declare function loadAccessCodesFromEnv(): void;

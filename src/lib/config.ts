@@ -2,8 +2,22 @@
  * Feature flags and configuration
  */
 
-export const USE_AGENT_BACKEND =
-  import.meta.env.VITE_USE_AGENT_BACKEND === 'true';
+// Backend chat enabled by default in production
+// Can be disabled with VITE_FORCE_MOCK_CHAT=true
+export const USE_AGENT_BACKEND = (() => {
+  // Explicit mock mode override (for testing)
+  if (import.meta.env.VITE_FORCE_MOCK_CHAT === 'true') {
+    return false;
+  }
+
+  // In production, always use backend (unless explicitly disabled)
+  if (import.meta.env.PROD) {
+    return true;
+  }
+
+  // In development, respect VITE_USE_AGENT_BACKEND flag
+  return import.meta.env.VITE_USE_AGENT_BACKEND === 'true';
+})();
 
 // V1/V1.1 Default: eth_testnet (testnet-only by default)
 // SIM mode: Internal dev-only, requires VITE_ALLOW_SIM_MODE=true

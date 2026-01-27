@@ -1544,8 +1544,8 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
     const extractedParams = opts?.extractedParams;
 
     if (USE_AGENT_BACKEND) {
-      // Agent mode: call backend
-      console.log('[Chat] Using AGENT backend mode - request will go to backend');
+      // Agent mode: call backend (production default)
+      console.log('[Chat] Using backend agent for chat - sending to /api/chat');
       try {
         const response = await callBlossomChat({
           userMessage: userText,
