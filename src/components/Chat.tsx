@@ -3169,7 +3169,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
           if (import.meta.env.DEV) {
             console.log('[Chat] guard: prevented generic fallback for trade intent');
           }
-          responseText = "I didn't understand. Try: 'long BTC 20x with 2% risk'";
+          responseText = "I'm not sure I understood that. Could you please rephrase or ask something else?";
         } else {
           responseText = generateBlossomResponse(parsed, (opts as any)?.originalUserText || userText || '');
         }
