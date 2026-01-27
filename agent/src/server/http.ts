@@ -6730,21 +6730,30 @@ app.post('/api/waitlist/join', async (req, res) => {
       }
     }
 
-    // Store in database (using execution ledger DB)
+    // Store in database (using Postgres-compatible query)
     try {
-      const { addToWaitlist } = await import('../../execution-ledger/db');
+      const dbPgClient = await import('../../execution-ledger/db-pg-client');
+      const pgQuery = dbPgClient.query;
 
       // Build metadata object for telegram/twitter handles
       const metadata: Record<string, any> = {};
       if (telegramHandle) metadata.telegramHandle = telegramHandle;
       if (twitterHandle) metadata.twitterHandle = twitterHandle;
 
-      const id = addToWaitlist({
-        email,
-        walletAddress,
-        source: source || 'landing',
-        metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
-      });
+      const id = `wl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const now = Math.floor(Date.now() / 1000);
+
+      await pgQuery(`
+        INSERT INTO waitlist (id, email, wallet_address, created_at, source, metadata_json)
+        VALUES ($1, $2, $3, $4, $5, $6)
+      `, [
+        id,
+        email || null,
+        walletAddress || null,
+        now,
+        source || 'landing',
+        Object.keys(metadata).length > 0 ? JSON.stringify(metadata) : null
+      ]);
 
       // Don't log actual email/wallet for privacy
       console.log(`[waitlist] New signup from ${source || 'landing'}: ${id.slice(0, 8)}...`);
