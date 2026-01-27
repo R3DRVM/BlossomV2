@@ -204,3 +204,18 @@ CREATE TABLE IF NOT EXISTS waitlist (
 
 CREATE INDEX IF NOT EXISTS idx_waitlist_email ON waitlist(email);
 CREATE INDEX IF NOT EXISTS idx_waitlist_wallet ON waitlist(wallet_address);
+
+CREATE TABLE IF NOT EXISTS access_code_redemptions (
+    id TEXT PRIMARY KEY,
+    code TEXT NOT NULL,
+    redeemed_at INTEGER NOT NULL,
+    wallet_address TEXT,
+    device_fingerprint TEXT,
+    ip_address TEXT,
+    user_agent TEXT,
+    metadata_json TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_redemptions_code ON access_code_redemptions(code);
+CREATE INDEX IF NOT EXISTS idx_redemptions_wallet ON access_code_redemptions(wallet_address);
+CREATE INDEX IF NOT EXISTS idx_redemptions_device ON access_code_redemptions(device_fingerprint);
