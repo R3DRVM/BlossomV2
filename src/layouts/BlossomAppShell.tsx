@@ -5,6 +5,7 @@ import CopilotLayout from '../components/CopilotLayout';
 import AccessGateOverlay from '../components/AccessGateOverlay';
 import SessionEnforcementModal, { isSessionEnabled, hasUserChosenSigningMode } from '../components/SessionEnforcementModal';
 import { useAccessGate } from '../hooks/useAccessGate';
+import DebugPanel from '../components/DebugPanel';
 
 export default function BlossomAppShell() {
   const { isAuthorized, isLoading, grantAccess } = useAccessGate();
@@ -43,6 +44,9 @@ export default function BlossomAppShell() {
       {showSessionModal && (
         <SessionEnforcementModal onSessionEnabled={handleSessionEnabled} />
       )}
+
+      {/* Debug panel (visible with ?debug=1 query param) */}
+      <DebugPanel />
     </div>
   );
 }
