@@ -4201,6 +4201,15 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
 
             if (!prepareResponse.ok) {
               const errorData = await prepareResponse.json().catch(() => ({ error: 'Unknown error' }));
+
+              // Handle V1_DEMO mode blocking manual signing
+              if (prepareResponse.status === 403 && errorData.errorCode === 'V1_DEMO_DIRECT_BLOCKED') {
+                updateMessageInChat(targetChatId, sigStatusMsgId, {
+                  text: '❌ Manual signing is not available in demo mode. Please enable One-Click Execution in the wallet panel.',
+                });
+                return;
+              }
+
               updateMessageInChat(targetChatId, sigStatusMsgId, {
                 text: `❌ Failed to prepare transaction: ${errorData.error || errorData.message || 'Unknown error'}`,
               });
@@ -4274,9 +4283,20 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
           }
 
           // Step 3: Execute the main transaction
-          if (!prepareResult.plan?.actions?.length && !prepareResult.tx) {
+          // Backend returns: { to, call, value, plan, routing, ... }
+          // Check for V1_DEMO_DIRECT_BLOCKED error
+          if (prepareResult.errorCode === 'V1_DEMO_DIRECT_BLOCKED') {
             updateMessageInChat(targetChatId, sigStatusMsgId, {
-              text: '❌ No transaction to execute. The backend did not return a valid execution plan.',
+              text: '❌ Manual signing is not available in demo mode. Please enable One-Click Execution instead.',
+            });
+            return;
+          }
+
+          // Check we have transaction data
+          const hasValidTx = prepareResult.to && (prepareResult.call || prepareResult.plan?.calldata);
+          if (!hasValidTx) {
+            updateMessageInChat(targetChatId, sigStatusMsgId, {
+              text: '❌ No transaction to execute. The backend did not return valid execution data.',
             });
             return;
           }
@@ -4285,10 +4305,11 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
             text: '⏳ Waiting for wallet signature... Please confirm in your wallet.',
           });
 
-          // Get the transaction to sign (either from plan or direct tx)
-          const txToSign = prepareResult.tx || {
-            to: prepareResult.routerAddress || prepareResult.plan?.routerAddress,
-            data: prepareResult.calldata || prepareResult.plan?.calldata,
+          // Get the transaction to sign from backend response format
+          // Backend returns: to (address), call (calldata), value (hex)
+          const txToSign = {
+            to: prepareResult.to,
+            data: prepareResult.call || prepareResult.plan?.calldata,
             value: prepareResult.value || '0x0',
           };
 
@@ -4298,6 +4319,8 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
             });
             return;
           }
+
+          console.log('[handleConfirmTrade] Sending transaction:', { to: txToSign.to, dataLen: txToSign.data?.length, value: txToSign.value });
 
           let txHash: string | null;
           try {
