@@ -3,8 +3,13 @@ import react from '@vitejs/plugin-react'
 import path from 'path'
 import { execSync } from 'child_process'
 
-// Get build SHA from git
+// Get build SHA from Vercel env or git
 function getBuildSha(): string {
+  // Vercel provides git commit SHA in production builds
+  if (process.env.VERCEL_GIT_COMMIT_SHA) {
+    return process.env.VERCEL_GIT_COMMIT_SHA.slice(0, 7);
+  }
+  // Fallback to git for local builds
   try {
     const sha = execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).trim();
     return sha;
@@ -13,7 +18,30 @@ function getBuildSha(): string {
   }
 }
 
+// Get branch from Vercel env or git
+function getBuildBranch(): string {
+  if (process.env.VERCEL_GIT_COMMIT_REF) {
+    return process.env.VERCEL_GIT_COMMIT_REF;
+  }
+  try {
+    const branch = execSync('git rev-parse --abbrev-ref HEAD', { encoding: 'utf8' }).trim();
+    return branch;
+  } catch {
+    return 'unknown';
+  }
+}
+
+// Get build environment
+function getBuildEnv(): string {
+  if (process.env.VERCEL_ENV) {
+    return process.env.VERCEL_ENV; // 'production', 'preview', or 'development'
+  }
+  return process.env.NODE_ENV || 'development';
+}
+
 const BUILD_SHA = getBuildSha();
+const BUILD_BRANCH = getBuildBranch();
+const BUILD_ENV = getBuildEnv();
 const BUILD_TIME = new Date().toISOString();
 
 // https://vitejs.dev/config/
@@ -29,6 +57,8 @@ export default defineConfig({
     'process.env': {},
     global: 'globalThis',
     __BUILD_SHA__: JSON.stringify(BUILD_SHA),
+    __BUILD_BRANCH__: JSON.stringify(BUILD_BRANCH),
+    __BUILD_ENV__: JSON.stringify(BUILD_ENV),
     __BUILD_TIME__: JSON.stringify(BUILD_TIME),
   },
   optimizeDeps: {

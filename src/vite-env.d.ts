@@ -2,6 +2,8 @@
 
 // Build-time constants injected by Vite
 declare const __BUILD_SHA__: string;
+declare const __BUILD_BRANCH__: string;
+declare const __BUILD_ENV__: string;
 declare const __BUILD_TIME__: string;
 
 interface ImportMetaEnv {

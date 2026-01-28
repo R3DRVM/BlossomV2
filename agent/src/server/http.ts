@@ -2522,6 +2522,15 @@ app.get('/api/execute/preflight', async (req, res) => {
       allowedAdapters.push(AAVE_ADAPTER_ADDRESS.toLowerCase());
     }
 
+    // Check perps configuration
+    const { DEMO_PERP_ADAPTER_ADDRESS } = await import('../config');
+    const perpsEnabled = !!DEMO_PERP_ADAPTER_ADDRESS && routerOk;
+
+    // Venue availability flags for frontend execution routing
+    const swapEnabled = adapterOk && routerOk && rpcOk;
+    const lendingEnabled = lendingStatus.enabled && routerOk;
+    const eventsEnabled = true; // Events always available (proof-only mode)
+
     res.json({
       mode: 'eth_testnet',
       ok,
@@ -2530,10 +2539,16 @@ app.get('/api/execute/preflight', async (req, res) => {
       allowedAdapters,
       router: EXECUTION_ROUTER_ADDRESS || null, // Legacy field
       adapter: MOCK_SWAP_ADAPTER_ADDRESS || null, // Legacy field
+      adapterOk, // For legacy compatibility
       rpc: rpcOk,
       routing: routingStatus,
       lending: lendingStatus,
       dflow: dflowStatus,
+      // Venue availability flags for frontend execution routing
+      swapEnabled,
+      perpsEnabled,
+      lendingEnabled,
+      eventsEnabled,
       notes,
     });
   } catch (error: any) {
@@ -5039,6 +5054,10 @@ app.get('/api/health', async (req, res) => {
     effectiveProvider = 'stub';
   }
 
+  // Get git branch from Vercel or git
+  const gitBranch = process.env.VERCEL_GIT_COMMIT_REF || 'unknown';
+  const buildEnv = process.env.VERCEL_ENV || process.env.NODE_ENV || 'development';
+
   const response: any = {
     ok: true,
     ts: Date.now(),
@@ -5046,6 +5065,10 @@ app.get('/api/health', async (req, res) => {
     llmProvider: effectiveProvider, // Non-sensitive: just the provider name
     dbMode,
     dbIdentityHash,
+    // Build metadata for deployment verification
+    gitSha: BUILD_SHA,
+    gitBranch,
+    buildEnv,
   };
 
   // Safe debug info (only when AUTH_DEBUG=1)

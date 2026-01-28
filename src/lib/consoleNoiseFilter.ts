@@ -40,6 +40,19 @@ function shouldSuppress(...args: any[]): boolean {
     return true;
   }
 
+  // Suppress WebSocket errors from wallet providers (Trezor, relayers, etc.)
+  const hasWebSocketNoise =
+    (allText.includes('WebSocket') && allText.includes('code 3000')) ||
+    (allText.includes('WebSocket') && allText.includes('Unauthorized')) ||
+    (allText.includes('WebSocket') && allText.includes('invalid key')) ||
+    (allText.includes('socket') && allText.includes('abnormally')) ||
+    (allText.includes('Fatal socket error') && allText.includes('relayer')) ||
+    allText.includes('WebSocket connection closed abnormally');
+
+  if (hasWebSocketNoise) {
+    return true;
+  }
+
   // Must contain one of these extension error patterns
   const hasExtensionError =
     allText.includes('Could not establish connection. Receiving end does not exist.') ||

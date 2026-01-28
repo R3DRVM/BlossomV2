@@ -23,10 +23,19 @@ initGlobalErrorHandlers();
 
 // Log build info on startup (for deployment verification)
 declare const __BUILD_SHA__: string;
+declare const __BUILD_BRANCH__: string;
+declare const __BUILD_ENV__: string;
 declare const __BUILD_TIME__: string;
 const buildSha = typeof __BUILD_SHA__ !== 'undefined' ? __BUILD_SHA__ : 'dev';
+const buildBranch = typeof __BUILD_BRANCH__ !== 'undefined' ? __BUILD_BRANCH__ : 'unknown';
+const buildEnv = typeof __BUILD_ENV__ !== 'undefined' ? __BUILD_ENV__ : 'development';
 const buildTime = typeof __BUILD_TIME__ !== 'undefined' ? __BUILD_TIME__ : 'unknown';
-console.log(`%c🌸 Blossom Build: ${buildSha} (${buildTime})`, 'color: #FF6BA0; font-weight: bold;');
+console.log(`%c🌸 Blossom Build: ${buildSha} (${buildBranch}) [${buildEnv}] ${buildTime}`, 'color: #FF6BA0; font-weight: bold;');
+
+// Make build info available globally for debugging
+if (typeof window !== 'undefined') {
+  (window as any).__BLOSSOM_BUILD__ = { sha: buildSha, branch: buildBranch, env: buildEnv, time: buildTime };
+}
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

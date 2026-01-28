@@ -237,12 +237,14 @@ export async function getTopEventMarkets(requestedCount?: number): Promise<Event
 
 /**
  * Get static fallback markets (demo data)
+ * These are shown when live Polymarket API is unavailable
+ * Labeled as "demo" so users know they're not live
  */
 function getStaticMarkets(): EventMarket[] {
   return [
     {
-      id: 'fed-cuts-mar-2025',
-      title: 'Will the Fed cut rates in March 2025?',
+      id: 'fed-cuts-q1-2025',
+      title: 'Will the Fed cut rates in Q1 2025?',
       yesPrice: 0.65,
       noPrice: 0.35,
       volume24hUsd: 1250000,
@@ -251,8 +253,8 @@ function getStaticMarkets(): EventMarket[] {
       isLive: false,
     },
     {
-      id: 'btc-etf-approval-2025',
-      title: 'Will a spot BTC ETF be approved in 2025?',
+      id: 'btc-100k-2025',
+      title: 'Will BTC reach $100,000 in 2025?',
       yesPrice: 0.72,
       noPrice: 0.28,
       volume24hUsd: 980000,
@@ -261,8 +263,8 @@ function getStaticMarkets(): EventMarket[] {
       isLive: false,
     },
     {
-      id: 'eth-price-2025',
-      title: 'Will ETH price exceed $5,000 by end of 2025?',
+      id: 'eth-price-5k-2025',
+      title: 'Will ETH exceed $5,000 by end of 2025?',
       yesPrice: 0.58,
       noPrice: 0.42,
       volume24hUsd: 750000,
@@ -277,6 +279,16 @@ function getStaticMarkets(): EventMarket[] {
       noPrice: 0.38,
       volume24hUsd: 540000,
       openInterestUsd: 2100000,
+      source: 'static',
+      isLive: false,
+    },
+    {
+      id: 'sec-crypto-clarity-2025',
+      title: 'Will the SEC provide crypto regulatory clarity in 2025?',
+      yesPrice: 0.45,
+      noPrice: 0.55,
+      volume24hUsd: 420000,
+      openInterestUsd: 1800000,
       source: 'static',
       isLive: false,
     },

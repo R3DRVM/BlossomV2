@@ -268,3 +268,65 @@ body {
 .wallet-adapter-modal-list-more svg {
   fill: #64748b !important;
 }
+
+/* ============================================
+ * Wallet Modal Responsive Fixes
+ * Prevents cutoff on smaller screens (1366x768)
+ * ============================================ */
+
+/* Solana Wallet Adapter - responsive modal */
+.wallet-adapter-modal-wrapper {
+  padding: 16px !important;
+  box-sizing: border-box !important;
+}
+
+.wallet-adapter-modal-container {
+  max-height: calc(100vh - 32px) !important;
+  max-width: calc(100vw - 32px) !important;
+  overflow-y: auto !important;
+}
+
+/* RainbowKit - responsive modal */
+[data-rk] [role="dialog"] {
+  max-height: calc(100vh - 32px) !important;
+  max-width: calc(100vw - 32px) !important;
+  margin: 16px !important;
+}
+
+/* RainbowKit modal backdrop - ensure proper z-index */
+[data-rk] [data-testid="rk-connect-modal"] {
+  z-index: 100 !important;
+}
+
+/* RainbowKit modal content - scrollable */
+[data-rk] [role="dialog"] > div {
+  max-height: calc(100vh - 80px) !important;
+  overflow-y: auto !important;
+}
+
+/* Responsive adjustments for smaller screens */
+@media (max-height: 768px) {
+  .wallet-adapter-modal-container {
+    max-height: calc(100vh - 48px) !important;
+  }
+
+  [data-rk] [role="dialog"] {
+    max-height: calc(100vh - 48px) !important;
+  }
+
+  [data-rk] [role="dialog"] > div {
+    max-height: calc(100vh - 96px) !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .wallet-adapter-modal-container {
+    width: calc(100vw - 24px) !important;
+    max-width: none !important;
+  }
+
+  [data-rk] [role="dialog"] {
+    width: calc(100vw - 24px) !important;
+    max-width: none !important;
+  }
+}
