@@ -3044,7 +3044,8 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
     const ERC20_PULL_ADAPTER_ADDRESS = adapterConfig.ERC20_PULL_ADAPTER_ADDRESS;
     const DEMO_LEND_ADAPTER_ADDRESS = adapterConfig.DEMO_LEND_ADAPTER_ADDRESS;
     const AAVE_ADAPTER_ADDRESS_RELAYED = adapterConfig.AAVE_ADAPTER_ADDRESS;
-    
+    const DEMO_PERP_ADAPTER_ADDRESS_RELAYED = adapterConfig.DEMO_PERP_ADAPTER_ADDRESS;
+
     const allowedAdapters = new Set<string>();
     if (UNISWAP_V3_ADAPTER_ADDRESS) {
       allowedAdapters.add(UNISWAP_V3_ADAPTER_ADDRESS.toLowerCase());
@@ -3066,6 +3067,10 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
     }
     if (AAVE_ADAPTER_ADDRESS_RELAYED) {
       allowedAdapters.add(AAVE_ADAPTER_ADDRESS_RELAYED.toLowerCase());
+    }
+    // MVP: Allow DEMO_PERP_ADAPTER for real perp execution
+    if (DEMO_PERP_ADAPTER_ADDRESS_RELAYED) {
+      allowedAdapters.add(DEMO_PERP_ADAPTER_ADDRESS_RELAYED.toLowerCase());
     }
 
     for (const action of plan.actions) {
