@@ -160,20 +160,25 @@ export function executionRequestToIntent(
     throw new Error('Only swap execution requests supported');
   }
 
-  if (!REDACTED_ADDRESS_SEPOLIA || !WETH_ADDRESS_SEPOLIA) {
-    throw new Error('Token addresses not configured');
+  // Use real addresses if configured, otherwise fallback to demo addresses
+  // This allows swap preparation to work when only demo tokens are configured
+  const usdcAddress = REDACTED_ADDRESS_SEPOLIA || DEMO_REDACTED_ADDRESS;
+  const wethAddress = WETH_ADDRESS_SEPOLIA || DEMO_WETH_ADDRESS;
+
+  if (!usdcAddress || !wethAddress) {
+    throw new Error('Token addresses not configured (set REDACTED_ADDRESS_SEPOLIA/WETH_ADDRESS_SEPOLIA or DEMO_REDACTED_ADDRESS/DEMO_WETH_ADDRESS)');
   }
-  
+
   // Determine token addresses
-  const tokenInAddr = executionRequest.tokenIn === 'ETH' 
+  const tokenInAddr = executionRequest.tokenIn === 'ETH'
     ? 'ETH' // Special case for native ETH
     : executionRequest.tokenIn === 'WETH'
-    ? WETH_ADDRESS_SEPOLIA.toLowerCase()
-    : REDACTED_ADDRESS_SEPOLIA.toLowerCase();
-    
+    ? wethAddress.toLowerCase()
+    : usdcAddress.toLowerCase();
+
   const tokenOutAddr = executionRequest.tokenOut === 'WETH'
-    ? WETH_ADDRESS_SEPOLIA.toLowerCase()
-    : REDACTED_ADDRESS_SEPOLIA.toLowerCase();
+    ? wethAddress.toLowerCase()
+    : usdcAddress.toLowerCase();
 
   // Determine executionIntent
   let executionIntent: 'swap_usdc_weth' | 'swap_weth_usdc';

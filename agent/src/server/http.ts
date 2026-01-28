@@ -2541,6 +2541,18 @@ app.get('/api/execute/preflight', async (req, res) => {
     if (DFLOW_ENABLED && !DFLOW_API_KEY) missingEnvVars.push('DFLOW_API_KEY');
     if (DFLOW_ENABLED && !DFLOW_EVENTS_MARKETS_PATH) missingEnvVars.push('DFLOW_EVENTS_MARKETS_PATH');
 
+    // Swap token configuration check (can use real OR demo addresses)
+    const { REDACTED_ADDRESS_SEPOLIA, WETH_ADDRESS_SEPOLIA, DEMO_REDACTED_ADDRESS, DEMO_WETH_ADDRESS } = await import('../config');
+    const swapTokenConfigOk = !!(
+      (REDACTED_ADDRESS_SEPOLIA && WETH_ADDRESS_SEPOLIA) ||
+      (DEMO_REDACTED_ADDRESS && DEMO_WETH_ADDRESS)
+    );
+    const swapTokenAddresses = {
+      usdc: REDACTED_ADDRESS_SEPOLIA || DEMO_REDACTED_ADDRESS || null,
+      weth: WETH_ADDRESS_SEPOLIA || DEMO_WETH_ADDRESS || null,
+      source: REDACTED_ADDRESS_SEPOLIA ? 'real' : DEMO_REDACTED_ADDRESS ? 'demo' : 'none',
+    };
+
     res.json({
       mode: 'eth_testnet',
       ok,
@@ -2556,6 +2568,8 @@ app.get('/api/execute/preflight', async (req, res) => {
       dflow: dflowStatus,
       // Venue availability flags for frontend execution routing
       swapEnabled,
+      swapTokenConfigOk,
+      swapTokenAddresses,
       perpsEnabled,
       lendingEnabled,
       eventsEnabled,
