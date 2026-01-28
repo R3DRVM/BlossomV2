@@ -214,7 +214,11 @@ export default function IntentExecutionCard({
           {/* Row 2: Routing/Execution */}
           <div className="flex items-center justify-between text-slate-500">
             <span className="truncate">
-              {route ? `${route.venue || '—'} • ${route.chain}/${route.network}` : 'Routing...'}
+              {route
+                ? `${route.venue || '—'} • ${route.chain}/${route.network}`
+                : error
+                  ? `Failed: ${error.code || 'Error'}`
+                  : 'Routing...'}
             </span>
             {txHash && (
               <span className="flex-shrink-0 text-[9px] text-emerald-600">✓ On-chain</span>
