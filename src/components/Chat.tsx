@@ -1911,9 +1911,31 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
         appendMessageToChat(targetChatId, blossomResponse);
       } catch (error: any) {
         console.error('Agent backend error:', error);
+
+        // Determine error type and provide appropriate message
+        let errorText = "I couldn't reach the agent backend. Please try again.";
+        const errorMsg = error?.message || '';
+
+        if (errorMsg.includes('401') || errorMsg.includes('403')) {
+          // Access gate error - code invalid or expired
+          errorText = "Access code required or expired. Please re-enter your access code to continue.";
+          // Trigger re-authorization by clearing stored code
+          localStorage.removeItem('blossom_access_code');
+          // Dispatch event for AccessGate to reopen
+          window.dispatchEvent(new CustomEvent('blossom-access-expired'));
+        } else if (errorMsg.includes('Backend is offline') || errorMsg.includes('unreachable')) {
+          errorText = "Backend is currently offline. Please wait a moment and try again.";
+        } else if (errorMsg.includes('500') || errorMsg.includes('502') || errorMsg.includes('503') || errorMsg.includes('504')) {
+          // Server error - show correlation ID if available
+          const correlationId = error?.correlationId || `ERR-${Date.now().toString(36)}`;
+          errorText = `Server error occurred. Please try again. (ID: ${correlationId})`;
+        } else if (errorMsg.includes('timeout') || errorMsg.includes('TimeoutError')) {
+          errorText = "Request timed out. The server might be busy. Please try again.";
+        }
+
         const errorMessage: ChatMessage = {
           id: `error-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-          text: "I couldn't reach the agent backend, so I didn't execute anything. Please try again.",
+          text: errorText,
           isUser: false,
           timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
         };
@@ -3754,12 +3776,15 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
         }
 
         // Blocker #2: Check execution auth mode and enforce session requirement
-        if (executionAuthMode === 'session') {
-          // Blocker #2: Block execution if no active session in session-only mode
+        // Allow manual signing users to bypass session check - they'll use direct wallet signing
+        const userHasManualSigning = isManualSigningEnabled(userAddress);
+
+        if (executionAuthMode === 'session' && !userHasManualSigning) {
+          // Blocker #2: Block execution if no active session in session-only mode (unless manual signing)
           if (!hasActiveSession) {
             const errorMessage: ChatMessage = {
               id: `error-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-              text: 'One-click execution is required but not enabled. Please enable it in the wallet panel first.',
+              text: 'One-click execution is required but not enabled. Please enable it in the wallet panel first, or choose "Sign Each Transaction" mode.',
               isUser: false,
               timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
             };
@@ -4146,94 +4171,208 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
             }
           }
           
-          // Use execution kernel for unified execution
-          const { executePlan } = await import('../lib/executionKernel');
-          const result = await executePlan({
-            draftId,
-            userAddress,
-            planType,
-            executionRequest: chatMessage?.executionRequest,
-            executionIntent: chatMessage?.executionRequest ? undefined : ethTestnetIntent,
-            strategy: executedStrategy,
-            executionKind: demoSwapKindDirect,
-          }, { executionAuthMode: 'direct' });
+          // Manual signing flow: Call /api/execute/prepare and trigger wallet signature
+          console.log('[handleConfirmTrade] Manual signing flow - preparing transaction');
 
-          // Handle execution result - TRUTHFUL UI: only mark executed if txHash exists
-          if (!result.ok) {
-            const errorMessage: ChatMessage = {
-              id: `error-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-              text: result.error || 'Execution failed. Strategy remains pending.',
-              isUser: false,
-              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
-            };
-            appendMessageToChat(targetChatId, errorMessage);
-            return; // Don't mark as executed
-          }
+          // Show "Waiting for wallet signature" status
+          const sigStatusMsgId = `sig-status-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+          const sigStatusMessage: ChatMessage = {
+            id: sigStatusMsgId,
+            text: '⏳ Preparing transaction for wallet signature...',
+            isUser: false,
+            timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+          };
+          appendMessageToChat(targetChatId, sigStatusMessage);
 
-          // TRUTHFUL UI: Only proceed if we have a real txHash (relayed or wallet mode)
-          if (result.mode === 'simulated' || result.mode === 'unsupported') {
-            const simulatedMessage: ChatMessage = {
-              id: `simulated-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-              text: `⚠️ ${result.mode === 'simulated' ? 'Simulated' : 'Not supported'}: ${result.error || 'Execution not performed on-chain'}`,
-              isUser: false,
-              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
-            };
-            appendMessageToChat(targetChatId, simulatedMessage);
-            // Don't mark as executed - keep as draft/pending
+          // Step 1: Call /api/execute/prepare
+          let prepareResult: any;
+          try {
+            const prepareResponse = await callAgent('/api/execute/prepare', {
+              method: 'POST',
+              body: JSON.stringify({
+                draftId,
+                userAddress,
+                executionRequest: chatMessage?.executionRequest,
+                executionIntent: chatMessage?.executionRequest ? undefined : ethTestnetIntent,
+                strategy: executedStrategy,
+                executionKind: demoSwapKindDirect,
+              }),
+            });
+
+            if (!prepareResponse.ok) {
+              const errorData = await prepareResponse.json().catch(() => ({ error: 'Unknown error' }));
+              updateMessageInChat(targetChatId, sigStatusMsgId, {
+                text: `❌ Failed to prepare transaction: ${errorData.error || errorData.message || 'Unknown error'}`,
+              });
+              return;
+            }
+
+            prepareResult = await prepareResponse.json();
+            console.log('[handleConfirmTrade] Prepare result:', prepareResult);
+          } catch (error: any) {
+            updateMessageInChat(targetChatId, sigStatusMsgId, {
+              text: `❌ Failed to prepare transaction: ${error.message || 'Network error'}`,
+            });
             return;
           }
 
-          // Only continue if we have txHash (relayed or wallet mode with confirmed tx)
-          if (!result.txHash) {
-            const pendingMessage: ChatMessage = {
-              id: `pending-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-              text: 'Execution pending confirmation. Strategy remains pending.',
-              isUser: false,
-              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
-            };
-            appendMessageToChat(targetChatId, pendingMessage);
-            return; // Don't mark as executed
+          // Step 2: Check if approval is needed
+          if (prepareResult.approvalNeeded && prepareResult.approvalTx) {
+            updateMessageInChat(targetChatId, sigStatusMsgId, {
+              text: '⏳ Approval required. Please approve token spending in your wallet...',
+            });
+
+            try {
+              const approvalTxHash = await sendTransaction({
+                to: prepareResult.approvalTx.to,
+                data: prepareResult.approvalTx.data,
+                value: prepareResult.approvalTx.value,
+              });
+
+              if (!approvalTxHash) {
+                updateMessageInChat(targetChatId, sigStatusMsgId, {
+                  text: '❌ Approval transaction rejected or failed. Strategy remains pending.',
+                });
+                return;
+              }
+
+              // Wait for approval confirmation
+              updateMessageInChat(targetChatId, sigStatusMsgId, {
+                text: '⏳ Waiting for approval confirmation...',
+              });
+
+              let approvalConfirmed = false;
+              for (let i = 0; i < 30 && !approvalConfirmed; i++) {
+                await new Promise(r => setTimeout(r, 2000));
+                try {
+                  const statusRes = await callAgent(`/api/execute/status?txHash=${encodeURIComponent(approvalTxHash)}`);
+                  if (statusRes.ok) {
+                    const statusData = await statusRes.json();
+                    if (statusData.status === 'confirmed') approvalConfirmed = true;
+                    else if (statusData.status === 'reverted') {
+                      updateMessageInChat(targetChatId, sigStatusMsgId, {
+                        text: '❌ Approval transaction reverted. Strategy remains pending.',
+                      });
+                      return;
+                    }
+                  }
+                } catch {}
+              }
+
+              if (!approvalConfirmed) {
+                updateMessageInChat(targetChatId, sigStatusMsgId, {
+                  text: '❌ Approval not confirmed after 60s. Please check manually.',
+                });
+                return;
+              }
+            } catch (error: any) {
+              updateMessageInChat(targetChatId, sigStatusMsgId, {
+                text: `❌ Approval failed: ${error.message || 'Unknown error'}`,
+              });
+              return;
+            }
           }
 
-          // Update portfolio if available
-          if (result.portfolio) {
-            updateFromBackendPortfolio(result.portfolio);
+          // Step 3: Execute the main transaction
+          if (!prepareResult.plan?.actions?.length && !prepareResult.tx) {
+            updateMessageInChat(targetChatId, sigStatusMsgId, {
+              text: '❌ No transaction to execute. The backend did not return a valid execution plan.',
+            });
+            return;
           }
 
-          // Trigger wallet balance refresh after successful execution
+          updateMessageInChat(targetChatId, sigStatusMsgId, {
+            text: '⏳ Waiting for wallet signature... Please confirm in your wallet.',
+          });
+
+          // Get the transaction to sign (either from plan or direct tx)
+          const txToSign = prepareResult.tx || {
+            to: prepareResult.routerAddress || prepareResult.plan?.routerAddress,
+            data: prepareResult.calldata || prepareResult.plan?.calldata,
+            value: prepareResult.value || '0x0',
+          };
+
+          if (!txToSign.to || !txToSign.data) {
+            updateMessageInChat(targetChatId, sigStatusMsgId, {
+              text: '❌ Invalid transaction data from backend. Strategy remains pending.',
+            });
+            return;
+          }
+
+          let txHash: string | null;
+          try {
+            txHash = await sendTransaction(txToSign);
+          } catch (error: any) {
+            const isRejection = error.message?.toLowerCase().includes('rejected') ||
+                               error.message?.toLowerCase().includes('denied') ||
+                               error.code === 4001;
+            updateMessageInChat(targetChatId, sigStatusMsgId, {
+              text: isRejection
+                ? '❌ Transaction rejected by user. Strategy remains pending.'
+                : `❌ Transaction failed: ${error.message || 'Unknown error'}`,
+            });
+            return;
+          }
+
+          if (!txHash) {
+            updateMessageInChat(targetChatId, sigStatusMsgId, {
+              text: '❌ No transaction hash returned. Strategy remains pending.',
+            });
+            return;
+          }
+
+          // Update status with tx link
+          const explorerUrl = `https://sepolia.etherscan.io/tx/${txHash}`;
+          updateMessageInChat(targetChatId, sigStatusMsgId, {
+            text: `⏳ Transaction submitted! Waiting for confirmation... [View on Etherscan](${explorerUrl})`,
+          });
+
+          // Step 4: Poll for confirmation
+          let result: any = { ok: false, txHash, receiptStatus: 'pending' };
+          for (let i = 0; i < 30; i++) {
+            await new Promise(r => setTimeout(r, 2000));
+            try {
+              const statusRes = await callAgent(`/api/execute/status?txHash=${encodeURIComponent(txHash)}`);
+              if (statusRes.ok) {
+                const statusData = await statusRes.json();
+                result = {
+                  ok: statusData.status === 'confirmed',
+                  txHash,
+                  receiptStatus: statusData.status,
+                  explorerUrl,
+                  routing: prepareResult.routing,
+                  blockNumber: statusData.blockNumber,
+                };
+                if (statusData.status === 'confirmed' || statusData.status === 'reverted' || statusData.status === 'failed') {
+                  break;
+                }
+              }
+            } catch {}
+          }
+
+          // Handle execution result - TRUTHFUL UI: only mark executed if txHash exists
+          if (!result.ok && result.receiptStatus === 'pending') {
+            // Timeout waiting for confirmation
+            updateMessageInChat(targetChatId, sigStatusMsgId, {
+              text: `⏳ Transaction pending confirmation. Check status: ${explorerUrl}`,
+            });
+            return; // Don't mark as executed yet
+          }
+
+          if (result.receiptStatus === 'reverted' || result.receiptStatus === 'failed') {
+            updateMessageInChat(targetChatId, sigStatusMsgId, {
+              text: `❌ Transaction failed on-chain. Check: ${explorerUrl}`,
+            });
+            return;
+          }
+
+          // Transaction confirmed! Update status and portfolio
           window.dispatchEvent(new CustomEvent('blossom-wallet-connection-change'));
 
-          // Handle receipt status
-          if (result.receiptStatus === 'failed') {
-            const failedMessage: ChatMessage = {
-              id: `tx-failed-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-              text: `Transaction failed on-chain. Check: ${result.explorerUrl || `https://sepolia.etherscan.io/tx/${result.txHash}`}`,
-              isUser: false,
-              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
-            };
-            appendMessageToChat(targetChatId, failedMessage);
-            return; // Don't mark as executed
-          } else if (result.receiptStatus === 'timeout') {
-            const timeoutMessage: ChatMessage = {
-              id: `tx-timeout-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-              text: `Transaction pending confirmation. Check status: ${result.explorerUrl || `https://sepolia.etherscan.io/tx/${result.txHash}`}`,
-              isUser: false,
-              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
-            };
-            appendMessageToChat(targetChatId, timeoutMessage);
-            return; // Don't mark as executed
-          } else if (result.receiptStatus !== 'confirmed') {
-            // Receipt still pending
-            if (import.meta.env.DEV) {
-              console.log('[handleConfirmTrade] Receipt still pending, not updating portfolio');
-            }
-            return; // Wait for receipt confirmation
-          }
-
-          // TRUTHFUL UI: Only show "Executed" and Etherscan link if txHash exists
+          // Build success message with routing info
           if (result.txHash && result.routing) {
             const routing = result.routing;
-            const explorerUrl = result.explorerUrl || `https://sepolia.etherscan.io/tx/${result.txHash}`;
+            const finalExplorerUrl = result.explorerUrl || explorerUrl;
             
             // Build message that distinguishes routing decision from execution
             let messageText = '';

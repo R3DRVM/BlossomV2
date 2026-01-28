@@ -12,6 +12,16 @@ export function useAccessGate() {
 
   useEffect(() => {
     checkAuthorization();
+
+    // Listen for access expired event (e.g., from 401/403 API errors)
+    const handleAccessExpired = () => {
+      console.log('[useAccessGate] Access expired, reopening gate');
+      setIsAuthorized(false);
+      setIsLoading(false);
+    };
+
+    window.addEventListener('blossom-access-expired', handleAccessExpired);
+    return () => window.removeEventListener('blossom-access-expired', handleAccessExpired);
   }, []);
 
   async function checkAuthorization() {
