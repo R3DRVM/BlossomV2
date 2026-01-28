@@ -81,10 +81,11 @@ export async function getEventMarkets(limit = 10) {
         cacheTimestamp = now;
         return markets;
     }
-    // Fallback if routing service fails
+    // Fallback if routing service fails - GUARANTEE non-empty
+    console.log('[getEventMarkets] Using hardcoded fallback markets (routing service failed or returned empty)');
     cachedMarkets = FALLBACK_MARKETS;
     cacheTimestamp = now;
-    return FALLBACK_MARKETS.slice(0, limit);
+    return FALLBACK_MARKETS.slice(0, Math.max(limit, 5)); // Always return at least 5
 }
 /**
  * Get event markets with routing metadata (Sprint 3)
@@ -134,7 +135,7 @@ export async function getEventMarketsWithRouting(limit = 10) {
         mode: 'hybrid',
         correlationId: routingCorrelationId,
     };
-    if (routedResult.ok && routedResult.data) {
+    if (routedResult.ok && routedResult.data && routedResult.data.length > 0) {
         const markets = routedResult.data.map(m => ({
             id: m.id,
             title: m.title,
@@ -148,10 +149,15 @@ export async function getEventMarketsWithRouting(limit = 10) {
             routing,
         };
     }
-    // Fallback
+    // Fallback - GUARANTEE non-empty (MVP requirement)
+    console.log('[getEventMarketsWithRouting] Using hardcoded fallback markets (routing returned empty or failed)');
     return {
-        markets: FALLBACK_MARKETS.slice(0, limit),
-        routing,
+        markets: FALLBACK_MARKETS.slice(0, Math.max(limit, 5)), // Always at least 5 markets
+        routing: {
+            ...routing,
+            source: 'fallback',
+            reason: routing.reason || 'Routing returned empty or failed, using static fallback',
+        },
     };
 }
 /**

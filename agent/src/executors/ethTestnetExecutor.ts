@@ -1108,20 +1108,24 @@ export async function prepareEthTestnetExecution(
         venueType: 1,
       } as any;
 
-      // Check if user needs DEMO_REDACTED approval
-      if (DEMO_REDACTED_ADDRESS && EXECUTION_ROUTER_ADDRESS) {
-        const currentAllowance = await erc20_allowance(
-          ETH_TESTNET_RPC_URL!,
-          DEMO_REDACTED_ADDRESS,
-          userAddress,
-          EXECUTION_ROUTER_ADDRESS
-        );
-        if (currentAllowance < marginAmount) {
-          approvalRequirements.push({
-            token: DEMO_REDACTED_ADDRESS,
-            spender: EXECUTION_ROUTER_ADDRESS,
-            amount: '0x' + marginAmount.toString(16),
-          });
+      // Check if user needs DEMO_REDACTED approval (non-blocking - wrapped in try-catch)
+      if (DEMO_REDACTED_ADDRESS && EXECUTION_ROUTER_ADDRESS && ETH_TESTNET_RPC_URL) {
+        try {
+          const currentAllowance = await erc20_allowance(
+            ETH_TESTNET_RPC_URL,
+            DEMO_REDACTED_ADDRESS.toLowerCase(),
+            userAddress.toLowerCase(),
+            EXECUTION_ROUTER_ADDRESS.toLowerCase()
+          );
+          if (currentAllowance < marginAmount) {
+            approvalRequirements.push({
+              token: DEMO_REDACTED_ADDRESS,
+              spender: EXECUTION_ROUTER_ADDRESS,
+              amount: '0x' + marginAmount.toString(16),
+            });
+          }
+        } catch (e: any) {
+          warnings.push(`Could not verify DEMO_REDACTED approval: ${e.message}. User may need to approve manually.`);
         }
       }
 
