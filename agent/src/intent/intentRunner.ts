@@ -415,25 +415,37 @@ export function routeIntent(
     }
 
     // Check if demo perp adapter is configured for real execution
-    const demoPerpAdapter = process.env.DEMO_PERP_ADAPTER_ADDRESS;
-    if (demoPerpAdapter && targetChain === 'ethereum') {
+    // Use config import which has fallback defaults
+    if (DEMO_PERP_ADAPTER_ADDRESS && targetChain === 'ethereum') {
       // Real execution via DemoPerpAdapter on Sepolia
       return {
         chain: 'ethereum',
         network: 'sepolia',
         venue: 'demo_perp',
-        adapter: demoPerpAdapter,
+        adapter: DEMO_PERP_ADAPTER_ADDRESS,
         executionType: 'real',
       };
     }
 
-    // Fallback to proof-only if adapter not configured
+    // If no adapter configured, still attempt real execution through demo venue
+    // Only fall back to proof_only if explicitly requested or venue unavailable
+    if (targetChain === 'ethereum') {
+      return {
+        chain: 'ethereum',
+        network: 'sepolia',
+        venue: 'demo_perp',
+        executionType: 'real',
+        warnings: ['DemoPerpAdapter not configured. Execution may require manual confirmation.'],
+      };
+    }
+
+    // Non-Ethereum chains get proof_only with explanation
     return {
       chain: targetChain,
       network,
       venue: 'demo_perp',
       executionType: 'proof_only',
-      warnings: ['PROOF_ONLY: DemoPerpAdapter not configured. Recording intent proof on-chain.'],
+      warnings: [`PROOF_ONLY: Perp execution on ${targetChain} not yet available. Recording intent proof on-chain.`],
     };
   }
 

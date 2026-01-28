@@ -2092,7 +2092,172 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
           // Trigger drawer open with highlighted strategy (via window event for simplicity)
           // The RightPanel will listen for this event
           window.dispatchEvent(new CustomEvent('openStrategyDrawer', { detail: { strategyId: topStrategy.id } }));
-          
+
+          clearInputAndStopTyping();
+          return;
+        }
+
+        // Handle show_positions intent - list all open positions
+        if (parsed.intent === ('show_positions' as ParsedIntent)) {
+          const activePerps = strategies.filter(
+            s => s.instrumentType === 'perp' && (s.status === 'executed' || s.status === 'executing') && !s.isClosed
+          );
+          const activeEvents = strategies.filter(
+            s => s.instrumentType === 'event' && (s.status === 'executed' || s.status === 'executing') && !s.isClosed
+          );
+          const activeDefi = defiPositions.filter(p => p.status === 'active');
+
+          const totalPositions = activePerps.length + activeEvents.length + activeDefi.length;
+
+          if (totalPositions === 0) {
+            const responseText = "You don't have any open positions right now.\n\nYou can:\n• Start a perp trade: \"Long ETH with 3% risk\"\n• Deposit into DeFi: \"Park 500 REDACTED in Aave\"\n• Trade event markets: Switch to Event Markets and \"Take YES on Fed cuts with 2% risk\"";
+            appendMessageToChat(targetChatId, {
+              id: `pos-${Date.now()}`,
+              text: responseText,
+              isUser: false,
+              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+            });
+            clearInputAndStopTyping();
+            return;
+          }
+
+          // Calculate totals
+          const totalPerpNotional = activePerps.reduce((sum, s) => sum + (s.notionalUsd || 0), 0);
+          const biggestPerp = activePerps.length > 0
+            ? activePerps.reduce((max, s) => (s.notionalUsd || 0) > (max.notionalUsd || 0) ? s : max, activePerps[0])
+            : null;
+
+          let responseText = `You have ${totalPositions} open position${totalPositions > 1 ? 's' : ''}:\n\n`;
+
+          if (activePerps.length > 0) {
+            responseText += `**Perps (${activePerps.length}):** $${totalPerpNotional.toLocaleString()} total notional\n`;
+            activePerps.forEach(s => {
+              responseText += `  • ${s.market} ${s.side} - $${(s.notionalUsd || 0).toLocaleString()} (${(s.riskPercent || 0).toFixed(1)}% risk)\n`;
+            });
+          }
+
+          if (activeEvents.length > 0) {
+            const totalEventStake = activeEvents.reduce((sum, s) => sum + (s.stakeUsd || 0), 0);
+            responseText += `\n**Events (${activeEvents.length}):** $${totalEventStake.toLocaleString()} staked\n`;
+            activeEvents.forEach(s => {
+              responseText += `  • ${s.eventLabel || 'Event'} (${s.eventSide}) - $${(s.stakeUsd || 0).toLocaleString()}\n`;
+            });
+          }
+
+          if (activeDefi.length > 0) {
+            const totalDefiDeposit = activeDefi.reduce((sum, p) => sum + (p.depositUsd || 0), 0);
+            responseText += `\n**DeFi (${activeDefi.length}):** $${totalDefiDeposit.toLocaleString()} deposited\n`;
+            activeDefi.forEach(p => {
+              responseText += `  • ${p.protocol} ${p.vault || ''} - $${(p.depositUsd || 0).toLocaleString()} (${(p.apy || 0).toFixed(1)}% APY)\n`;
+            });
+          }
+
+          if (biggestPerp) {
+            responseText += `\nBiggest position: ${biggestPerp.market} ${biggestPerp.side} ($${(biggestPerp.notionalUsd || 0).toLocaleString()})`;
+          }
+
+          appendMessageToChat(targetChatId, {
+            id: `pos-${Date.now()}`,
+            text: responseText,
+            isUser: false,
+            timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+          });
+          clearInputAndStopTyping();
+          return;
+        }
+
+        // Handle show_exposure intent - show net exposure by asset
+        if (parsed.intent === ('show_exposure' as ParsedIntent)) {
+          const activePerps = strategies.filter(
+            s => s.instrumentType === 'perp' && (s.status === 'executed' || s.status === 'executing') && !s.isClosed
+          );
+
+          if (activePerps.length === 0) {
+            appendMessageToChat(targetChatId, {
+              id: `exp-${Date.now()}`,
+              text: "You have no perp positions, so your net exposure is $0.\n\nTo open a position, try: \"Long BTC with 2% risk\"",
+              isUser: false,
+              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+            });
+            clearInputAndStopTyping();
+            return;
+          }
+
+          // Calculate exposure by asset
+          const exposureByAsset: Record<string, number> = {};
+          activePerps.forEach(s => {
+            const asset = s.market || 'Unknown';
+            const exposure = s.side === 'Long' ? (s.notionalUsd || 0) : -(s.notionalUsd || 0);
+            exposureByAsset[asset] = (exposureByAsset[asset] || 0) + exposure;
+          });
+
+          const totalLongExposure = Object.values(exposureByAsset).filter(v => v > 0).reduce((a, b) => a + b, 0);
+          const totalShortExposure = Math.abs(Object.values(exposureByAsset).filter(v => v < 0).reduce((a, b) => a + b, 0));
+          const netExposure = totalLongExposure - totalShortExposure;
+
+          let responseText = `**Current Perp Exposure:**\n\n`;
+          Object.entries(exposureByAsset).forEach(([asset, exposure]) => {
+            const direction = exposure >= 0 ? 'Long' : 'Short';
+            responseText += `• ${asset}: ${direction} $${Math.abs(exposure).toLocaleString()}\n`;
+          });
+
+          responseText += `\n**Summary:**\n`;
+          responseText += `• Gross Long: $${totalLongExposure.toLocaleString()}\n`;
+          responseText += `• Gross Short: $${totalShortExposure.toLocaleString()}\n`;
+          responseText += `• Net Exposure: ${netExposure >= 0 ? 'Long' : 'Short'} $${Math.abs(netExposure).toLocaleString()}`;
+
+          appendMessageToChat(targetChatId, {
+            id: `exp-${Date.now()}`,
+            text: responseText,
+            isUser: false,
+            timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+          });
+          clearInputAndStopTyping();
+          return;
+        }
+
+        // Handle show_liquidation_risk intent - show positions closest to liquidation
+        if (parsed.intent === ('show_liquidation_risk' as ParsedIntent)) {
+          const activePerps = strategies.filter(
+            s => s.instrumentType === 'perp' && (s.status === 'executed' || s.status === 'executing') && !s.isClosed
+          );
+
+          if (activePerps.length === 0) {
+            appendMessageToChat(targetChatId, {
+              id: `liq-${Date.now()}`,
+              text: "You have no perp positions, so there's no liquidation risk to report.",
+              isUser: false,
+              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+            });
+            clearInputAndStopTyping();
+            return;
+          }
+
+          // Sort by liquidation buffer (lower = closer to liquidation)
+          const sortedByLiq = [...activePerps].sort((a, b) => (a.liqBuffer || 100) - (b.liqBuffer || 100));
+          const closestToLiq = sortedByLiq[0];
+
+          let responseText = `**Liquidation Risk Analysis:**\n\n`;
+
+          // Show top 3 by liquidation proximity
+          sortedByLiq.slice(0, 3).forEach((s, idx) => {
+            const buffer = s.liqBuffer || 0;
+            const urgency = buffer < 10 ? '🔴' : buffer < 20 ? '🟡' : '🟢';
+            responseText += `${idx + 1}. ${urgency} ${s.market} ${s.side} - ${buffer.toFixed(1)}% from liquidation\n`;
+          });
+
+          if (closestToLiq.liqBuffer && closestToLiq.liqBuffer < 15) {
+            responseText += `\n⚠️ Your ${closestToLiq.market} position is at risk! Consider reducing size or adding margin.`;
+          } else {
+            responseText += `\nAll positions have healthy liquidation buffers.`;
+          }
+
+          appendMessageToChat(targetChatId, {
+            id: `liq-${Date.now()}`,
+            text: responseText,
+            isUser: false,
+            timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+          });
           clearInputAndStopTyping();
           return;
         }

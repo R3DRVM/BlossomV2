@@ -102,8 +102,8 @@ export default function CopilotLayout() {
         <LeftSidebar />
       </div>
 
-      {/* Center Panel - Main Chat - always visible, flex-1 */}
-      <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+      {/* Center Panel - Main Chat - always visible, flex-1, responsive constraints */}
+      <div className="flex-1 flex flex-col min-h-0 overflow-hidden min-w-0">
         {/* Center Header - Compact */}
         <div className="flex-shrink-0 bg-white border-b border-slate-100 px-4 py-2">
           <div className="flex items-center justify-between">
@@ -288,8 +288,8 @@ export default function CopilotLayout() {
       </div>
 
           {/* Right Panel - Wallet + Positions - hidden below lg */}
-          <div className="hidden lg:flex flex-shrink-0 h-full">
-            <div className="relative w-[320px] xl:w-[340px] pr-4 pl-2 h-full flex flex-col min-h-0">
+          <div className="hidden lg:flex flex-shrink-0 h-full min-h-0 overflow-hidden">
+            <div className="relative w-[320px] xl:w-[340px] pr-4 pl-2 h-full flex flex-col min-h-0 overflow-hidden">
               <RightPanel
                 selectedStrategyId={selectedStrategyId}
                 onQuickAction={(action) => {

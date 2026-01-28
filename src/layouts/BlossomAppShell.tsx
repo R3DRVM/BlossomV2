@@ -3,15 +3,15 @@ import { useAccount } from 'wagmi';
 import { ToastProvider } from '../components/toast/ToastProvider';
 import CopilotLayout from '../components/CopilotLayout';
 import AccessGateOverlay from '../components/AccessGateOverlay';
-import SessionEnforcementModal, { isSessionEnabled } from '../components/SessionEnforcementModal';
+import SessionEnforcementModal, { isSessionEnabled, hasUserChosenSigningMode } from '../components/SessionEnforcementModal';
 import { useAccessGate } from '../hooks/useAccessGate';
 
 export default function BlossomAppShell() {
   const { isAuthorized, isLoading, grantAccess } = useAccessGate();
   const { address, isConnected } = useAccount();
   const [sessionEnabled, setSessionEnabled] = useState(() => {
-    // Check initial session state
-    return address ? isSessionEnabled(address) : false;
+    // Check initial session state (includes manual signing mode)
+    return address ? hasUserChosenSigningMode(address) : false;
   });
 
   const handleSessionEnabled = useCallback(() => {

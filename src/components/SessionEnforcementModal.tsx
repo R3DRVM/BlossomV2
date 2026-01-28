@@ -14,6 +14,7 @@ import { Button } from './ui/Button';
 // LocalStorage keys (matching OneClickExecution.tsx)
 const getEnabledKey = (address: string) => `blossom_oneclick_${address.toLowerCase()}`;
 const getAuthorizedKey = (address: string) => `blossom_oneclick_auth_${address.toLowerCase()}`;
+const getManualSigningKey = (address: string) => `blossom_manual_signing_${address.toLowerCase()}`;
 const SESSION_REQUIRED_KEY = 'blossom_session_required_dismissed';
 
 // Authorization message
@@ -31,6 +32,16 @@ export function isSessionEnabled(address: string | undefined): boolean {
   return enabled && authorized;
 }
 
+export function isManualSigningEnabled(address: string | undefined): boolean {
+  if (!address) return false;
+  return localStorage.getItem(getManualSigningKey(address)) === 'true';
+}
+
+export function hasUserChosenSigningMode(address: string | undefined): boolean {
+  if (!address) return false;
+  return isSessionEnabled(address) || isManualSigningEnabled(address);
+}
+
 export default function SessionEnforcementModal({ onSessionEnabled }: SessionEnforcementModalProps) {
   const { address, isConnected } = useAccount();
   const { signMessageAsync } = useSignMessage();
@@ -39,12 +50,23 @@ export default function SessionEnforcementModal({ onSessionEnabled }: SessionEnf
   const [error, setError] = useState('');
   const [showLearnMore, setShowLearnMore] = useState(false);
 
-  // Check if already authorized
+  // Check if already authorized (session or manual signing)
   useEffect(() => {
-    if (address && isSessionEnabled(address)) {
+    if (address && hasUserChosenSigningMode(address)) {
       onSessionEnabled();
     }
   }, [address, onSessionEnabled]);
+
+  const handleManualSigning = () => {
+    if (!address) {
+      setError('Please connect your wallet first');
+      return;
+    }
+    // Persist manual signing preference
+    localStorage.setItem(getManualSigningKey(address), 'true');
+    console.log('[SessionEnforcement] Manual signing enabled for', address);
+    onSessionEnabled();
+  };
 
   const handleEnableSession = async () => {
     if (!address) {
@@ -80,8 +102,8 @@ export default function SessionEnforcementModal({ onSessionEnabled }: SessionEnf
     return null;
   }
 
-  // Already enabled
-  if (address && isSessionEnabled(address)) {
+  // Already enabled (session or manual signing)
+  if (address && hasUserChosenSigningMode(address)) {
     return null;
   }
 
@@ -162,6 +184,14 @@ export default function SessionEnforcementModal({ onSessionEnabled }: SessionEnf
                 </>
               )}
             </Button>
+
+            {/* Manual Signing Option */}
+            <button
+              onClick={handleManualSigning}
+              className="w-full h-10 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-medium rounded-xl transition-colors"
+            >
+              No — I want to sign every transaction
+            </button>
 
             <button
               onClick={() => setShowLearnMore(!showLearnMore)}

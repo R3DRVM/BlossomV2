@@ -2,7 +2,7 @@
 // See src/lib/blossomApi.ts for the integration layer
 // When ready, update Chat.tsx to use callBlossomChat() instead of parseUserMessage()
 
-export type ParsedIntent = 'trade' | 'risk_question' | 'general' | 'defi' | 'event' | 'update_event_stake' | 'hedge' | 'modify_perp_strategy' | 'modify_event_strategy' | 'show_riskiest_positions' | 'list_top_event_markets' | 'list_top_defi_protocols';
+export type ParsedIntent = 'trade' | 'risk_question' | 'general' | 'defi' | 'event' | 'update_event_stake' | 'hedge' | 'modify_perp_strategy' | 'modify_event_strategy' | 'show_riskiest_positions' | 'show_positions' | 'show_exposure' | 'show_liquidation_risk' | 'list_top_event_markets' | 'list_top_defi_protocols';
 
 export interface ParsedStrategy {
   market: string;
@@ -725,7 +725,16 @@ export function parseUserMessage(
   
   // Check for riskiest positions queries
   const hasRiskiestKeywords = /\b(riskiest|highest\s+risk|show\s+.*risk|reduce\s+risk|positions?\s+.*risk|more\s+than\s+\d+%|above\s+\d+%)\b/i.test(text);
-  
+
+  // Check for show positions query
+  const hasShowPositions = /\b(show\s+(my\s+)?positions?|my\s+positions?|what\s+(are\s+)?(my\s+)?positions?|list\s+(my\s+)?positions?|open\s+positions?)\b/i.test(text);
+
+  // Check for exposure query
+  const hasExposureQuery = /\b(current\s+(perp\s+)?exposure|my\s+exposure|net\s+exposure|show\s+exposure|what\s+.*exposure|exposure\s+to)\b/i.test(text);
+
+  // Check for liquidation risk query
+  const hasLiquidationQuery = /\b(closest\s+to\s+liquidation|liquidation\s+risk|near\s+liquidation|at\s+risk\s+of\s+liquidation|largest\s+risk\s+bucket|risk\s+bucket)\b/i.test(text);
+
   if (hasDefiKeywords) {
     intent = 'defi';
   } else if (hasHedgeKeywords) {
@@ -734,6 +743,12 @@ export function parseUserMessage(
     intent = 'trade';
   } else if (hasRiskiestKeywords) {
     intent = 'show_riskiest_positions';
+  } else if (hasShowPositions) {
+    intent = 'show_positions';
+  } else if (hasExposureQuery) {
+    intent = 'show_exposure';
+  } else if (hasLiquidationQuery) {
+    intent = 'show_liquidation_risk';
   } else if (hasRiskKeywords) {
     intent = 'risk_question';
   }
