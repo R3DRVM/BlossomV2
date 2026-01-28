@@ -2523,13 +2523,23 @@ app.get('/api/execute/preflight', async (req, res) => {
     }
 
     // Check perps configuration
-    const { DEMO_PERP_ADAPTER_ADDRESS } = await import('../config');
+    const { DEMO_PERP_ADAPTER_ADDRESS, DEMO_PERP_ENGINE_ADDRESS } = await import('../config');
     const perpsEnabled = !!DEMO_PERP_ADAPTER_ADDRESS && routerOk;
 
     // Venue availability flags for frontend execution routing
     const swapEnabled = adapterOk && routerOk && rpcOk;
     const lendingEnabled = lendingStatus.enabled && routerOk;
     const eventsEnabled = true; // Events always available (proof-only mode)
+
+    // MVP: Collect missing env vars for debugging production parity issues
+    const missingEnvVars: string[] = [];
+    if (!EXECUTION_ROUTER_ADDRESS) missingEnvVars.push('EXECUTION_ROUTER_ADDRESS');
+    if (!MOCK_SWAP_ADAPTER_ADDRESS) missingEnvVars.push('MOCK_SWAP_ADAPTER_ADDRESS');
+    if (!ETH_TESTNET_RPC_URL) missingEnvVars.push('ETH_TESTNET_RPC_URL');
+    if (!DEMO_PERP_ADAPTER_ADDRESS) missingEnvVars.push('DEMO_PERP_ADAPTER_ADDRESS');
+    if (!DEMO_PERP_ENGINE_ADDRESS) missingEnvVars.push('DEMO_PERP_ENGINE_ADDRESS');
+    if (DFLOW_ENABLED && !DFLOW_API_KEY) missingEnvVars.push('DFLOW_API_KEY');
+    if (DFLOW_ENABLED && !DFLOW_EVENTS_MARKETS_PATH) missingEnvVars.push('DFLOW_EVENTS_MARKETS_PATH');
 
     res.json({
       mode: 'eth_testnet',
@@ -2549,6 +2559,8 @@ app.get('/api/execute/preflight', async (req, res) => {
       perpsEnabled,
       lendingEnabled,
       eventsEnabled,
+      // MVP: Include missing env vars for production debugging
+      missingEnvVars: missingEnvVars.length > 0 ? missingEnvVars : undefined,
       notes,
     });
   } catch (error: any) {
@@ -5739,6 +5751,149 @@ app.get('/api/debug/executions', (req, res) => {
     console.error('[api/debug/executions] Error:', error);
     res.status(500).json({
       error: 'Failed to dump execution artifacts',
+      message: error.message,
+    });
+  }
+});
+
+/**
+ * GET /api/debug/contracts
+ * Shows configured contract addresses and allowlist status
+ * AUTH-GATED: Requires DEV_LEDGER_SECRET or DEBUG_EXECUTIONS=1
+ */
+app.get('/api/debug/contracts', async (req, res) => {
+  // Auth gate: require DEBUG_EXECUTIONS=1 or valid ledger secret
+  const ledgerSecret = process.env.DEV_LEDGER_SECRET;
+  const authHeader = req.headers['x-ledger-secret'] as string;
+  const isAuthorized = process.env.DEBUG_EXECUTIONS === '1' ||
+    (ledgerSecret && authHeader === ledgerSecret);
+
+  if (!isAuthorized) {
+    return res.status(403).json({
+      error: 'Unauthorized. Set DEBUG_EXECUTIONS=1 or provide x-ledger-secret header',
+    });
+  }
+
+  try {
+    const {
+      EXECUTION_MODE,
+      EXECUTION_ROUTER_ADDRESS,
+      MOCK_SWAP_ADAPTER_ADDRESS,
+      UNISWAP_V3_ADAPTER_ADDRESS,
+      ERC20_PULL_ADAPTER_ADDRESS,
+      WETH_WRAP_ADAPTER_ADDRESS,
+      DEMO_LEND_ADAPTER_ADDRESS,
+      PROOF_ADAPTER_ADDRESS,
+      AAVE_ADAPTER_ADDRESS,
+      DEMO_PERP_ENGINE_ADDRESS,
+      DEMO_PERP_ADAPTER_ADDRESS,
+      DEMO_REDACTED_ADDRESS,
+      DEMO_WETH_ADDRESS,
+      DEMO_SWAP_ROUTER_ADDRESS,
+      DEMO_LEND_VAULT_ADDRESS,
+      ETH_TESTNET_RPC_URL,
+    } = await import('../config');
+
+    // Check allowlist status for each adapter
+    const allowlistStatus: Record<string, boolean | string> = {};
+
+    const adaptersToCheck = [
+      { name: 'MOCK_SWAP_ADAPTER', address: MOCK_SWAP_ADAPTER_ADDRESS },
+      { name: 'UNISWAP_V3_ADAPTER', address: UNISWAP_V3_ADAPTER_ADDRESS },
+      { name: 'ERC20_PULL_ADAPTER', address: ERC20_PULL_ADAPTER_ADDRESS },
+      { name: 'WETH_WRAP_ADAPTER', address: WETH_WRAP_ADAPTER_ADDRESS },
+      { name: 'DEMO_LEND_ADAPTER', address: DEMO_LEND_ADAPTER_ADDRESS },
+      { name: 'PROOF_ADAPTER', address: PROOF_ADAPTER_ADDRESS },
+      { name: 'AAVE_ADAPTER', address: AAVE_ADAPTER_ADDRESS },
+      { name: 'DEMO_PERP_ADAPTER', address: DEMO_PERP_ADAPTER_ADDRESS },
+    ];
+
+    if (EXECUTION_ROUTER_ADDRESS && ETH_TESTNET_RPC_URL) {
+      const { eth_call } = await import('../executors/evmRpc');
+      const { encodeFunctionData } = await import('viem');
+
+      for (const adapter of adaptersToCheck) {
+        if (!adapter.address) {
+          allowlistStatus[adapter.name] = 'NOT_CONFIGURED';
+          continue;
+        }
+
+        try {
+          const data = encodeFunctionData({
+            abi: [{
+              name: 'isAdapterAllowed',
+              type: 'function',
+              stateMutability: 'view',
+              inputs: [{ name: '', type: 'address' }],
+              outputs: [{ name: '', type: 'bool' }],
+            }],
+            functionName: 'isAdapterAllowed',
+            args: [adapter.address as `0x${string}`],
+          });
+
+          const result = await eth_call(ETH_TESTNET_RPC_URL, EXECUTION_ROUTER_ADDRESS, data);
+          const { decodeBool } = await import('../executors/evmRpc');
+          allowlistStatus[adapter.name] = decodeBool(result);
+        } catch (e: any) {
+          allowlistStatus[adapter.name] = `ERROR: ${e.message}`;
+        }
+      }
+    }
+
+    // Missing env vars detection
+    const missingEnvVars: string[] = [];
+    if (!EXECUTION_ROUTER_ADDRESS) missingEnvVars.push('EXECUTION_ROUTER_ADDRESS');
+    if (!MOCK_SWAP_ADAPTER_ADDRESS) missingEnvVars.push('MOCK_SWAP_ADAPTER_ADDRESS');
+    if (!DEMO_PERP_ENGINE_ADDRESS) missingEnvVars.push('DEMO_PERP_ENGINE_ADDRESS');
+    if (!DEMO_PERP_ADAPTER_ADDRESS) missingEnvVars.push('DEMO_PERP_ADAPTER_ADDRESS');
+    if (!ETH_TESTNET_RPC_URL) missingEnvVars.push('ETH_TESTNET_RPC_URL');
+
+    // Venue enabled flags
+    const perpsEnabled = !!DEMO_PERP_ADAPTER_ADDRESS && !!EXECUTION_ROUTER_ADDRESS;
+    const swapsEnabled = !!MOCK_SWAP_ADAPTER_ADDRESS && !!EXECUTION_ROUTER_ADDRESS;
+    const lendingEnabled = !!DEMO_LEND_ADAPTER_ADDRESS || !!AAVE_ADAPTER_ADDRESS;
+
+    res.json({
+      ok: true,
+      executionMode: EXECUTION_MODE,
+      contracts: {
+        router: EXECUTION_ROUTER_ADDRESS || null,
+        adapters: {
+          mockSwap: MOCK_SWAP_ADAPTER_ADDRESS || null,
+          uniswapV3: UNISWAP_V3_ADAPTER_ADDRESS || null,
+          erc20Pull: ERC20_PULL_ADAPTER_ADDRESS || null,
+          wethWrap: WETH_WRAP_ADAPTER_ADDRESS || null,
+          demoLend: DEMO_LEND_ADAPTER_ADDRESS || null,
+          proof: PROOF_ADAPTER_ADDRESS || null,
+          aave: AAVE_ADAPTER_ADDRESS || null,
+          demoPerp: DEMO_PERP_ADAPTER_ADDRESS || null,
+        },
+        engines: {
+          demoPerp: DEMO_PERP_ENGINE_ADDRESS || null,
+        },
+        tokens: {
+          demoUsdc: DEMO_REDACTED_ADDRESS || null,
+          demoWeth: DEMO_WETH_ADDRESS || null,
+        },
+        venues: {
+          demoSwapRouter: DEMO_SWAP_ROUTER_ADDRESS || null,
+          demoLendVault: DEMO_LEND_VAULT_ADDRESS || null,
+        },
+      },
+      allowlistStatus,
+      venueFlags: {
+        perpsEnabled,
+        swapsEnabled,
+        lendingEnabled,
+        eventsEnabled: true, // Always enabled (proof-only)
+      },
+      missingEnvVars,
+      chainId: 11155111,
+    });
+  } catch (error: any) {
+    console.error('[api/debug/contracts] Error:', error);
+    res.status(500).json({
+      error: 'Failed to get contract status',
       message: error.message,
     });
   }

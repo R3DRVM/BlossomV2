@@ -107,10 +107,11 @@ export async function getEventMarkets(limit: number = 10): Promise<EventMarket[]
     return markets;
   }
 
-  // Fallback if routing service fails
+  // Fallback if routing service fails - GUARANTEE non-empty
+  console.log('[getEventMarkets] Using hardcoded fallback markets (routing service failed or returned empty)');
   cachedMarkets = FALLBACK_MARKETS;
   cacheTimestamp = now;
-  return FALLBACK_MARKETS.slice(0, limit);
+  return FALLBACK_MARKETS.slice(0, Math.max(limit, 5)); // Always return at least 5
 }
 
 /**
@@ -165,7 +166,7 @@ export async function getEventMarketsWithRouting(limit: number = 10): Promise<Ev
     correlationId: routingCorrelationId,
   };
 
-  if (routedResult.ok && routedResult.data) {
+  if (routedResult.ok && routedResult.data && routedResult.data.length > 0) {
     const markets: EventMarket[] = routedResult.data.map(m => ({
       id: m.id,
       title: m.title,
@@ -181,10 +182,15 @@ export async function getEventMarketsWithRouting(limit: number = 10): Promise<Ev
     };
   }
 
-  // Fallback
+  // Fallback - GUARANTEE non-empty (MVP requirement)
+  console.log('[getEventMarketsWithRouting] Using hardcoded fallback markets (routing returned empty or failed)');
   return {
-    markets: FALLBACK_MARKETS.slice(0, limit),
-    routing,
+    markets: FALLBACK_MARKETS.slice(0, Math.max(limit, 5)), // Always at least 5 markets
+    routing: {
+      ...routing,
+      source: 'fallback' as const,
+      reason: routing.reason || 'Routing returned empty or failed, using static fallback',
+    },
   };
 }
 

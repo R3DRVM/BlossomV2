@@ -319,6 +319,34 @@ body {
   }
 }
 
+/* MVP: Ensure wallet modals never clip on small screens (1366x768 and below) */
+@media (max-width: 1400px), (max-height: 800px) {
+  /* RainbowKit modal positioning */
+  [data-rk] [role="dialog"] {
+    position: fixed !important;
+    top: 50% !important;
+    left: 50% !important;
+    transform: translate(-50%, -50%) !important;
+    max-height: min(90vh, 600px) !important;
+    max-width: min(95vw, 400px) !important;
+    overflow-y: auto !important;
+  }
+
+  /* Solana wallet adapter modal */
+  .wallet-adapter-modal-container {
+    position: fixed !important;
+    z-index: 1000 !important;
+    max-height: min(90vh, 600px) !important;
+    overflow-y: auto !important;
+  }
+
+  /* Custom chain selection modal */
+  .fixed.inset-0.z-50 > div {
+    max-height: min(90vh, 400px) !important;
+    overflow-y: auto !important;
+  }
+}
+
 @media (max-width: 480px) {
   .wallet-adapter-modal-container {
     width: calc(100vw - 24px) !important;
