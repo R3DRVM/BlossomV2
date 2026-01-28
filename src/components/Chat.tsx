@@ -17,6 +17,7 @@ import { detectHighRiskIntent } from '../lib/riskIntent';
 import HighRiskConfirmCard from './HighRiskConfirmCard';
 import { useWalletStatus } from './wallet/ConnectWalletButton';
 import { isOneClickAuthorized } from './OneClickExecution';
+import { isManualSigningEnabled } from './SessionEnforcementModal';
 // Task A: Removed ConfirmTradeCard import - using MessageBubble rich card instead
 import { BlossomLogo } from './BlossomLogo';
 // ExecutionPlanCard removed - execution details now live inside chat plan card
@@ -1337,8 +1338,8 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
           }
         } else {
           // Auto mode: execute immediately
-          // Gate execution: require one-click authorization (if in session mode)
-          if (executionAuthMode === 'session' && !isOneClickAuthorized(walletStatus.evmAddress)) {
+          // Gate execution: require one-click authorization (if in session mode and NOT using manual signing)
+          if (executionAuthMode === 'session' && !isOneClickAuthorized(walletStatus.evmAddress) && !isManualSigningEnabled(walletStatus.evmAddress)) {
             updateMessageInChat(targetChatId, intentMsgId, {
               text: "One-click execution not authorized. Enable it in the wallet panel to execute trades.",
               intentExecution: {
@@ -3555,8 +3556,8 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
 
     setConfirmingIntentId(intentId);
 
-    // Gate execution: require one-click authorization (if in session mode)
-    if (executionAuthMode === 'session' && !isOneClickAuthorized(walletStatus.evmAddress)) {
+    // Gate execution: require one-click authorization (if in session mode and NOT using manual signing)
+    if (executionAuthMode === 'session' && !isOneClickAuthorized(walletStatus.evmAddress) && !isManualSigningEnabled(walletStatus.evmAddress)) {
       updateMessageInChat(activeChatId, targetMessage.id, {
         text: "One-click execution not authorized. Enable it in the wallet panel to execute trades.",
         intentExecution: {
@@ -4554,8 +4555,8 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
           )}
           {/* Message Input */}
           <div className="p-4">
-            {/* One-Click Gate Notice */}
-            {executionAuthMode === 'session' && !isOneClickAuthorized(walletStatus.evmAddress) && walletStatus.evmConnected && (
+            {/* One-Click Gate Notice - only show if NOT using manual signing mode */}
+            {executionAuthMode === 'session' && !isOneClickAuthorized(walletStatus.evmAddress) && !isManualSigningEnabled(walletStatus.evmAddress) && walletStatus.evmConnected && (
               <div className="mb-2 px-3 py-1.5 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg text-center">
                 Enable One-Click Execution in the wallet panel to start trading
               </div>
@@ -4567,15 +4568,15 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
                 onChange={(e) => setInputValue(e.target.value)}
                 onKeyDown={handleKeyDown}
                 placeholder={inputValue.trim().length > 0 ? '' : SUGGESTIONS[placeholderIndex]}
-                disabled={executionAuthMode === 'session' && walletStatus.evmConnected && !isOneClickAuthorized(walletStatus.evmAddress)}
+                disabled={executionAuthMode === 'session' && walletStatus.evmConnected && !isOneClickAuthorized(walletStatus.evmAddress) && !isManualSigningEnabled(walletStatus.evmAddress)}
                 className={`flex-1 resize-none border border-blossom-outline/60 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blossom-pink/30 focus:border-blossom-pink bg-white/90 text-sm ${
-                  executionAuthMode === 'session' && walletStatus.evmConnected && !isOneClickAuthorized(walletStatus.evmAddress) ? 'opacity-50 cursor-not-allowed' : ''
+                  executionAuthMode === 'session' && walletStatus.evmConnected && !isOneClickAuthorized(walletStatus.evmAddress) && !isManualSigningEnabled(walletStatus.evmAddress) ? 'opacity-50 cursor-not-allowed' : ''
                 }`}
                 rows={1}
                 style={{ minHeight: '48px', maxHeight: '120px' }}
               />
               {(() => {
-                const oneClickGated = executionAuthMode === 'session' && walletStatus.evmConnected && !isOneClickAuthorized(walletStatus.evmAddress);
+                const oneClickGated = executionAuthMode === 'session' && walletStatus.evmConnected && !isOneClickAuthorized(walletStatus.evmAddress) && !isManualSigningEnabled(walletStatus.evmAddress);
                 const canSend = inputValue.trim().length > 0 && !isTyping && !oneClickGated;
                 const sendLabel = isTyping ? 'Sending...' : 'Send';
                 return (
