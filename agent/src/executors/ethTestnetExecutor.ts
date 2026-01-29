@@ -1068,7 +1068,8 @@ export async function prepareEthTestnetExecution(
     // Also check executionRequest for perp/event intents
     const isPerpStrategy = strategy?.instrumentType === 'perp' || executionKind === 'perp' ||
                           (executionRequest && executionRequest.kind === 'perp');
-    const isEventStrategy = strategy?.instrumentType === 'event' || executionKind === 'event';
+    const isEventStrategy = strategy?.instrumentType === 'event' || executionKind === 'event' ||
+                          (executionRequest && executionRequest.kind === 'event');
 
     // Note: DemoPerpAdapter requires router approval before execute, but ExecutionRouter's
     // catch-all else branch doesn't approve adapters for custom action types.
