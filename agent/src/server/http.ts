@@ -5297,6 +5297,47 @@ app.post('/api/demo/execute-direct', maybeCheckAccess, async (req, res) => {
       transport: http(ETH_TESTNET_RPC_URL),
     });
 
+    // Handle approval requirements if provided in request
+    const approvalRequirements = req.body.approvalRequirements || [];
+    const approvalTxHashes: string[] = [];
+
+    if (useRelayerAsUser && approvalRequirements.length > 0) {
+      console.log('[api/demo/execute-direct] Processing', approvalRequirements.length, 'approval(s)...');
+
+      const approveAbi = [
+        {
+          name: 'approve',
+          type: 'function',
+          stateMutability: 'nonpayable',
+          inputs: [
+            { name: 'spender', type: 'address' },
+            { name: 'amount', type: 'uint256' },
+          ],
+          outputs: [{ type: 'bool' }],
+        },
+      ] as const;
+
+      for (const approval of approvalRequirements) {
+        const { token, spender, amount } = approval;
+        console.log('[api/demo/execute-direct] Approving', token, 'for', spender);
+
+        const approveData = encodeFunctionData({
+          abi: approveAbi,
+          functionName: 'approve',
+          args: [spender as `0x${string}`, BigInt(amount)],
+        });
+
+        const approveTxHash = await walletClient.sendTransaction({
+          to: token as `0x${string}`,
+          data: approveData,
+        });
+
+        console.log('[api/demo/execute-direct] Approval tx:', approveTxHash);
+        await publicClient.waitForTransactionReceipt({ hash: approveTxHash });
+        approvalTxHashes.push(approveTxHash);
+      }
+    }
+
     // Estimate gas
     let gasLimit: bigint;
     try {
@@ -5316,6 +5357,7 @@ app.post('/api/demo/execute-direct', maybeCheckAccess, async (req, res) => {
         ok: false,
         error: 'Gas estimation failed - transaction would likely revert',
         details: error.message,
+        approvalTxHashes: approvalTxHashes.length > 0 ? approvalTxHashes : undefined,
       });
     }
 
@@ -5341,6 +5383,7 @@ app.post('/api/demo/execute-direct', maybeCheckAccess, async (req, res) => {
       ok: true,
       success: receipt.status === 'success',
       txHash,
+      approvalTxHashes: approvalTxHashes.length > 0 ? approvalTxHashes : undefined,
       receipt: {
         status: receipt.status,
         gasUsed: receipt.gasUsed.toString(),
