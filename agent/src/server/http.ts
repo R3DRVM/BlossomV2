@@ -1003,7 +1003,9 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
     // Matches: "what is ETH price", "btc price right now", "wuts btc doin", "eth price?", etc.
     const PRICE_QUERY_RE = /\b(what('?s|\s+is)?\s+)?(the\s+)?(current\s+)?(eth|btc|sol|bitcoin|ethereum|solana)\s*(price|value|worth|cost|rate|doin|doing)?\s*(right\s+now|rn|today|currently)?\s*\??$/i;
     const SLANG_PRICE_RE = /\b(wut|wuts|whats|wat|how\s+much)\s+(is\s+)?(eth|btc|sol|bitcoin|ethereum|solana)\s*(doing|doin|worth|at|rn|right\s+now)?\b/i;
-    const hasPriceQueryIntent = PRICE_QUERY_RE.test(normalizedUserMessage) || SLANG_PRICE_RE.test(normalizedUserMessage);
+    // Matches: "is sol pumping", "is eth up", "is btc down today", "how is eth doing"
+    const PUMP_PRICE_RE = /\b(is|how\s+is)\s+(eth|btc|sol|bitcoin|ethereum|solana)\s+(pumping|dumping|up|down|doing|mooning|crashing|performing)\s*(today|rn|right\s+now|currently)?\s*\??$/i;
+    const hasPriceQueryIntent = PRICE_QUERY_RE.test(normalizedUserMessage) || SLANG_PRICE_RE.test(normalizedUserMessage) || PUMP_PRICE_RE.test(normalizedUserMessage);
 
     if (hasPriceQueryIntent) {
       console.log('[api/chat] Price query detected');
