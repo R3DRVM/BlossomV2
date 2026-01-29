@@ -5143,6 +5143,205 @@ app.post('/api/demo/faucet', maybeCheckAccess, async (req, res) => {
 });
 
 /**
+ * POST /api/demo/execute-direct
+ * Execute a plan directly via executeBySender (for automated testing)
+ * This endpoint bypasses session requirements and sends tx directly from relayer
+ * ONLY enabled in non-production environments
+ */
+app.post('/api/demo/execute-direct', maybeCheckAccess, async (req, res) => {
+  try {
+    // Safety: Only allow in development/testing
+    if (process.env.NODE_ENV === 'production' && process.env.ALLOW_DIRECT_EXECUTION !== 'true') {
+      return res.status(403).json({
+        ok: false,
+        error: 'Direct execution not allowed in production without ALLOW_DIRECT_EXECUTION=true',
+      });
+    }
+
+    const { EXECUTION_MODE, EXECUTION_ROUTER_ADDRESS, ETH_TESTNET_RPC_URL, RELAYER_PRIVATE_KEY } = await import('../config');
+
+    if (EXECUTION_MODE !== 'eth_testnet') {
+      return res.status(400).json({
+        ok: false,
+        error: 'Direct execution only available in eth_testnet mode',
+      });
+    }
+
+    if (!EXECUTION_ROUTER_ADDRESS || !ETH_TESTNET_RPC_URL || !RELAYER_PRIVATE_KEY) {
+      return res.status(503).json({
+        ok: false,
+        error: 'Direct execution not configured',
+        missing: [
+          !EXECUTION_ROUTER_ADDRESS && 'EXECUTION_ROUTER_ADDRESS',
+          !ETH_TESTNET_RPC_URL && 'ETH_TESTNET_RPC_URL',
+          !RELAYER_PRIVATE_KEY && 'RELAYER_PRIVATE_KEY',
+        ].filter(Boolean),
+      });
+    }
+
+    const { plan, userAddress } = req.body;
+
+    if (!plan || !userAddress) {
+      return res.status(400).json({
+        ok: false,
+        error: 'plan and userAddress are required',
+      });
+    }
+
+    // Validate plan structure
+    if (!plan.user || !plan.nonce || !plan.deadline || !Array.isArray(plan.actions) || plan.actions.length === 0) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Invalid plan structure',
+        required: ['user', 'nonce', 'deadline', 'actions[]'],
+      });
+    }
+
+    // Validate plan.user matches userAddress
+    if (plan.user.toLowerCase() !== userAddress.toLowerCase()) {
+      return res.status(400).json({
+        ok: false,
+        error: 'plan.user must match userAddress',
+      });
+    }
+
+    console.log('[api/demo/execute-direct] Executing plan for', userAddress);
+    console.log('[api/demo/execute-direct] Plan:', {
+      user: plan.user,
+      nonce: plan.nonce,
+      deadline: plan.deadline,
+      actionsCount: plan.actions.length,
+    });
+
+    // Import viem for encoding
+    const { createWalletClient, createPublicClient, http, encodeFunctionData } = await import('viem');
+    const { sepolia } = await import('viem/chains');
+    const { privateKeyToAccount } = await import('viem/accounts');
+
+    // executeBySender ABI
+    const executeBySenderAbi = [
+      {
+        name: 'executeBySender',
+        type: 'function',
+        stateMutability: 'nonpayable',
+        inputs: [
+          {
+            name: 'plan',
+            type: 'tuple',
+            components: [
+              { name: 'user', type: 'address' },
+              { name: 'nonce', type: 'uint256' },
+              { name: 'deadline', type: 'uint256' },
+              {
+                name: 'actions',
+                type: 'tuple[]',
+                components: [
+                  { name: 'actionType', type: 'uint8' },
+                  { name: 'adapter', type: 'address' },
+                  { name: 'data', type: 'bytes' },
+                ],
+              },
+            ],
+          },
+        ],
+        outputs: [],
+      },
+    ] as const;
+
+    // Encode the call
+    const data = encodeFunctionData({
+      abi: executeBySenderAbi,
+      functionName: 'executeBySender',
+      args: [
+        {
+          user: plan.user as `0x${string}`,
+          nonce: BigInt(plan.nonce),
+          deadline: BigInt(plan.deadline),
+          actions: plan.actions.map((a: any) => ({
+            actionType: a.actionType,
+            adapter: a.adapter as `0x${string}`,
+            data: a.data as `0x${string}`,
+          })),
+        },
+      ],
+    });
+
+    console.log('[api/demo/execute-direct] Encoded data length:', data.length);
+
+    // Create clients
+    const account = privateKeyToAccount(RELAYER_PRIVATE_KEY as `0x${string}`);
+    const publicClient = createPublicClient({
+      chain: sepolia,
+      transport: http(ETH_TESTNET_RPC_URL),
+    });
+    const walletClient = createWalletClient({
+      account,
+      chain: sepolia,
+      transport: http(ETH_TESTNET_RPC_URL),
+    });
+
+    // Estimate gas
+    let gasLimit: bigint;
+    try {
+      const estimatedGas = await publicClient.estimateGas({
+        to: EXECUTION_ROUTER_ADDRESS as `0x${string}`,
+        data: data as `0x${string}`,
+        account,
+      });
+      gasLimit = estimatedGas * BigInt(120) / BigInt(100); // 1.2x multiplier
+      if (gasLimit > BigInt(12_000_000)) {
+        gasLimit = BigInt(12_000_000);
+      }
+      console.log('[api/demo/execute-direct] Gas estimate:', estimatedGas.toString());
+    } catch (error: any) {
+      console.error('[api/demo/execute-direct] Gas estimation failed:', error.message);
+      return res.status(400).json({
+        ok: false,
+        error: 'Gas estimation failed - transaction would likely revert',
+        details: error.message,
+      });
+    }
+
+    // Send transaction
+    const txHash = await walletClient.sendTransaction({
+      to: EXECUTION_ROUTER_ADDRESS as `0x${string}`,
+      data: data as `0x${string}`,
+      gas: gasLimit,
+    });
+
+    console.log('[api/demo/execute-direct] Transaction sent:', txHash);
+
+    // Wait for receipt
+    const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+
+    console.log('[api/demo/execute-direct] Transaction confirmed:', {
+      hash: txHash,
+      status: receipt.status,
+      gasUsed: receipt.gasUsed.toString(),
+    });
+
+    res.json({
+      ok: true,
+      success: receipt.status === 'success',
+      txHash,
+      receipt: {
+        status: receipt.status,
+        gasUsed: receipt.gasUsed.toString(),
+        blockNumber: receipt.blockNumber.toString(),
+      },
+      explorerUrl: `https://sepolia.etherscan.io/tx/${txHash}`,
+    });
+  } catch (error: any) {
+    console.error('[api/demo/execute-direct] Error:', error);
+    res.status(500).json({
+      ok: false,
+      error: 'Direct execution failed',
+      details: error.message,
+    });
+  }
+});
+
+/**
  * Health check endpoint
  * Simple endpoint that never depends on chain config - just confirms server is up
  */
