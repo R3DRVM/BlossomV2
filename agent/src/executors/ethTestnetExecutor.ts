@@ -20,6 +20,8 @@ import {
   PROOF_ADAPTER_ADDRESS,
   DEMO_PERP_ADAPTER_ADDRESS,
   DEMO_PERP_ENGINE_ADDRESS,
+  DEMO_EVENT_ADAPTER_ADDRESS,
+  DEMO_EVENT_ENGINE_ADDRESS,
   ETH_TESTNET_RPC_URL,
   ETH_TESTNET_CHAIN_ID,
   requireEthTestnetConfig,
@@ -1064,21 +1066,183 @@ export async function prepareEthTestnetExecution(
       }
     }
   } else {
-    // Check if strategy is perp or event for proof-of-execution
-    // Also check executionRequest for perp/event intents
+    // Check if strategy is perp or event
     const isPerpStrategy = strategy?.instrumentType === 'perp' || executionKind === 'perp' ||
                           (executionRequest && executionRequest.kind === 'perp');
     const isEventStrategy = strategy?.instrumentType === 'event' || executionKind === 'event' ||
                           (executionRequest && executionRequest.kind === 'event');
 
-    // Note: DemoPerpAdapter requires router approval before execute, but ExecutionRouter's
-    // catch-all else branch doesn't approve adapters for custom action types.
-    // Until contract upgrade to add PERP action type support, use PROOF action instead.
-    // This records the perp intent on-chain with verifiable hash but doesn't execute real trades.
+    // Use demo adapters for real on-chain execution if configured
+    const useDemoPerpAdapter = isPerpStrategy && DEMO_PERP_ADAPTER_ADDRESS && DEMO_REDACTED_ADDRESS;
+    const useDemoEventAdapter = isEventStrategy && DEMO_EVENT_ADAPTER_ADDRESS && DEMO_REDACTED_ADDRESS;
 
-    if ((isPerpStrategy || isEventStrategy) && PROOF_ADAPTER_ADDRESS) {
-      // Fallback: Build proof-of-execution action for perps (when no adapter) or events
-      const { encodeAbiParameters, keccak256, toBytes, stringToBytes } = await import('viem');
+    if (useDemoPerpAdapter) {
+      // Build PERP action using DemoPerpAdapter (real on-chain execution)
+      const { encodeAbiParameters } = await import('viem');
+
+      // Parse perp parameters
+      const market = strategy?.market || (executionRequest as any)?.market || 'ETH-USD';
+      const side = strategy?.direction || (executionRequest as any)?.direction || 'long';
+      const leverage = strategy?.leverage || (executionRequest as any)?.leverage || 5;
+      const marginUsd = strategy?.marginUsd || strategy?.notionalUsd || (executionRequest as any)?.marginUsd || 100;
+
+      // Convert market to enum: BTC=0, ETH=1, SOL=2
+      const marketMap: Record<string, number> = { 'BTC-USD': 0, 'ETH-USD': 1, 'SOL-USD': 2, 'BTC': 0, 'ETH': 1, 'SOL': 2 };
+      const marketEnum = marketMap[market.toUpperCase()] ?? 1; // Default to ETH
+
+      // Convert side to enum: Long=0, Short=1
+      const sideEnum = side.toLowerCase() === 'short' ? 1 : 0;
+
+      // Convert margin to REDACTED units (6 decimals)
+      const marginAmount = parseUnits(marginUsd.toString(), 6);
+
+      // Build adapter data: (uint8 action, address user, uint8 market, uint8 side, uint256 margin, uint256 leverage)
+      const adapterData = encodeAbiParameters(
+        [{ type: 'uint8' }, { type: 'address' }, { type: 'uint8' }, { type: 'uint8' }, { type: 'uint256' }, { type: 'uint256' }],
+        [1, userAddress.toLowerCase() as `0x${string}`, marketEnum, sideEnum, marginAmount, BigInt(leverage)]
+      );
+
+      // Build router data: (address margin, uint256 amount, bytes adapterData)
+      const routerData = encodeAbiParameters(
+        [{ type: 'address' }, { type: 'uint256' }, { type: 'bytes' }],
+        [DEMO_REDACTED_ADDRESS!.toLowerCase() as `0x${string}`, marginAmount, adapterData]
+      );
+
+      // Wrap for session mode if needed
+      let actionData: string;
+      if (authMode === 'session') {
+        const maxSpendUnits = marginAmount / (100n * 10n**6n) + 1n;
+        actionData = encodeAbiParameters(
+          [{ type: 'uint256' }, { type: 'bytes' }],
+          [maxSpendUnits, routerData]
+        );
+      } else {
+        actionData = routerData;
+      }
+
+      actions = [
+        {
+          actionType: 7, // PERP (from PlanTypes.ActionType enum)
+          adapter: DEMO_PERP_ADAPTER_ADDRESS!.toLowerCase(),
+          data: actionData,
+        },
+      ];
+
+      summary = `${side.toUpperCase()} ${market} @ ${leverage}x leverage ($${marginUsd} margin)`;
+      routingMetadata = {
+        venue: `DemoPerps: ${market}`,
+        chain: 'Sepolia',
+        settlementEstimate: '~1 block',
+        routingSource: 'demo',
+        executionVenue: 'DemoPerpEngine (on-chain)',
+        executionNote: 'Real on-chain perp execution via DemoPerpEngine.',
+        actionType: 'perp',
+      } as any;
+
+      // Check approval requirements
+      if (ETH_TESTNET_RPC_URL && EXECUTION_ROUTER_ADDRESS) {
+        try {
+          const allowance = await erc20_allowance(DEMO_REDACTED_ADDRESS!, userAddress, EXECUTION_ROUTER_ADDRESS);
+          if (allowance < marginAmount) {
+            if (!approvalRequirements) approvalRequirements = [];
+            approvalRequirements.push({
+              token: DEMO_REDACTED_ADDRESS!,
+              spender: EXECUTION_ROUTER_ADDRESS.toLowerCase(),
+              amount: '0x' + marginAmount.toString(16),
+            });
+          }
+        } catch (error: any) {
+          warnings.push(`Could not verify perp approval: ${error.message}. Proceeding anyway.`);
+        }
+      }
+    } else if (useDemoEventAdapter) {
+      // Build EVENT action using DemoEventAdapter (real on-chain execution)
+      const { encodeAbiParameters, keccak256, stringToBytes } = await import('viem');
+
+      // Parse event parameters
+      const marketId = (executionRequest && executionRequest.kind === 'event')
+        ? executionRequest.marketId
+        : (strategy?.market || 'demo-market');
+      const outcome = (executionRequest && executionRequest.kind === 'event')
+        ? executionRequest.outcome
+        : (strategy?.outcome || strategy?.direction || 'YES');
+      const stakeUsd = (executionRequest && executionRequest.kind === 'event')
+        ? executionRequest.stakeUsd
+        : (strategy?.stakeUsd || 5);
+
+      // Convert marketId to bytes32 (hash if string)
+      const marketIdBytes32 = marketId.startsWith('0x') && marketId.length === 66
+        ? marketId as `0x${string}`
+        : keccak256(stringToBytes(marketId));
+
+      // Convert stake to REDACTED units (6 decimals)
+      const stakeAmount = parseUnits(stakeUsd.toString(), 6);
+
+      // Determine action: 1=BUY_YES, 2=BUY_NO
+      const actionType = outcome.toUpperCase() === 'NO' ? 2 : 1;
+
+      // Build adapter data: (uint8 action, address user, bytes32 marketId, uint256 amount)
+      const adapterData = encodeAbiParameters(
+        [{ type: 'uint8' }, { type: 'address' }, { type: 'bytes32' }, { type: 'uint256' }],
+        [actionType, userAddress.toLowerCase() as `0x${string}`, marketIdBytes32, stakeAmount]
+      );
+
+      // Build router data: (address stake, uint256 amount, bytes adapterData)
+      const routerData = encodeAbiParameters(
+        [{ type: 'address' }, { type: 'uint256' }, { type: 'bytes' }],
+        [DEMO_REDACTED_ADDRESS!.toLowerCase() as `0x${string}`, stakeAmount, adapterData]
+      );
+
+      // Wrap for session mode if needed
+      let actionData: string;
+      if (authMode === 'session') {
+        const maxSpendUnits = stakeAmount / (100n * 10n**6n) + 1n;
+        actionData = encodeAbiParameters(
+          [{ type: 'uint256' }, { type: 'bytes' }],
+          [maxSpendUnits, routerData]
+        );
+      } else {
+        actionData = routerData;
+      }
+
+      actions = [
+        {
+          actionType: 8, // EVENT (from PlanTypes.ActionType enum)
+          adapter: DEMO_EVENT_ADAPTER_ADDRESS!.toLowerCase(),
+          data: actionData,
+        },
+      ];
+
+      summary = `${outcome.toUpperCase()} on ${marketId} ($${stakeUsd} stake)`;
+      routingMetadata = {
+        venue: `DemoEvents: ${marketId}`,
+        chain: 'Sepolia',
+        settlementEstimate: '~1 block',
+        routingSource: 'demo',
+        executionVenue: 'DemoEventMarket (on-chain)',
+        executionNote: 'Real on-chain event market execution via DemoEventMarket.',
+        actionType: 'event',
+      } as any;
+
+      // Check approval requirements
+      if (ETH_TESTNET_RPC_URL && EXECUTION_ROUTER_ADDRESS) {
+        try {
+          const allowance = await erc20_allowance(DEMO_REDACTED_ADDRESS!, userAddress, EXECUTION_ROUTER_ADDRESS);
+          if (allowance < stakeAmount) {
+            if (!approvalRequirements) approvalRequirements = [];
+            approvalRequirements.push({
+              token: DEMO_REDACTED_ADDRESS!,
+              spender: EXECUTION_ROUTER_ADDRESS.toLowerCase(),
+              amount: '0x' + stakeAmount.toString(16),
+            });
+          }
+        } catch (error: any) {
+          warnings.push(`Could not verify event approval: ${error.message}. Proceeding anyway.`);
+        }
+      }
+    } else if ((isPerpStrategy || isEventStrategy) && PROOF_ADAPTER_ADDRESS) {
+      // Fallback: Build proof-of-execution action when demo adapters not configured
+      const { encodeAbiParameters, keccak256, stringToBytes } = await import('viem');
 
       // Determine venue type: 1 = perps, 2 = event
       const venueType = isPerpStrategy ? 1 : 2;
@@ -1088,14 +1252,11 @@ export async function prepareEthTestnetExecution(
       let summaryText: string;
 
       if (isPerpStrategy) {
-        // Perp intent: market, side, leverage, riskPercent, marginUsd/notionalUsd
         const market = strategy?.market || 'ETH-USD';
         const side = strategy?.direction || 'long';
         const leverage = strategy?.leverage || 1;
         const riskPct = strategy?.riskPercent || 3;
         const marginUsd = strategy?.marginUsd || strategy?.notionalUsd || 100;
-        const tp = strategy?.takeProfitPrice || '';
-        const sl = strategy?.stopLossPrice || '';
 
         intentPayload = JSON.stringify({
           type: 'perp',
@@ -1104,26 +1265,22 @@ export async function prepareEthTestnetExecution(
           leverage,
           riskPct,
           marginUsd,
-          tp,
-          sl,
           timestamp: Math.floor(Date.now() / 1000),
         });
         summaryText = `PERP:${market}-${side.toUpperCase()}-${leverage}x-${riskPct}%`;
-        summary = `${side.toUpperCase()} ${market} @ ${leverage}x leverage (${riskPct}% risk)`;
+        summary = `${side.toUpperCase()} ${market} @ ${leverage}x leverage (${riskPct}% risk) [PROOF]`;
 
         routingMetadata = {
           venue: `Perps: ${market}`,
           chain: 'Sepolia',
           settlementEstimate: '~1 block',
           routingSource: 'proof',
-          executionVenue: 'On-chain proof (venue execution simulated)',
-          executionNote: 'Proof-of-execution recorded. Real perp execution coming soon.',
+          executionVenue: 'On-chain proof (demo adapters not configured)',
+          executionNote: 'Proof-of-execution recorded. Configure DEMO_PERP_ADAPTER_ADDRESS for real execution.',
           actionType: 'perp',
           venueType,
         } as any;
       } else {
-        // Event intent: marketId, outcome, stakeUsd
-        // Get from executionRequest if available, else from strategy
         const marketId = (executionRequest && executionRequest.kind === 'event')
           ? executionRequest.marketId
           : (strategy?.market || 'fed-rate-cut');
@@ -1133,46 +1290,37 @@ export async function prepareEthTestnetExecution(
         const stakeUsd = (executionRequest && executionRequest.kind === 'event')
           ? executionRequest.stakeUsd
           : (strategy?.stakeUsd || 5);
-        const price = (executionRequest && executionRequest.kind === 'event')
-          ? executionRequest.price
-          : undefined;
-        
+
         intentPayload = JSON.stringify({
           type: 'event',
           marketId,
           outcome,
           stakeUsd,
-          price,
           timestamp: Math.floor(Date.now() / 1000),
         });
         summaryText = `EVENT:${marketId}-${outcome}-${stakeUsd}USD`;
-        summary = `${outcome} on ${marketId} ($${stakeUsd} stake)`;
-        
+        summary = `${outcome} on ${marketId} ($${stakeUsd} stake) [PROOF]`;
+
         routingMetadata = {
           venue: `Event: ${marketId}`,
           chain: 'Sepolia',
           settlementEstimate: '~1 block',
           routingSource: 'proof',
-          executionVenue: 'On-chain proof (venue execution simulated)',
-          executionNote: 'Proof-of-execution recorded. Real event market execution coming soon.',
+          executionVenue: 'On-chain proof (demo adapters not configured)',
+          executionNote: 'Proof-of-execution recorded. Configure DEMO_EVENT_ADAPTER_ADDRESS for real execution.',
           actionType: 'event',
           venueType,
         } as any;
       }
-      
-      // Hash the intent
+
       const intentHash = keccak256(stringToBytes(intentPayload));
-      
-      // Truncate summary if needed
       const finalSummary = summaryText.slice(0, 160);
-      
-      // Build proof action data
+
       const proofInnerData = encodeAbiParameters(
         [{ type: 'address' }, { type: 'uint8' }, { type: 'bytes32' }, { type: 'string' }],
         [userAddress.toLowerCase() as `0x${string}`, venueType, intentHash, finalSummary]
       );
-      
-      // Wrap for session mode if needed
+
       let proofData: string;
       if (authMode === 'session') {
         proofData = encodeAbiParameters(
@@ -1182,7 +1330,7 @@ export async function prepareEthTestnetExecution(
       } else {
         proofData = proofInnerData;
       }
-      
+
       actions = [
         {
           actionType: 6, // PROOF (from PlanTypes.ActionType enum)

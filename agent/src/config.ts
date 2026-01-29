@@ -155,7 +155,11 @@ export const DEMO_LEND_ADAPTER_ADDRESS = process.env.DEMO_LEND_ADAPTER_ADDRESS;
 export const DEMO_PERP_ENGINE_ADDRESS = process.env.DEMO_PERP_ENGINE_ADDRESS as Address | undefined;
 export const DEMO_PERP_ADAPTER_ADDRESS = process.env.DEMO_PERP_ADAPTER_ADDRESS as Address | undefined;
 
-// Proof-of-execution adapter (for perps/events until real adapters exist)
+// Demo events/prediction market venue (real on-chain event markets for testnet)
+export const DEMO_EVENT_ENGINE_ADDRESS = process.env.DEMO_EVENT_ENGINE_ADDRESS as Address | undefined;
+export const DEMO_EVENT_ADAPTER_ADDRESS = process.env.DEMO_EVENT_ADAPTER_ADDRESS as Address | undefined;
+
+// Proof-of-execution adapter (fallback for perps/events when demo adapters not deployed)
 export const PROOF_ADAPTER_ADDRESS = process.env.PROOF_ADAPTER_ADDRESS;
 
 // dFlow Integration
