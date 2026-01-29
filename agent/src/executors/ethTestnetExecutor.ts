@@ -1070,90 +1070,12 @@ export async function prepareEthTestnetExecution(
                           (executionRequest && executionRequest.kind === 'perp');
     const isEventStrategy = strategy?.instrumentType === 'event' || executionKind === 'event';
 
-    // MVP: Use real perp execution if DEMO_PERP_ADAPTER is configured
-    if (isPerpStrategy && DEMO_PERP_ADAPTER_ADDRESS && DEMO_PERP_ENGINE_ADDRESS) {
-      // Build REAL perp execution action via DemoPerpAdapter
-      const { encodeAbiParameters, parseAbiParameters } = await import('viem');
+    // Note: DemoPerpAdapter requires router approval before execute, but ExecutionRouter's
+    // catch-all else branch doesn't approve adapters for custom action types.
+    // Until contract upgrade to add PERP action type support, use PROOF action instead.
+    // This records the perp intent on-chain with verifiable hash but doesn't execute real trades.
 
-      // Extract perp parameters
-      const market = executionRequest?.market || strategy?.market || 'BTC-USD';
-      const side = executionRequest?.side || strategy?.direction || 'long';
-      const leverage = executionRequest?.leverage || strategy?.leverage || 5;
-      const riskPct = executionRequest?.riskPct || strategy?.riskPercent || 3;
-      const marginUsd = executionRequest?.marginUsd || strategy?.marginUsd || 100;
-
-      // Map market string to enum value (BTC=0, ETH=1, SOL=2)
-      const marketMap: Record<string, number> = { 'BTC': 0, 'BTC-USD': 0, 'ETH': 1, 'ETH-USD': 1, 'SOL': 2, 'SOL-USD': 2 };
-      const marketEnum = marketMap[market.toUpperCase()] ?? 0;
-
-      // Map side to enum (long=0, short=1)
-      const sideEnum = side.toLowerCase() === 'long' ? 0 : 1;
-
-      // Calculate margin in DEMO_REDACTED units (6 decimals)
-      const marginAmount = BigInt(Math.floor(marginUsd * 1e6));
-
-      // Encode inner data for DemoPerpAdapter: (action, user, market, side, margin, leverage)
-      // action: 1 = OPEN_POSITION
-      const ACTION_OPEN = 1;
-      const perpInnerData = encodeAbiParameters(
-        parseAbiParameters('uint8, address, uint8, uint8, uint256, uint256'),
-        [ACTION_OPEN, userAddress.toLowerCase() as `0x${string}`, marketEnum, sideEnum, marginAmount, BigInt(leverage)]
-      );
-
-      // Wrap for session mode
-      let perpData: string;
-      if (authMode === 'session') {
-        perpData = encodeAbiParameters(
-          [{ type: 'uint256' }, { type: 'bytes' }],
-          [0n, perpInnerData]
-        );
-      } else {
-        perpData = perpInnerData;
-      }
-
-      summary = `${side.toUpperCase()} ${market} @ ${leverage}x leverage (${riskPct}% risk)`;
-
-      routingMetadata = {
-        venue: `Perps: ${market}`,
-        chain: 'Sepolia',
-        settlementEstimate: '~1 block',
-        routingSource: 'demo_perp',
-        executionVenue: 'DemoPerpEngine on Sepolia',
-        executionNote: 'Real on-chain perp execution via DemoPerpAdapter.',
-        actionType: 'perp',
-        venueType: 1,
-      } as any;
-
-      // Check if user needs DEMO_REDACTED approval (non-blocking - wrapped in try-catch)
-      if (DEMO_REDACTED_ADDRESS && EXECUTION_ROUTER_ADDRESS && ETH_TESTNET_RPC_URL) {
-        try {
-          const currentAllowance = await erc20_allowance(
-            ETH_TESTNET_RPC_URL,
-            DEMO_REDACTED_ADDRESS.toLowerCase(),
-            userAddress.toLowerCase(),
-            EXECUTION_ROUTER_ADDRESS.toLowerCase()
-          );
-          if (currentAllowance < marginAmount) {
-            approvalRequirements.push({
-              token: DEMO_REDACTED_ADDRESS,
-              spender: EXECUTION_ROUTER_ADDRESS,
-              amount: '0x' + marginAmount.toString(16),
-            });
-          }
-        } catch (e: any) {
-          warnings.push(`Could not verify DEMO_REDACTED approval: ${e.message}. User may need to approve manually.`);
-        }
-      }
-
-      actions = [
-        {
-          actionType: 8, // EXECUTE (from PlanTypes.ActionType enum - for custom adapter calls)
-          adapter: DEMO_PERP_ADAPTER_ADDRESS.toLowerCase(),
-          data: perpData,
-        },
-      ];
-
-    } else if ((isPerpStrategy || isEventStrategy) && PROOF_ADAPTER_ADDRESS) {
+    if ((isPerpStrategy || isEventStrategy) && PROOF_ADAPTER_ADDRESS) {
       // Fallback: Build proof-of-execution action for perps (when no adapter) or events
       const { encodeAbiParameters, keccak256, toBytes, stringToBytes } = await import('viem');
 
