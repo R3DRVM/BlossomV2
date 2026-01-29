@@ -5150,11 +5150,16 @@ app.post('/api/demo/faucet', maybeCheckAccess, async (req, res) => {
  */
 app.post('/api/demo/execute-direct', maybeCheckAccess, async (req, res) => {
   try {
-    // Safety: Only allow in development/testing
-    if (process.env.NODE_ENV === 'production' && process.env.ALLOW_DIRECT_EXECUTION !== 'true') {
+    // Safety: Only allow in development/testing or with explicit flag
+    const nodeEnv = process.env.NODE_ENV;
+    const allowDirect = process.env.ALLOW_DIRECT_EXECUTION;
+    console.log('[api/demo/execute-direct] ENV check:', { nodeEnv, allowDirect });
+
+    if (nodeEnv === 'production' && allowDirect !== 'true') {
       return res.status(403).json({
         ok: false,
         error: 'Direct execution not allowed in production without ALLOW_DIRECT_EXECUTION=true',
+        debug: { nodeEnv, allowDirect: allowDirect || 'undefined' },
       });
     }
 
