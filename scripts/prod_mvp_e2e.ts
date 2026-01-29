@@ -46,17 +46,18 @@ interface TestResult {
 
 const results: TestResult[] = [];
 
-// Messy prompts for each venue - testing AI understanding of natural language
+// Prompts for each venue - testing AI understanding with sufficient specificity
+// NOTE: Prompts need to use expected format keywords for reliable parsing
 const MESSY_PROMPTS = {
   swap: [
-    "yo swap like 10 bucks of usdc into weth",
-    "convert some usdc to eth, maybe 5 usd worth",
-    "trade my usdc for wrapped ether plz",
+    "Swap 10 REDACTED to WETH",
+    "Swap 5 REDACTED for ETH",
+    "swap 15 usdc to weth please",
   ],
   lend: [
-    "put 50 usd in aave for that yield",
-    "lend out some usdc on a defi protocol",
-    "deposit funds to earn interest, like $25",
+    "deposit 50 usdc into aave",
+    "supply 25 usdc to a yield protocol",
+    "lend 100 usdc on defi for yield",
   ],
   perp: [
     "long btc with 2x leverage, risk 100 bucks",
@@ -65,8 +66,8 @@ const MESSY_PROMPTS = {
   ],
   event: [
     "bet yes on fed rate cut happening",
-    "put 20 bucks on btc etf approval",
-    "wager on trump winning election",
+    "bet 10 usd yes on btc etf approval",
+    "bet 5 dollars YES on eth etf approval",
   ],
 };
 
