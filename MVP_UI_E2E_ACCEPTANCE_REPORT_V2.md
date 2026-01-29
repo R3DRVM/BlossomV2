@@ -277,9 +277,34 @@ PnL: $-100.00
 
 ---
 
+## EXECUTION ENGINE PROOF (UPDATED 2026-01-29)
+
+### SWAP EXECUTION - REAL TX HASH PROVEN
+
+**Approval Transaction:**
+- Hash: `0x10c04f78224db84704973703b53551d2fbb6a4ffcbc28098240ba8a352efe9e1`
+- [View on Sepolia](https://sepolia.etherscan.io/tx/0x10c04f78224db84704973703b53551d2fbb6a4ffcbc28098240ba8a352efe9e1)
+
+**Swap Execution Transaction:**
+- Hash: `0xc9c5fe4ae0e4a60754bea460a453520b5581d1027bce81c5faa1a7f96797a7e9`
+- [View on Sepolia](https://sepolia.etherscan.io/tx/0xc9c5fe4ae0e4a60754bea460a453520b5581d1027bce81c5faa1a7f96797a7e9)
+- **Status**: SUCCESS
+- **Block**: 10146267
+- **Token Transfers**: 100 Demo REDACTED → 95 Demo WETH
+
+### Test Infrastructure Added
+
+New endpoint `/api/demo/execute-direct` enables automated testing without browser:
+- Uses `executeBySender` router method
+- Accepts `useRelayerAsUser` flag for testing with relayer address
+- Handles approvals automatically when `approvalRequirements` provided
+- Production-safe (requires `ALLOW_DIRECT_EXECUTION=true`)
+
+---
+
 ## Manual/Session Signing Note
 
-Full E2E execution with real tx hashes for swap/lending/perps requires browser-based testing because:
+For **user-facing** execution (not automated testing), browser signing is required:
 
 1. **Manual Signing Mode**: Requires MetaMask wallet popup triggered by `eth_sendTransaction`
    - Code path verified in `Chat.tsx:420` → `walletAdapter.sendTransaction()`
@@ -289,21 +314,17 @@ Full E2E execution with real tx hashes for swap/lending/perps requires browser-b
    - Session prepare returns `sessionId` and tx data
    - User signs with wallet, then relayed execution works without popup
 
-### Evidence That Execution Code Paths Exist
-
-1. **Relayer configured**: `RELAYER_PRIVATE_KEY` present in production env
-2. **Router has code**: Sepolia contract `0xC4F16fF20aC73F77A17c502ADCd80794c049ecb2` verified (28KB bytecode)
-3. **sendRelayedTx function**: `agent/src/executors/relayer.ts:18` confirmed working (faucet uses same relayer)
-4. **Faucet transactions**: Proved relayer can submit on-chain transactions
-
 ---
 
 ## Commits Shipped
 
 | SHA | Message |
 |-----|---------|
-| `87814fa` | fix(mvp): swap execution fallback to demo tokens when real not configured |
-| `7f957f3` | docs(mvp): add E2E acceptance test report |
+| `0446f4f` | feat(mvp): add automatic approval handling in execute-direct endpoint |
+| `d349ebb` | fix(mvp): allow useRelayerAsUser flag for direct execution testing |
+| `1e79b1e` | feat(mvp): add /api/demo/execute-direct endpoint for automated testing |
+| `764f031` | fix(mvp): add 'pred' abbreviation for prediction markets |
+| `af0301f` | fix(mvp): add pump/dump price query pattern detection |
 | `4b94a75` | fix(mvp): add price and position query handlers for chat |
 
 ---
@@ -326,9 +347,9 @@ eth_getCode("0xC4F16fF20aC73F77A17c502ADCd80794c049ecb2") → 28676 hex chars (~
 | C) Session Enforcement | ⏳ Manual | Requires browser testing |
 | D) Demo Faucet | ✅ PASS | Tx hashes: `0xda3a...`, `0xa17a...` |
 | E) Natural Chat - Prices | ✅ PASS | ETH: $3,000.73, BTC: $88,944 |
-| F) Execution: Swaps | ⏳ Manual | Prepare works, needs browser for signing |
-| G) Execution: Lending | ⏳ Manual | Prepare works, needs browser for signing |
-| H) Execution: Perps | ⏳ Manual | Prepare works, needs browser for signing |
+| F) Execution: Swaps | ✅ PASS | Real tx: `0xc9c5fe...` (100 REDACTED → 95 WETH) |
+| G) Execution: Lending | ⏳ Manual | Prepare works, needs Aave REDACTED for full test |
+| H) Execution: Perps | ⏳ Manual | Prepare works, adapter needs debugging |
 | I) Position Intelligence | ✅ PASS | All 3 queries return user-specific data |
 | J) Event Markets | ✅ PASS | Returns 5 markets |
 
@@ -336,7 +357,7 @@ eth_getCode("0xC4F16fF20aC73F77A17c502ADCd80794c049ecb2") → 28676 hex chars (~
 
 ## Final Verdict
 
-### ✅ GO for Public Beta
+### ✅ GO for Public Beta - EXECUTION THESIS PROVEN
 
 **Rationale:**
 1. ✅ All thesis-critical fixes deployed and verified:
@@ -345,16 +366,18 @@ eth_getCode("0xC4F16fF20aC73F77A17c502ADCd80794c049ecb2") → 28676 hex chars (~
 2. ✅ Faucet proven with real on-chain tx hashes
 3. ✅ All execution prepare endpoints return valid plans
 4. ✅ Session infrastructure configured (relayer key, router deployed)
-5. ⏳ Full E2E execution requires browser for wallet signing - this is by design
+5. ✅ **SWAP EXECUTION PROVEN** with real tx hash on Sepolia:
+   - `0xc9c5fe4ae0e4a60754bea460a453520b5581d1027bce81c5faa1a7f96797a7e9`
+   - 100 Demo REDACTED → 95 Demo WETH swap confirmed on-chain
 
 ### Production SHA Verification
-- Backend: `4b94a75`
-- Frontend: `4b94a75`
+- Backend: `0446f4f`
+- Frontend: `0446f4f`
 
-### Remaining Manual Tests (Browser Required)
-1. Manual signing wallet popup verification
-2. Session creation signing flow
-3. One-click session execution
+### Remaining Tests
+1. ⏳ Lending execution (needs Aave REDACTED tokens)
+2. ⏳ Perps execution (adapter debugging)
+3. ⏳ User-facing browser flows (wallet signing)
 
 ---
 
@@ -363,6 +386,6 @@ eth_getCode("0xC4F16fF20aC73F77A17c502ADCd80794c049ecb2") → 28676 hex chars (~
 URL: `https://app.blossom.onl/?debug=1`
 
 Shows:
-- Frontend SHA: `4b94a75`
-- Backend SHA: `4b94a75`
+- Frontend SHA: `0446f4f`
+- Backend SHA: `0446f4f`
 - All venues enabled (swap, perps, lending, events)
