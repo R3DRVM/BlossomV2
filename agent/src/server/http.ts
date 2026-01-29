@@ -999,6 +999,162 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
       }
     }
 
+    // CRITICAL: Detect Price Query FIRST (before LLM call)
+    // Matches: "what is ETH price", "btc price right now", "wuts btc doin", "eth price?", etc.
+    const PRICE_QUERY_RE = /\b(what('?s|\s+is)?\s+)?(the\s+)?(current\s+)?(eth|btc|sol|bitcoin|ethereum|solana)\s*(price|value|worth|cost|rate|doin|doing)?\s*(right\s+now|rn|today|currently)?\s*\??$/i;
+    const SLANG_PRICE_RE = /\b(wut|wuts|whats|wat|how\s+much)\s+(is\s+)?(eth|btc|sol|bitcoin|ethereum|solana)\s*(doing|doin|worth|at|rn|right\s+now)?\b/i;
+    const hasPriceQueryIntent = PRICE_QUERY_RE.test(normalizedUserMessage) || SLANG_PRICE_RE.test(normalizedUserMessage);
+
+    if (hasPriceQueryIntent) {
+      console.log('[api/chat] Price query detected');
+
+      // Extract which asset(s) user is asking about
+      const ethMatch = /\b(eth|ethereum)\b/i.test(normalizedUserMessage);
+      const btcMatch = /\b(btc|bitcoin)\b/i.test(normalizedUserMessage);
+      const solMatch = /\b(sol|solana)\b/i.test(normalizedUserMessage);
+
+      try {
+        const { getPrice } = await import('../services/prices');
+        const prices: { symbol: string; priceUsd: number; source: string }[] = [];
+
+        if (ethMatch) {
+          const ethPrice = await getPrice('ETH');
+          prices.push({ symbol: 'ETH', priceUsd: ethPrice.priceUsd, source: ethPrice.source || 'coingecko' });
+        }
+        if (btcMatch) {
+          const btcPrice = await getPrice('BTC');
+          prices.push({ symbol: 'BTC', priceUsd: btcPrice.priceUsd, source: btcPrice.source || 'coingecko' });
+        }
+        if (solMatch) {
+          const solPrice = await getPrice('SOL');
+          prices.push({ symbol: 'SOL', priceUsd: solPrice.priceUsd, source: solPrice.source || 'coingecko' });
+        }
+
+        // Default to ETH if no specific match
+        if (prices.length === 0) {
+          const ethPrice = await getPrice('ETH');
+          prices.push({ symbol: 'ETH', priceUsd: ethPrice.priceUsd, source: ethPrice.source || 'coingecko' });
+        }
+
+        const timestamp = new Date().toISOString();
+        const priceLines = prices.map(p => `${p.symbol}: $${p.priceUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`).join('\n');
+        const sources = [...new Set(prices.map(p => p.source))].join(', ');
+
+        const portfolioAfter = buildPortfolioSnapshot();
+        return res.json({
+          ok: true,
+          assistantMessage: `${priceLines}\n\nSource: ${sources} | Updated: ${timestamp}`,
+          actions: [],
+          executionRequest: null,
+          modelOk: true,
+          portfolio: portfolioAfter,
+          executionResults: [],
+          priceData: prices.map(p => ({ ...p, timestamp })),
+        });
+      } catch (error: any) {
+        console.error('[api/chat] Failed to fetch price:', error.message);
+        const portfolioAfter = buildPortfolioSnapshot();
+        return res.json({
+          ok: false,
+          assistantMessage: "I couldn't fetch the current price. Please try again.",
+          actions: [],
+          executionRequest: null,
+          modelOk: false,
+          portfolio: portfolioAfter,
+          executionResults: [],
+        });
+      }
+    }
+
+    // CRITICAL: Detect Position/Exposure Query FIRST (before LLM call)
+    // Matches: "show my positions", "current exposure", "closest to liquidation", etc.
+    const POSITION_QUERY_RE = /\b(show|display|what('?s|'re|\s+are)?|list|get)\s+(my\s+)?(current\s+)?(positions?|exposure|holdings?|portfolio|balances?)\b/i;
+    const LIQUIDATION_QUERY_RE = /\b(closest|nearest|which)\s+(to\s+)?(liquidation|liq)\b/i;
+    const EXPOSURE_QUERY_RE = /\b(my\s+)?(current\s+)?(perp\s+)?exposure\b/i;
+    const hasPositionQueryIntent = POSITION_QUERY_RE.test(normalizedUserMessage) ||
+                                   LIQUIDATION_QUERY_RE.test(normalizedUserMessage) ||
+                                   EXPOSURE_QUERY_RE.test(normalizedUserMessage);
+
+    if (hasPositionQueryIntent) {
+      console.log('[api/chat] Position/exposure query detected');
+
+      // Use clientPortfolio if available, otherwise use server-side portfolio
+      const portfolio = clientPortfolio || portfolioBefore;
+      const balances = Array.isArray(portfolio.balances) ? portfolio.balances : [];
+      const defiPositions = Array.isArray(portfolio.defiPositions) ? portfolio.defiPositions : [];
+      const strategies = Array.isArray(portfolio.strategies) ? portfolio.strategies : [];
+      const perpExposure = portfolio.openPerpExposureUsd || 0;
+      const eventExposure = portfolio.eventExposureUsd || 0;
+
+      // Build response based on query type
+      let responseMessage = '';
+
+      if (LIQUIDATION_QUERY_RE.test(normalizedUserMessage)) {
+        // Find position closest to liquidation
+        const activePerps = strategies.filter((s: any) => s.status === 'active' && s.instrumentType === 'perp');
+        if (activePerps.length === 0) {
+          responseMessage = "You don't have any active perp positions that could be liquidated.";
+        } else {
+          // Sort by distance to liquidation (simplified: higher leverage = closer to liq)
+          const sorted = [...activePerps].sort((a: any, b: any) => (b.leverage || 1) - (a.leverage || 1));
+          const closest = sorted[0];
+          responseMessage = `Your position closest to liquidation:\n\n` +
+            `**${closest.side || 'Long'} ${closest.market || 'ETH-USD'}** @ ${closest.leverage || 1}x\n` +
+            `Entry: $${closest.entry?.toLocaleString() || 'N/A'}\n` +
+            `Size: $${closest.notionalUsd?.toLocaleString() || 'N/A'}\n` +
+            `PnL: ${closest.unrealizedPnlUsd >= 0 ? '+' : ''}$${closest.unrealizedPnlUsd?.toFixed(2) || '0.00'}`;
+        }
+      } else if (EXPOSURE_QUERY_RE.test(normalizedUserMessage)) {
+        responseMessage = `**Current Exposure:**\n\n` +
+          `Perp Exposure: $${perpExposure.toLocaleString()}\n` +
+          `Event Exposure: $${eventExposure.toLocaleString()}\n` +
+          `Total: $${(perpExposure + eventExposure).toLocaleString()}`;
+      } else {
+        // General positions query
+        const positionLines: string[] = [];
+
+        if (balances.length > 0) {
+          positionLines.push('**Balances:**');
+          balances.slice(0, 5).forEach((b: any) => {
+            positionLines.push(`  ${b.symbol}: $${(b.balanceUsd || 0).toLocaleString()}`);
+          });
+        }
+
+        if (defiPositions.length > 0) {
+          positionLines.push('\n**DeFi Positions:**');
+          defiPositions.slice(0, 5).forEach((p: any) => {
+            positionLines.push(`  ${p.protocol} ${p.type}: $${(p.valueUsd || 0).toLocaleString()} (${p.asset})`);
+          });
+        }
+
+        const activeStrategies = strategies.filter((s: any) => s.status === 'active');
+        if (activeStrategies.length > 0) {
+          positionLines.push('\n**Active Positions:**');
+          activeStrategies.slice(0, 5).forEach((s: any) => {
+            const pnl = s.unrealizedPnlUsd || 0;
+            positionLines.push(`  ${s.side || 'Long'} ${s.market}: $${(s.notionalUsd || 0).toLocaleString()} (${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)})`);
+          });
+        }
+
+        if (positionLines.length === 0) {
+          responseMessage = "You don't have any positions yet. Try:\n- 'Swap 10 REDACTED to WETH'\n- 'Long BTC with 3x leverage'\n- 'Deposit 100 REDACTED for yield'";
+        } else {
+          responseMessage = positionLines.join('\n');
+        }
+      }
+
+      const portfolioAfter = buildPortfolioSnapshot();
+      return res.json({
+        ok: true,
+        assistantMessage: responseMessage,
+        actions: [],
+        executionRequest: null,
+        modelOk: true,
+        portfolio: portfolioAfter,
+        executionResults: [],
+      });
+    }
+
     // CRITICAL: Detect Event Markets list query FIRST (before LLM call)
     // Matches: "show me top 5 prediction markets by volume", "top event markets", etc.
     const LIST_EVENT_MARKETS_RE = /\b(show\s+me\s+)?(top\s+(\d+)\s+)?(prediction|event)\s+markets?\s*(by\s+)?(volume|tvl)?\b/i;
