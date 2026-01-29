@@ -5183,12 +5183,12 @@ app.post('/api/demo/execute-direct', maybeCheckAccess, async (req, res) => {
       });
     }
 
-    const { plan, userAddress } = req.body;
+    const { plan, userAddress, useRelayerAsUser } = req.body;
 
-    if (!plan || !userAddress) {
+    if (!plan) {
       return res.status(400).json({
         ok: false,
-        error: 'plan and userAddress are required',
+        error: 'plan is required',
       });
     }
 
@@ -5201,26 +5201,40 @@ app.post('/api/demo/execute-direct', maybeCheckAccess, async (req, res) => {
       });
     }
 
-    // Validate plan.user matches userAddress
-    if (plan.user.toLowerCase() !== userAddress.toLowerCase()) {
-      return res.status(400).json({
-        ok: false,
-        error: 'plan.user must match userAddress',
-      });
-    }
-
-    console.log('[api/demo/execute-direct] Executing plan for', userAddress);
-    console.log('[api/demo/execute-direct] Plan:', {
-      user: plan.user,
-      nonce: plan.nonce,
-      deadline: plan.deadline,
-      actionsCount: plan.actions.length,
-    });
-
     // Import viem for encoding
     const { createWalletClient, createPublicClient, http, encodeFunctionData } = await import('viem');
     const { sepolia } = await import('viem/chains');
     const { privateKeyToAccount } = await import('viem/accounts');
+
+    // Create relayer account to get address
+    const relayerAccount = privateKeyToAccount(RELAYER_PRIVATE_KEY as `0x${string}`);
+    const relayerAddress = relayerAccount.address.toLowerCase();
+
+    // If useRelayerAsUser is true, override plan.user with relayer address
+    // This allows testing execution without session
+    let effectivePlan = { ...plan };
+    if (useRelayerAsUser) {
+      console.log('[api/demo/execute-direct] Using relayer as plan user for testing');
+      effectivePlan.user = relayerAddress;
+    }
+
+    // Validate plan.user matches sender (relayer) for executeBySender
+    if (effectivePlan.user.toLowerCase() !== relayerAddress) {
+      return res.status(400).json({
+        ok: false,
+        error: 'executeBySender requires plan.user to match sender. Set useRelayerAsUser=true for testing.',
+        planUser: effectivePlan.user,
+        relayerAddress,
+      });
+    }
+
+    console.log('[api/demo/execute-direct] Executing plan for', effectivePlan.user);
+    console.log('[api/demo/execute-direct] Plan:', {
+      user: effectivePlan.user,
+      nonce: effectivePlan.nonce,
+      deadline: effectivePlan.deadline,
+      actionsCount: effectivePlan.actions.length,
+    });
 
     // executeBySender ABI
     const executeBySenderAbi = [
@@ -5252,16 +5266,16 @@ app.post('/api/demo/execute-direct', maybeCheckAccess, async (req, res) => {
       },
     ] as const;
 
-    // Encode the call
+    // Encode the call with effectivePlan
     const data = encodeFunctionData({
       abi: executeBySenderAbi,
       functionName: 'executeBySender',
       args: [
         {
-          user: plan.user as `0x${string}`,
-          nonce: BigInt(plan.nonce),
-          deadline: BigInt(plan.deadline),
-          actions: plan.actions.map((a: any) => ({
+          user: effectivePlan.user as `0x${string}`,
+          nonce: BigInt(effectivePlan.nonce),
+          deadline: BigInt(effectivePlan.deadline),
+          actions: effectivePlan.actions.map((a: any) => ({
             actionType: a.actionType,
             adapter: a.adapter as `0x${string}`,
             data: a.data as `0x${string}`,
@@ -5272,14 +5286,13 @@ app.post('/api/demo/execute-direct', maybeCheckAccess, async (req, res) => {
 
     console.log('[api/demo/execute-direct] Encoded data length:', data.length);
 
-    // Create clients
-    const account = privateKeyToAccount(RELAYER_PRIVATE_KEY as `0x${string}`);
+    // Create clients (reuse relayerAccount)
     const publicClient = createPublicClient({
       chain: sepolia,
       transport: http(ETH_TESTNET_RPC_URL),
     });
     const walletClient = createWalletClient({
-      account,
+      account: relayerAccount,
       chain: sepolia,
       transport: http(ETH_TESTNET_RPC_URL),
     });
@@ -5290,7 +5303,7 @@ app.post('/api/demo/execute-direct', maybeCheckAccess, async (req, res) => {
       const estimatedGas = await publicClient.estimateGas({
         to: EXECUTION_ROUTER_ADDRESS as `0x${string}`,
         data: data as `0x${string}`,
-        account,
+        account: relayerAccount,
       });
       gasLimit = estimatedGas * BigInt(120) / BigInt(100); // 1.2x multiplier
       if (gasLimit > BigInt(12_000_000)) {
