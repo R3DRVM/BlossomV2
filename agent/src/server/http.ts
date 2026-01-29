@@ -2681,13 +2681,22 @@ app.get('/api/execute/preflight', async (req, res) => {
     }
 
     // Check perps configuration
-    const { DEMO_PERP_ADAPTER_ADDRESS, DEMO_PERP_ENGINE_ADDRESS } = await import('../config');
+    const { DEMO_PERP_ADAPTER_ADDRESS, DEMO_PERP_ENGINE_ADDRESS, DEMO_EVENT_ADAPTER_ADDRESS, DEMO_EVENT_ENGINE_ADDRESS } = await import('../config');
     const perpsEnabled = !!DEMO_PERP_ADAPTER_ADDRESS && routerOk;
+    const eventsRealEnabled = !!DEMO_EVENT_ADAPTER_ADDRESS && routerOk;
+
+    // Add demo perp and event adapters to allowlist for real on-chain execution
+    if (DEMO_PERP_ADAPTER_ADDRESS) {
+      allowedAdapters.push(DEMO_PERP_ADAPTER_ADDRESS.toLowerCase());
+    }
+    if (DEMO_EVENT_ADAPTER_ADDRESS) {
+      allowedAdapters.push(DEMO_EVENT_ADAPTER_ADDRESS.toLowerCase());
+    }
 
     // Venue availability flags for frontend execution routing
     const swapEnabled = adapterOk && routerOk && rpcOk;
     const lendingEnabled = lendingStatus.enabled && routerOk;
-    const eventsEnabled = true; // Events always available (proof-only mode)
+    const eventsEnabled = eventsRealEnabled || true; // Events always available (real or proof-only mode)
 
     // MVP: Collect missing env vars for debugging production parity issues
     const missingEnvVars: string[] = [];
@@ -7426,6 +7435,108 @@ app.get('/api/admin/access/codes', async (req, res) => {
   } catch (error: any) {
     console.error('[admin] List codes error:', error.message);
     res.status(500).json({ ok: false, error: 'Failed to list codes' });
+  }
+});
+
+/**
+ * GET /api/debug/contracts
+ * Show contract addresses, allowlist status, and venue configuration (admin-only)
+ */
+app.get('/api/debug/contracts', async (req, res) => {
+  try {
+    const adminKey = process.env.ADMIN_API_KEY;
+    const providedKey = req.headers['x-admin-key'] || req.headers['authorization']?.replace('Bearer ', '');
+
+    if (!adminKey) {
+      return res.status(503).json({ ok: false, error: 'Admin API not configured' });
+    }
+
+    if (providedKey !== adminKey) {
+      return res.status(403).json({ ok: false, error: 'Invalid admin key' });
+    }
+
+    const {
+      EXECUTION_ROUTER_ADDRESS,
+      ETH_TESTNET_CHAIN_ID,
+      ERC20_PULL_ADAPTER_ADDRESS,
+      UNISWAP_V3_ADAPTER_ADDRESS,
+      MOCK_SWAP_ADAPTER_ADDRESS,
+      AAVE_ADAPTER_ADDRESS,
+      DEMO_PERP_ADAPTER_ADDRESS,
+      DEMO_PERP_ENGINE_ADDRESS,
+      DEMO_EVENT_ADAPTER_ADDRESS,
+      DEMO_EVENT_ENGINE_ADDRESS,
+      DEMO_REDACTED_ADDRESS,
+      DEMO_WETH_ADDRESS,
+      AAVE_SEPOLIA_POOL_ADDRESS,
+      PROOF_ADAPTER_ADDRESS,
+    } = await import('../config');
+
+    // Get the allowlist from preflight
+    const allowedAdapters = [
+      process.env.UNISWAP_V3_ADAPTER_ADDRESS,
+      process.env.MOCK_SWAP_ADAPTER_ADDRESS,
+      process.env.ERC20_PULL_ADAPTER_ADDRESS,
+      process.env.AAVE_ADAPTER_ADDRESS,
+      process.env.DEMO_LEND_ADAPTER_ADDRESS,
+      process.env.PROOF_ADAPTER_ADDRESS,
+      process.env.DEMO_PERP_ADAPTER_ADDRESS,
+      process.env.DEMO_EVENT_ADAPTER_ADDRESS,
+    ].filter(Boolean).map(a => a!.toLowerCase());
+
+    const checkAllowlist = (addr: string | undefined) => {
+      if (!addr) return { address: null, allowlisted: false };
+      return {
+        address: addr,
+        allowlisted: allowedAdapters.includes(addr.toLowerCase()),
+      };
+    };
+
+    res.json({
+      ok: true,
+      chainId: ETH_TESTNET_CHAIN_ID,
+      router: EXECUTION_ROUTER_ADDRESS,
+      adapters: {
+        erc20Pull: checkAllowlist(ERC20_PULL_ADAPTER_ADDRESS),
+        uniswapV3: checkAllowlist(UNISWAP_V3_ADAPTER_ADDRESS),
+        mockSwap: checkAllowlist(MOCK_SWAP_ADAPTER_ADDRESS),
+        aave: checkAllowlist(AAVE_ADAPTER_ADDRESS),
+        demoPerp: checkAllowlist(DEMO_PERP_ADAPTER_ADDRESS),
+        demoEvent: checkAllowlist(DEMO_EVENT_ADAPTER_ADDRESS),
+        proof: checkAllowlist(PROOF_ADAPTER_ADDRESS),
+      },
+      engines: {
+        demoPerp: DEMO_PERP_ENGINE_ADDRESS || null,
+        demoEvent: DEMO_EVENT_ENGINE_ADDRESS || null,
+        aavePool: AAVE_SEPOLIA_POOL_ADDRESS || null,
+      },
+      tokens: {
+        demoUsdc: DEMO_REDACTED_ADDRESS || null,
+        demoWeth: DEMO_WETH_ADDRESS || null,
+      },
+      venues: {
+        swap: {
+          enabled: !!(UNISWAP_V3_ADAPTER_ADDRESS || MOCK_SWAP_ADAPTER_ADDRESS),
+          mode: process.env.EXECUTION_SWAP_MODE || 'demo',
+        },
+        lend: {
+          enabled: !!AAVE_ADAPTER_ADDRESS,
+          mode: process.env.LENDING_EXECUTION_MODE || 'demo',
+        },
+        perp: {
+          enabled: !!(DEMO_PERP_ADAPTER_ADDRESS && DEMO_PERP_ENGINE_ADDRESS),
+          adapterAllowlisted: allowedAdapters.includes((DEMO_PERP_ADAPTER_ADDRESS || '').toLowerCase()),
+        },
+        event: {
+          enabled: !!(DEMO_EVENT_ADAPTER_ADDRESS && DEMO_EVENT_ENGINE_ADDRESS),
+          adapterAllowlisted: allowedAdapters.includes((DEMO_EVENT_ADAPTER_ADDRESS || '').toLowerCase()),
+        },
+      },
+      allowedAdaptersFromEnv: allowedAdapters,
+    });
+  } catch (error: any) {
+    console.error('[debug] Contracts error:', error.message);
+    res.status(500).json({ ok: false, error: 'Failed to get contract info' });
   }
 });
 
