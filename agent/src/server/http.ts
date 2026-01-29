@@ -1159,12 +1159,12 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
 
     // CRITICAL: Detect Event Markets list query FIRST (before LLM call)
     // Matches: "show me top 5 prediction markets by volume", "top event markets", etc.
-    const LIST_EVENT_MARKETS_RE = /\b(show\s+me\s+)?(top\s+(\d+)\s+)?(prediction|event)\s+markets?\s*(by\s+)?(volume|tvl)?\b/i;
+    const LIST_EVENT_MARKETS_RE = /\b(show\s+me\s+)?(top\s+(\d+)\s+)?(prediction|pred|event)\s+markets?\s*(by\s+)?(volume|tvl)?\b/i;
     const hasListEventMarketsIntent = LIST_EVENT_MARKETS_RE.test(normalizedUserMessage) ||
-      /\b(list|show|display|fetch|get|explore)\s+(top|best|highest)\s+(\d+)?\s*(prediction|event)\s+markets?\b/i.test(normalizedUserMessage) ||
-      /\b(best\s+prediction|top\s+prediction|top\s+event|explore\s+top\s+markets)\b/i.test(normalizedUserMessage) ||
-      /\b(top\s+5\s+prediction|top\s+prediction\s+markets|prediction\s+markets\s+by\s+volume)\b/i.test(normalizedUserMessage) ||
-      /\b(show\s+me\s+top\s+prediction\s+markets?)\b/i.test(normalizedUserMessage);
+      /\b(list|show|display|fetch|get|explore)\s+(top|best|highest)\s+(\d+)?\s*(prediction|pred|event)\s+markets?\b/i.test(normalizedUserMessage) ||
+      /\b(best\s+prediction|top\s+prediction|top\s+pred|top\s+event|explore\s+top\s+markets)\b/i.test(normalizedUserMessage) ||
+      /\b(top\s+5\s+prediction|top\s+prediction\s+markets|prediction\s+markets\s+by\s+volume|top\s+pred\s+markets?)\b/i.test(normalizedUserMessage) ||
+      /\b(show\s+me\s+top\s+(prediction|pred)\s+markets?)\b/i.test(normalizedUserMessage);
 
     if (hasListEventMarketsIntent) {
       console.log('[api/chat] Event Markets list query detected - fetching top markets');
