@@ -48,3 +48,4 @@ agent/execution-ledger/ledger.db-wal
 ACCESS_CODES_LOCAL.md
 ACCESS_CODES_LOCAL.csv
 access-codes-*.txt
+.env*.local

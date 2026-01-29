@@ -372,15 +372,18 @@ export async function prepareEthTestnetExecution(
     if (!UNISWAP_V3_ADAPTER_ADDRESS) {
       throw new Error('UNISWAP_V3_ADAPTER_ADDRESS not configured for funding route');
     }
-    if (!WETH_ADDRESS_SEPOLIA) {
-      throw new Error('WETH_ADDRESS_SEPOLIA not configured');
+    // Use real or demo token addresses (fallback to demo if real not configured)
+    const wethAddress = WETH_ADDRESS_SEPOLIA || DEMO_WETH_ADDRESS;
+    const usdcAddress = REDACTED_ADDRESS_SEPOLIA || DEMO_REDACTED_ADDRESS;
+    if (!wethAddress) {
+      throw new Error('WETH address not configured (set WETH_ADDRESS_SEPOLIA or DEMO_WETH_ADDRESS)');
     }
-    if (!REDACTED_ADDRESS_SEPOLIA) {
-      throw new Error('REDACTED_ADDRESS_SEPOLIA not configured');
+    if (!usdcAddress) {
+      throw new Error('REDACTED address not configured (set REDACTED_ADDRESS_SEPOLIA or DEMO_REDACTED_ADDRESS)');
     }
 
     const wrapAmount = requestAmountIn!; // Already validated above
-    
+
     // Step 1: WRAP action (ETH → WETH)
     // If tokenOut is WETH, wrap directly to user (no swap needed)
     // If tokenOut is REDACTED, wrap to router so router can swap
@@ -388,7 +391,7 @@ export async function prepareEthTestnetExecution(
     const wrapRecipient = executionRequest.tokenOut === 'WETH'
       ? userAddress.toLowerCase() // Direct to user if final output is WETH
       : EXECUTION_ROUTER_ADDRESS!.toLowerCase(); // To router if we need to swap
-    
+
     const wrapData = encodeAbiParameters(
       [{ type: 'address' }],
       [wrapRecipient as `0x${string}`]
@@ -402,7 +405,7 @@ export async function prepareEthTestnetExecution(
 
     // Step 2: SWAP action (only if tokenOut is not WETH)
     if (executionRequest.tokenOut === 'REDACTED') {
-      const tokenOut = REDACTED_ADDRESS_SEPOLIA.toLowerCase();
+      const tokenOut = usdcAddress.toLowerCase();
       const fee = 3000; // 0.3% fee tier
       const amountOutMin = 0n; // No slippage protection for MVP
       const recipient = userAddress.toLowerCase();
@@ -419,7 +422,7 @@ export async function prepareEthTestnetExecution(
           { type: 'uint256' },
         ],
         [
-          WETH_ADDRESS_SEPOLIA.toLowerCase() as `0x${string}`,
+          wethAddress.toLowerCase() as `0x${string}`,
           tokenOut as `0x${string}`,
           fee,
           wrapAmount, // Use wrapped amount as swap input
@@ -472,16 +475,24 @@ export async function prepareEthTestnetExecution(
     // Check execution mode: real vs demo
     const { EXECUTION_SWAP_MODE } = await import('../config');
     const useRealExecution = EXECUTION_SWAP_MODE === 'real';
-    
-    // Check if this is a demo swap (using demo tokens)
-    // Demo swap is enabled when:
-    // 1. EXECUTION_SWAP_MODE !== 'real', AND
-    // 2. (executionKind === 'demo_swap', OR executionRequest specifies REDACTED/WETH swap with demo tokens configured)
-    const useDemoTokens = !useRealExecution && DEMO_REDACTED_ADDRESS && DEMO_WETH_ADDRESS && (
-      isDemoSwap ||
-      (executionRequest && executionRequest.kind === 'swap' &&
-        ((executionRequest.tokenIn === 'REDACTED' && executionRequest.tokenOut === 'WETH') ||
-         (executionRequest.tokenIn === 'WETH' && executionRequest.tokenOut === 'REDACTED')))
+
+    // Check token configuration
+    const realTokensConfigured = !!(REDACTED_ADDRESS_SEPOLIA && WETH_ADDRESS_SEPOLIA);
+    const demoTokensConfigured = !!(DEMO_REDACTED_ADDRESS && DEMO_WETH_ADDRESS);
+
+    // Use demo tokens if:
+    // 1. Not real mode and demo tokens configured and (isDemoSwap or swap request matches), OR
+    // 2. Real mode requested but real tokens not configured, fallback to demo if available
+    const useDemoTokens = demoTokensConfigured && (
+      // Case 1: Explicitly not real mode
+      (!useRealExecution && (
+        isDemoSwap ||
+        (executionRequest && executionRequest.kind === 'swap' &&
+          ((executionRequest.tokenIn === 'REDACTED' && executionRequest.tokenOut === 'WETH') ||
+           (executionRequest.tokenIn === 'WETH' && executionRequest.tokenOut === 'REDACTED')))
+      )) ||
+      // Case 2: Real mode but real tokens missing - fallback to demo
+      (useRealExecution && !realTokensConfigured)
     );
 
     // Determine token addresses (demo or real)
