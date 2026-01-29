@@ -7355,6 +7355,81 @@ app.get('/api/access/status', async (req, res) => {
 });
 
 /**
+ * POST /api/admin/access/generate
+ * Generate a new access code (admin-only endpoint)
+ * Protected by ADMIN_API_KEY environment variable
+ */
+app.post('/api/admin/access/generate', async (req, res) => {
+  try {
+    const adminKey = process.env.ADMIN_API_KEY;
+    const providedKey = req.headers['x-admin-key'] || req.headers['authorization']?.replace('Bearer ', '');
+
+    if (!adminKey) {
+      console.warn('[admin] ADMIN_API_KEY not configured');
+      return res.status(503).json({ ok: false, error: 'Admin API not configured' });
+    }
+
+    if (providedKey !== adminKey) {
+      console.warn('[admin] Invalid admin key attempt');
+      return res.status(403).json({ ok: false, error: 'Invalid admin key' });
+    }
+
+    const { maxUses = 1000, expiresInDays, metadata } = req.body;
+    const expiresAt = expiresInDays ? Math.floor(Date.now() / 1000) + (expiresInDays * 24 * 60 * 60) : null;
+
+    const accessCode = await createAccessCode(maxUses, expiresAt, metadata);
+
+    if (!accessCode) {
+      return res.status(500).json({ ok: false, error: 'Failed to create access code' });
+    }
+
+    console.log(`[admin] Created access code: ${accessCode.code.slice(0, 8)}...`);
+
+    res.json({
+      ok: true,
+      code: accessCode.code,
+      maxUses: accessCode.max_uses,
+      expiresAt: accessCode.expires_at,
+    });
+  } catch (error: any) {
+    console.error('[admin] Generate code error:', error.message);
+    res.status(500).json({ ok: false, error: 'Failed to generate code' });
+  }
+});
+
+/**
+ * GET /api/admin/access/codes
+ * List all access codes (admin-only endpoint)
+ */
+app.get('/api/admin/access/codes', async (req, res) => {
+  try {
+    const adminKey = process.env.ADMIN_API_KEY;
+    const providedKey = req.headers['x-admin-key'] || req.headers['authorization']?.replace('Bearer ', '');
+
+    if (!adminKey) {
+      return res.status(503).json({ ok: false, error: 'Admin API not configured' });
+    }
+
+    if (providedKey !== adminKey) {
+      return res.status(403).json({ ok: false, error: 'Invalid admin key' });
+    }
+
+    const codes = await getAllAccessCodes();
+
+    // Mask codes for security (show only first 8 chars)
+    const maskedCodes = codes.map(c => ({
+      ...c,
+      code: `${c.code.slice(0, 12)}...`,
+    }));
+
+    res.json({ ok: true, codes: maskedCodes, count: codes.length });
+  } catch (error: any) {
+    console.error('[admin] List codes error:', error.message);
+    res.status(500).json({ ok: false, error: 'Failed to list codes' });
+  }
+});
+
+/**
  * POST /api/waitlist/join
  * Add email or wallet to waitlist (public endpoint)
  */
