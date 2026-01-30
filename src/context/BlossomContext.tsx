@@ -340,16 +340,81 @@ export function getOpenPositionsCount(
 // - 1 executed perp, 1 active DeFi, 1 draft event → openPositionsCount = 2
 // - 1 closed perp, 0 others → openPositionsCount = 0
 
-// Helper to load chat sessions from localStorage
-function loadChatSessionsFromStorage(): { sessions: ChatSession[]; activeId: string | null } {
+// =============================================================================
+// USER IDENTITY SYSTEM FOR CHAT ISOLATION (P0 Security Fix)
+// =============================================================================
+// Access codes should ONLY gate entry. User identity is determined by:
+// 1. Wallet address (if connected)
+// 2. Anonymous UUID (generated once per browser, stored in localStorage)
+// This ensures each user gets their own chat history even with shared access codes.
+
+const ANON_ID_KEY = 'blossom_anon_id';
+
+/**
+ * Get or create a persistent anonymous user ID for chat isolation.
+ * This ID is unique per browser and persists across sessions.
+ */
+function getOrCreateAnonId(): string {
+  if (typeof window === 'undefined') {
+    return 'ssr-placeholder';
+  }
+
+  let anonId = localStorage.getItem(ANON_ID_KEY);
+  if (!anonId) {
+    // Generate a random UUID for this browser
+    anonId = `anon-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
+    localStorage.setItem(ANON_ID_KEY, anonId);
+    console.log('[Identity] Created new anonymous ID:', anonId.substring(0, 20) + '...');
+  }
+  return anonId;
+}
+
+/**
+ * Get the current user identity key for chat storage.
+ * Priority: wallet address > anonymous ID
+ */
+function getUserIdentityKey(): string {
+  if (typeof window === 'undefined') {
+    return 'ssr-placeholder';
+  }
+
+  // Check for connected wallet address (primary identity)
+  const walletAddress = localStorage.getItem('blossom_wallet_address');
+  if (walletAddress && walletAddress.startsWith('0x')) {
+    // Use lowercase wallet address for consistency
+    return `wallet-${walletAddress.toLowerCase()}`;
+  }
+
+  // Fall back to anonymous ID
+  return getOrCreateAnonId();
+}
+
+/**
+ * Get storage keys scoped by user identity.
+ * Each user (wallet or anon) gets their own isolated chat namespace.
+ */
+function getChatStorageKeys(identityKey: string): { sessionsKey: string; activeIdKey: string } {
+  return {
+    sessionsKey: `blossom_chat_sessions_${identityKey}`,
+    activeIdKey: `blossom_active_chat_id_${identityKey}`,
+  };
+}
+
+// Helper to load chat sessions from localStorage (SCOPED BY USER IDENTITY)
+function loadChatSessionsFromStorage(identityKey?: string): { sessions: ChatSession[]; activeId: string | null } {
   if (typeof window === 'undefined') {
     return { sessions: [], activeId: null };
   }
+
+  const identity = identityKey || getUserIdentityKey();
+  const { sessionsKey, activeIdKey } = getChatStorageKeys(identity);
+
   try {
-    const stored = localStorage.getItem('blossom_chat_sessions');
-    const activeId = localStorage.getItem('blossom_active_chat_id');
+    const stored = localStorage.getItem(sessionsKey);
+    const activeId = localStorage.getItem(activeIdKey);
     if (stored) {
       const sessions = JSON.parse(stored) as ChatSession[];
+      console.log(`[Identity] Loaded ${sessions.length} chat sessions for identity: ${identity.substring(0, 25)}...`);
       return { sessions, activeId };
     }
   } catch (error) {
@@ -358,22 +423,29 @@ function loadChatSessionsFromStorage(): { sessions: ChatSession[]; activeId: str
   return { sessions: [], activeId: null };
 }
 
-// Helper to save chat sessions to localStorage
-function saveChatSessionsToStorage(sessions: ChatSession[], activeId: string | null) {
+// Helper to save chat sessions to localStorage (SCOPED BY USER IDENTITY)
+function saveChatSessionsToStorage(sessions: ChatSession[], activeId: string | null, identityKey?: string) {
   if (typeof window === 'undefined') {
     return;
   }
+
+  const identity = identityKey || getUserIdentityKey();
+  const { sessionsKey, activeIdKey } = getChatStorageKeys(identity);
+
   try {
-    localStorage.setItem('blossom_chat_sessions', JSON.stringify(sessions));
+    localStorage.setItem(sessionsKey, JSON.stringify(sessions));
     if (activeId) {
-      localStorage.setItem('blossom_active_chat_id', activeId);
+      localStorage.setItem(activeIdKey, activeId);
     } else {
-      localStorage.removeItem('blossom_active_chat_id');
+      localStorage.removeItem(activeIdKey);
     }
   } catch (error) {
     console.error('Failed to save chat sessions to localStorage:', error);
   }
 }
+
+// Export identity functions for use in other components
+export { getUserIdentityKey, getOrCreateAnonId };
 
 // Risk Profile helpers
 const DEFAULT_RISK_PROFILE: RiskProfile = {
@@ -498,10 +570,53 @@ function applyExecutedStrategyToBalances(
 }
 
 export function BlossomProvider({ children }: { children: ReactNode }) {
-  // Load chat sessions from localStorage on mount
-  const { sessions: initialSessions, activeId: initialActiveId } = loadChatSessionsFromStorage();
+  // Track current user identity for chat isolation (P0 Security Fix)
+  const [currentIdentityKey, setCurrentIdentityKey] = useState<string>(() => getUserIdentityKey());
+
+  // Load chat sessions from localStorage on mount (SCOPED BY USER IDENTITY)
+  const { sessions: initialSessions, activeId: initialActiveId } = loadChatSessionsFromStorage(currentIdentityKey);
   const [chatSessions, setChatSessions] = useState<ChatSession[]>(initialSessions);
   const [activeChatId, setActiveChatId] = useState<string | null>(initialActiveId);
+
+  // Listen for wallet address changes and reload chat for new identity
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const checkIdentityChange = () => {
+      const newIdentityKey = getUserIdentityKey();
+      if (newIdentityKey !== currentIdentityKey) {
+        console.log('[Identity] Identity changed:', {
+          from: currentIdentityKey.substring(0, 25) + '...',
+          to: newIdentityKey.substring(0, 25) + '...',
+        });
+
+        // Save current sessions to old identity before switching
+        saveChatSessionsToStorage(chatSessions, activeChatId, currentIdentityKey);
+
+        // Load sessions for new identity (start fresh if none exist)
+        const { sessions: newSessions, activeId: newActiveId } = loadChatSessionsFromStorage(newIdentityKey);
+        setChatSessions(newSessions);
+        setActiveChatId(newActiveId);
+        setCurrentIdentityKey(newIdentityKey);
+      }
+    };
+
+    // Check on storage changes (in case wallet is updated in another tab)
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'blossom_wallet_address') {
+        checkIdentityChange();
+      }
+    };
+
+    // Also poll periodically for same-tab changes (wallet connect/disconnect)
+    const intervalId = setInterval(checkIdentityChange, 2000);
+
+    window.addEventListener('storage', handleStorageChange);
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      clearInterval(intervalId);
+    };
+  }, [currentIdentityKey, chatSessions, activeChatId]);
 
   const [strategies, setStrategies] = useState<Strategy[]>(seedStrategies);
   const [selectedStrategyId, setSelectedStrategyId] = useState<string | null>(null);

@@ -774,12 +774,75 @@ async function applyDeterministicFallback(
     const sideMatch = lowerMessage.match(/(long|short)/);
 
     const asset = assetMatch ? assetMatch[1].toUpperCase() : 'ETH';
-    const leverage = leverageMatch ? parseFloat(leverageMatch[1]) : 2;
+    let leverage = leverageMatch ? parseFloat(leverageMatch[1]) : 2;
     const riskPct = riskMatch ? parseFloat(riskMatch[1]) : 2;
     const side = sideMatch ? sideMatch[1] : 'long';
-    
+
+    // P0 Fix: Check if user is asking for an execution plan (not immediate execution)
+    const isPlanRequest = /show\s*(me\s*)?(the\s+)?execution\s*plan|execution\s*plan|plan\s*across\s*venues|compare\s*venues/i.test(userMessage);
+
+    // P0 Fix: Clamp leverage to supported demo limits (1-20x)
+    const MAX_DEMO_LEVERAGE = 20;
+    const leverageWarning = leverage > MAX_DEMO_LEVERAGE
+      ? `Note: Requested ${leverage}x leverage exceeds demo max (${MAX_DEMO_LEVERAGE}x). Using ${MAX_DEMO_LEVERAGE}x instead.\n\n`
+      : '';
+    leverage = Math.min(leverage, MAX_DEMO_LEVERAGE);
+
+    // Supported markets in demo
+    const SUPPORTED_MARKETS = ['BTC', 'ETH', 'SOL'];
+    const isMarketSupported = SUPPORTED_MARKETS.includes(asset);
+
+    // If market not supported, suggest alternatives
+    if (!isMarketSupported) {
+      return {
+        assistantMessage: `**${asset} perps aren't available in the Sepolia demo yet.**\n\n` +
+          `I can trade these markets:\n` +
+          `• **BTC-USD** - Long/Short Bitcoin\n` +
+          `• **ETH-USD** - Long/Short Ethereum\n` +
+          `• **SOL-USD** - Long/Short Solana\n\n` +
+          `Would you like me to open a ${side} position on ETH or BTC with ${leverage}x leverage instead?`,
+        actions: [],
+        executionRequest: null,
+      };
+    }
+
+    // Calculate margin based on risk and account value
+    const accountValue = portfolio?.accountValueUsd || 10000;
+    const marginUsd = Math.round((accountValue * riskPct) / 100);
+
+    // If asking for plan, provide a rich execution plan without auto-executing
+    if (isPlanRequest) {
+      const notionalUsd = marginUsd * leverage;
+
+      return {
+        assistantMessage: `**Execution Plan: ${side.toUpperCase()} ${asset} Perp**\n\n` +
+          leverageWarning +
+          `**Position Details:**\n` +
+          `• Market: ${asset}-USD\n` +
+          `• Side: ${side.charAt(0).toUpperCase() + side.slice(1)}\n` +
+          `• Leverage: ${leverage}x\n` +
+          `• Risk: ${riskPct}% of account\n` +
+          `• Margin: $${marginUsd.toLocaleString()}\n` +
+          `• Notional: $${notionalUsd.toLocaleString()}\n\n` +
+          `**Venue:** Demo Perp Adapter (Sepolia Testnet)\n\n` +
+          `This is a demo execution - no real funds at risk.\n\n` +
+          `Type "execute" or "confirm" to proceed with this trade.`,
+        actions: [],
+        executionRequest: {
+          kind: 'perp',
+          chain: 'sepolia',
+          market: `${asset}-USD`,
+          side: side as 'long' | 'short',
+          leverage,
+          riskPct,
+          marginUsd,
+          planOnly: true, // Frontend should show this as a draft
+        },
+      };
+    }
+
     return {
-      assistantMessage: `I'll open a ${side} ${asset} perp position with ${leverage}x leverage and ${riskPct}% risk.`,
+      assistantMessage: leverageWarning + `I'll open a ${side} ${asset} perp position with ${leverage}x leverage and ${riskPct}% risk.`,
       actions: [],
       executionRequest: {
         kind: 'perp',
@@ -788,7 +851,7 @@ async function applyDeterministicFallback(
         side: side as 'long' | 'short',
         leverage,
         riskPct,
-        marginUsd: 100,
+        marginUsd,
       },
     };
   }
@@ -845,16 +908,42 @@ async function applyDeterministicFallback(
       vaultName = protocolName.trim();
       console.log('[deterministic fallback] Parsed structured allocation:', { amount, vaultName, format: 'structured' });
     } else {
-      // FALLBACK: Natural language format: "deposit 500 REDACTED" or "park 10 usdc into yield"
-      const amountMatch = userMessage.match(/(\d+\.?\d*)\s*(?:usdc|dollar|into|in|to|for)?.*?(?:yield|vault|defi|aave|compound)/i) ||
-                          userMessage.match(/(?:park|deposit|lend|supply)\s+(\d+\.?\d*)/i);
-      amount = amountMatch ? amountMatch[1] : '10';
+      // FALLBACK: Natural language format with improved parsing (P0 Fix)
+      // Handles: "Deposit 10% of my REDACTED into X", "Deposit $500 REDACTED into X", etc.
 
-      // Get vault recommendation from DefiLlama
-      const { getVaultRecommendation } = await import('../quotes/defiLlamaQuote');
-      const vault = await getVaultRecommendation(parseFloat(amount));
-      vaultName = vault?.name;
-      console.log('[deterministic fallback] Parsed natural language allocation:', { amount, vaultName, format: 'natural' });
+      // Check for percentage allocation first: "10%" or "10 percent"
+      const percentMatch = userMessage.match(/(\d+\.?\d*)\s*%\s*(?:of\s*(?:my\s*)?(?:usdc|balance|portfolio))?/i) ||
+                          userMessage.match(/(\d+\.?\d*)\s*percent/i);
+
+      // Check for explicit protocol name in the message
+      const protocolMatch = userMessage.match(/(?:into|to|in|on)\s+([A-Za-z0-9\.\s]+?)(?:\s+(?:yield|vault|for)|$)/i);
+      const explicitProtocol = protocolMatch?.[1]?.trim();
+
+      if (percentMatch) {
+        // Percentage allocation: "Deposit 10% of my REDACTED into X"
+        const percentage = parseFloat(percentMatch[1]);
+        const accountValue = portfolio?.accountValueUsd || 10000;
+        const computedAmount = ((accountValue * percentage) / 100).toFixed(0);
+        amount = computedAmount;
+        vaultName = explicitProtocol || undefined;
+        console.log('[deterministic fallback] Parsed percentage allocation:', { percentage, amount, vaultName, format: 'natural-percent' });
+      } else {
+        // Dollar amount: "Deposit $500 REDACTED into X" or "deposit 500 REDACTED"
+        const amountMatch = userMessage.match(/\$(\d+\.?\d*)/i) ||
+                            userMessage.match(/(\d+\.?\d*)\s*(?:usdc|dollar|into|in|to|for)?.*?(?:yield|vault|defi|aave|compound)/i) ||
+                            userMessage.match(/(?:park|deposit|lend|supply)\s+(\d+\.?\d*)/i);
+        amount = amountMatch ? amountMatch[1] : '10';
+        vaultName = explicitProtocol || undefined;
+        console.log('[deterministic fallback] Parsed dollar allocation:', { amount, vaultName, format: 'natural-dollar' });
+      }
+
+      // If no explicit protocol, get recommendation from DefiLlama
+      if (!vaultName) {
+        const { getVaultRecommendation } = await import('../quotes/defiLlamaQuote');
+        const vault = await getVaultRecommendation(parseFloat(amount));
+        vaultName = vault?.name;
+        console.log('[deterministic fallback] Using recommended vault:', { vaultName });
+      }
     }
 
     return {
@@ -948,6 +1037,134 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
 
     // Normalize user input first (handle edge cases like "5weth" → "5 weth")
     const normalizedUserMessage = normalizeUserInput(userMessage);
+
+    // =============================================================================
+    // CONVERSATIONAL BASELINE (P0 Fix: Friendly responses for common queries)
+    // =============================================================================
+    // These handlers provide instant, friendly responses without hitting the LLM
+    // for common conversational patterns that testers/users expect to work.
+
+    // 1. GREETINGS: "hi", "hello", "hey", "yo", "sup", "good morning", etc.
+    const GREETING_RE = /^(hi|hello|hey|yo|sup|howdy|hola|good\s*(morning|afternoon|evening)|what'?s?\s*up|greetings?)[\s!?.]*$/i;
+    if (GREETING_RE.test(normalizedUserMessage.trim())) {
+      console.log('[api/chat] Greeting detected - returning friendly response');
+      const portfolioAfter = buildPortfolioSnapshot();
+      const usdcBalance = portfolioAfter.balances.find(b => b.symbol === 'REDACTED')?.balanceUsd || 0;
+
+      let greeting = "Hi! I'm Blossom, your AI trading copilot. ";
+      if (usdcBalance > 0) {
+        greeting += `You have $${usdcBalance.toLocaleString()} REDACTED ready to deploy.\n\n`;
+      } else {
+        greeting += "It looks like you don't have any tokens yet. Connect your wallet and visit the faucet to get test tokens.\n\n";
+      }
+      greeting += "Here's what I can help with:\n";
+      greeting += "• **Swaps**: 'Swap 10 REDACTED to WETH'\n";
+      greeting += "• **Perps**: 'Long ETH with 3x leverage'\n";
+      greeting += "• **DeFi Yield**: 'Deposit 100 REDACTED into Aave'\n";
+      greeting += "• **Prediction Markets**: 'Bet $20 YES on Fed rate cut'\n\n";
+      greeting += "What would you like to do?";
+
+      return res.json({
+        ok: true,
+        assistantMessage: greeting,
+        actions: [],
+        executionRequest: null,
+        modelOk: true,
+        portfolio: portfolioAfter,
+        executionResults: [],
+      });
+    }
+
+    // 2. BALANCE QUERIES: "what's my balance", "whats my balance", "balance", "how much do i have"
+    const BALANCE_RE = /^(what'?s?\s*(my\s*)?(balance|money|funds|holdings)|my\s*balance|balance|how\s*much\s*(do\s*i\s*have|money)|show\s*(my\s*)?(balance|funds))[\s?!]*$/i;
+    if (BALANCE_RE.test(normalizedUserMessage.trim())) {
+      console.log('[api/chat] Balance query detected');
+      const portfolioAfter = buildPortfolioSnapshot();
+      const balances = portfolioAfter.balances || [];
+
+      // Check if we have client portfolio with real balances
+      const hasRealBalances = clientPortfolio?.balances?.length > 0 || balances.some(b => b.balanceUsd > 0);
+
+      if (!hasRealBalances) {
+        // No wallet connected or no balances
+        const response = "I don't see any token balances yet. Here's what you can do:\n\n" +
+          "1. **Connect your wallet** using the button in the top right\n" +
+          "2. **Get test tokens** from the Sepolia faucet\n" +
+          "3. Once you have tokens, I can help you swap, trade, or earn yield!\n\n" +
+          "Need help getting started? Just ask!";
+
+        return res.json({
+          ok: true,
+          assistantMessage: response,
+          actions: [],
+          executionRequest: null,
+          modelOk: true,
+          portfolio: portfolioAfter,
+          executionResults: [],
+        });
+      }
+
+      // Build balance response
+      let response = "**Your Current Balances:**\n\n";
+      const displayBalances = clientPortfolio?.balances?.length > 0 ? clientPortfolio.balances : balances;
+
+      for (const bal of displayBalances) {
+        if (bal.balanceUsd > 0) {
+          response += `• ${bal.symbol}: $${bal.balanceUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\n`;
+        }
+      }
+
+      const totalValue = displayBalances.reduce((sum: number, b: any) => sum + (b.balanceUsd || 0), 0);
+      response += `\n**Total:** $${totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\n\n`;
+      response += "What would you like to do with your tokens?";
+
+      return res.json({
+        ok: true,
+        assistantMessage: response,
+        actions: [],
+        executionRequest: null,
+        modelOk: true,
+        portfolio: portfolioAfter,
+        executionResults: [],
+      });
+    }
+
+    // 3. HELP/CAPABILITY QUERIES: "help", "what can you do", "how do you work"
+    const HELP_RE = /^(help|what\s*can\s*you\s*(do|help\s*with)|how\s*(do\s*you\s*work|does\s*this\s*work)|what\s*are\s*you|who\s*are\s*you|getting\s*started|how\s*to\s*(start|begin|use))[\s?!]*$/i;
+    if (HELP_RE.test(normalizedUserMessage.trim())) {
+      console.log('[api/chat] Help query detected');
+      const portfolioAfter = buildPortfolioSnapshot();
+
+      const response = "I'm Blossom, your AI trading copilot! Here's what I can help with:\n\n" +
+        "**🔄 Swaps**\n" +
+        "• 'Swap 100 REDACTED to WETH'\n" +
+        "• 'Convert 0.1 ETH to REDACTED'\n\n" +
+        "**📈 Perpetual Trading**\n" +
+        "• 'Long ETH with 5x leverage using 3% risk'\n" +
+        "• 'Short BTC 10x with $50 margin'\n\n" +
+        "**💰 DeFi Yield**\n" +
+        "• 'Deposit 500 REDACTED into Aave'\n" +
+        "• 'Show me top DeFi protocols by TVL'\n\n" +
+        "**🎯 Prediction Markets**\n" +
+        "• 'Bet $20 YES on Fed rate cut'\n" +
+        "• 'Show top Polymarket events'\n\n" +
+        "**📊 Portfolio**\n" +
+        "• 'What's my balance?'\n" +
+        "• 'Show my positions'\n" +
+        "• 'What's my exposure?'\n\n" +
+        "Just type what you want to do in plain English!";
+
+      return res.json({
+        ok: true,
+        assistantMessage: response,
+        actions: [],
+        executionRequest: null,
+        modelOk: true,
+        portfolio: portfolioAfter,
+        executionResults: [],
+      });
+    }
+    // =============================================================================
 
     // CRITICAL: Detect DeFi TVL query FIRST (before LLM call)
     // Matches: "show me top 5 defi protocols by TVL", "list top defi protocols", etc.

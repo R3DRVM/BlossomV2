@@ -507,9 +507,12 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                           <button
                             onClick={() => {
                               if (!protocolName || protocolName === '—') return;
-                              
-                              const messageText = `Allocate amountPct:"10" to protocol:"${protocolName}" REDACTED yield`;
-                              
+
+                              // P0 Fix: Use natural language instead of coded string
+                              // Old: `Allocate amountPct:"10" to protocol:"${protocolName}" REDACTED yield`
+                              // New: Natural language that the LLM/parser can understand
+                              const messageText = `Deposit 10% of my REDACTED into ${protocolName}`;
+
                               // Prefer auto-send if available, otherwise fall back to insert prompt
                               if (onSendMessage) {
                                 onSendMessage(messageText);
@@ -525,9 +528,12 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                           <button
                             onClick={() => {
                               if (!protocolName || protocolName === '—') return;
-                              
-                              const messageText = `Allocate amountUsd:"500" to protocol:"${protocolName}" REDACTED yield`;
-                              
+
+                              // P0 Fix: Use natural language instead of coded string
+                              // Old: `Allocate amountUsd:"500" to protocol:"${protocolName}" REDACTED yield`
+                              // New: Natural language that the LLM/parser can understand
+                              const messageText = `Deposit $500 REDACTED into ${protocolName}`;
+
                               // Prefer auto-send if available, otherwise fall back to insert prompt
                               if (onSendMessage) {
                                 onSendMessage(messageText);
