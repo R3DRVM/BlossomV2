@@ -623,7 +623,7 @@ async function parseModelResponse(
 
     // If model failed and we have a prompt, try deterministic fallback
     if (!modelOk && userMessage && (isSwapPrompt || isDefiPrompt || isPerpPrompt || isEventPrompt)) {
-      const fallback = await applyDeterministicFallback(userMessage, isSwapPrompt, isDefiPrompt, isPerpPrompt, isEventPrompt);
+      const fallback = await applyDeterministicFallback(userMessage, isSwapPrompt, isDefiPrompt, isPerpPrompt, isEventPrompt, portfolioForPrompt);
       if (fallback) {
         return {
           assistantMessage: `(Fallback planner) ${fallback.assistantMessage}`,
@@ -641,7 +641,7 @@ async function parseModelResponse(
     
     // If parsing failed and we have a prompt, try deterministic fallback
     if (userMessage && (isSwapPrompt || isDefiPrompt || isPerpPrompt || isEventPrompt)) {
-      const fallback = await applyDeterministicFallback(userMessage, isSwapPrompt, isDefiPrompt, isPerpPrompt, isEventPrompt);
+      const fallback = await applyDeterministicFallback(userMessage, isSwapPrompt, isDefiPrompt, isPerpPrompt, isEventPrompt, portfolioForPrompt);
       if (fallback) {
         return {
           assistantMessage: `(Fallback planner) ${fallback.assistantMessage}`,
@@ -734,7 +734,8 @@ async function applyDeterministicFallback(
   isSwapPrompt: boolean,
   isDefiPrompt: boolean,
   isPerpPrompt: boolean = false,
-  isEventPrompt: boolean = false
+  isEventPrompt: boolean = false,
+  portfolio?: { accountValueUsd: number; balances: any[]; openPerpExposureUsd?: number; eventExposureUsd?: number; defiPositions?: any[]; strategies?: any[] }
 ): Promise<{ assistantMessage: string; actions: BlossomAction[]; executionRequest: BlossomExecutionRequest | null } | null> {
   // Normalize input before parsing
   const normalizedMessage = normalizeUserInput(userMessage);
@@ -1660,7 +1661,7 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
 
         if (needsFallback && (normalizedIsSwapPrompt || normalizedIsDefiPrompt || normalizedIsPerpPrompt || normalizedIsEventPrompt)) {
           console.log('[api/chat] Triggering deterministic fallback for execution intent');
-          const fallback = await applyDeterministicFallback(normalizedUserMessage, normalizedIsSwapPrompt, normalizedIsDefiPrompt, normalizedIsPerpPrompt, normalizedIsEventPrompt);
+          const fallback = await applyDeterministicFallback(normalizedUserMessage, normalizedIsSwapPrompt, normalizedIsDefiPrompt, normalizedIsPerpPrompt, normalizedIsEventPrompt, portfolioForPrompt);
           if (fallback) {
             modelResponse = {
               assistantMessage: fallback.assistantMessage,
@@ -1676,7 +1677,7 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
         console.error('LLM call or parsing error:', error.message);
         // Try deterministic fallback before giving up
         if (normalizedIsSwapPrompt || normalizedIsDefiPrompt || normalizedIsPerpPrompt || normalizedIsEventPrompt) {
-          const fallback = await applyDeterministicFallback(normalizedUserMessage, normalizedIsSwapPrompt, normalizedIsDefiPrompt, normalizedIsPerpPrompt, normalizedIsEventPrompt);
+          const fallback = await applyDeterministicFallback(normalizedUserMessage, normalizedIsSwapPrompt, normalizedIsDefiPrompt, normalizedIsPerpPrompt, normalizedIsEventPrompt, portfolioForPrompt);
           if (fallback) {
             modelResponse = {
               assistantMessage: fallback.assistantMessage,
