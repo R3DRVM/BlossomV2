@@ -9,6 +9,7 @@ import { derivePerpPositionsFromStrategies } from '../lib/derivePerpPositions';
 import { USE_AGENT_BACKEND, executionMode as configExecutionMode, executionAuthMode, ethTestnetIntent, fundingRouteMode, enableDemoSwap } from '../lib/config';
 import { callAgent, executeIntent, confirmIntent, type IntentExecutionResult } from '../lib/apiClient';
 import { getAddress, connectWallet, sendTransaction, type PreparedTx } from '../lib/walletAdapter';
+import { checkExecutionGuard, mapServerError, ERROR_MESSAGES, type ExecutionError } from '../lib/executionGuard';
 import { callBlossomChat } from '../lib/blossomApi';
 import QuickStartPanel from './QuickStartPanel';
 import BlossomHelperOverlay from './BlossomHelperOverlay';
@@ -16,6 +17,8 @@ import { HelpCircle } from 'lucide-react';
 import { detectHighRiskIntent } from '../lib/riskIntent';
 import HighRiskConfirmCard from './HighRiskConfirmCard';
 import { useWalletStatus } from './wallet/ConnectWalletButton';
+import DemoModeBanner from './DemoModeBanner';
+import SessionResetButton from './SessionResetButton';
 import { isOneClickAuthorized } from './OneClickExecution';
 import { isManualSigningEnabled } from './SessionEnforcementModal';
 // Task A: Removed ConfirmTradeCard import - using MessageBubble rich card instead
@@ -4552,8 +4555,10 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
         {/* Helper overlay */}
         <BlossomHelperOverlay open={showHelper} onClose={() => setShowHelper(false)} />
         
-        {/* Helper trigger button */}
-        <div className="absolute top-4 right-4 z-40">
+        {/* Demo mode banner + helper trigger */}
+        <div className="absolute top-4 right-4 z-40 flex items-center gap-2">
+          <DemoModeBanner compact />
+          <SessionResetButton variant="icon" />
           <button
             type="button"
             onClick={() => setShowHelper(true)}

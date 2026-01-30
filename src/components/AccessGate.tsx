@@ -12,6 +12,7 @@ import { BlossomLogo } from './BlossomLogo';
 import { Button } from './ui/Button';
 import { ChevronDown, ChevronUp, Mail, Wallet, Check, AlertCircle, Loader2 } from 'lucide-react';
 import { AGENT_API_BASE_URL } from '../lib/apiClient';
+import { handleAccessCodeChange, getAnonIdentityKey, setAnonIdentityKey, generateAnonIdentityKey } from '../lib/executionGuard';
 
 interface AccessGateProps {
   onAccessGranted: () => void;
@@ -63,6 +64,20 @@ export default function AccessGate({ onAccessGranted }: AccessGateProps) {
       const data = await response.json();
 
       if (data.ok && data.valid) {
+        // Handle clean-slate logic when access code changes
+        // Pass isWalletConnected=false since we can't check wallet state here
+        // (the check happens at app level, not gate level)
+        const sessionReset = handleAccessCodeChange(code, false);
+        if (sessionReset) {
+          console.log('[AccessGate] Session reset due to access code change');
+        }
+
+        // Ensure anon identity exists
+        if (!getAnonIdentityKey()) {
+          const newAnonId = generateAnonIdentityKey();
+          setAnonIdentityKey(newAnonId);
+        }
+
         localStorage.setItem('blossom_access_code', code);
         setSubmitState('success');
         setGateState('success');
