@@ -7552,6 +7552,41 @@ app.post('/api/access/verify', async (req, res) => {
 });
 
 /**
+ * POST /api/access/validate
+ * Alias for /api/access/verify (frontend compatibility)
+ */
+app.post('/api/access/validate', async (req, res) => {
+  try {
+    const { code, walletAddress } = req.body;
+
+    if (!code) {
+      return res.json({ ok: false, valid: false, error: 'Access code required' });
+    }
+
+    const result = await validateAccessCode(code, walletAddress);
+
+    if (result.valid) {
+      // Issue gate pass cookie
+      const gatePass = `blossom_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+      res.cookie('blossom_gate_pass', gatePass, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+      });
+
+      console.log('[access] Gate pass issued via /validate endpoint');
+      return res.json({ ok: true, valid: true });
+    } else {
+      return res.json({ ok: false, valid: false, error: result.error || 'Invalid access code' });
+    }
+  } catch (error: any) {
+    console.error('[access] Validation error:', error.message);
+    res.json({ ok: false, valid: false, error: 'Validation failed' });
+  }
+});
+
+/**
  * GET /api/access/status
  * Check if user has valid gate pass (public endpoint)
  */
