@@ -1125,6 +1125,22 @@ async function executePerpEthereum(
     };
   }
 
+  // Prepare execution data BEFORE try block so catch can access it
+  // fromAddress will be updated once account is created
+  const executionData = {
+    chain: 'ethereum' as const,
+    network: 'sepolia' as const,
+    kind: 'perp' as const,
+    venue: 'demo_perp' as any,
+    intent: parsed.rawParams.original || 'Perp position',
+    action: parsed.action,
+    fromAddress: '0x0000000000000000000000000000000000000000', // Updated below
+    token: 'DEMO_REDACTED',
+    amountDisplay: parsed.amount ? `${parsed.amount} REDACTED @ ${parsed.leverage}x` : undefined,
+    usdEstimate: estimateIntentUsd(parsed),
+    usdEstimateIsEstimate: true,
+  };
+
   try {
     // Import viem for transaction
     const { encodeFunctionData, parseAbi } = await import('viem');
@@ -1139,24 +1155,12 @@ async function executePerpEthereum(
 
     const account = privateKeyToAccount(RELAYER_PRIVATE_KEY as `0x${string}`);
 
+    // Update fromAddress now that we have the account
+    executionData.fromAddress = account.address;
+
     // Create clients with failover support (includes retry and circuit breaker)
     const publicClient = createFailoverPublicClient();
     const walletClient = createFailoverWalletClient(account);
-
-    // Prepare execution data (will be created in atomic transaction after TX succeeds)
-    const executionData = {
-      chain: 'ethereum' as const,
-      network: 'sepolia' as const,
-      kind: 'perp' as const,
-      venue: 'demo_perp' as any,
-      intent: parsed.rawParams.original || 'Perp position',
-      action: parsed.action,
-      fromAddress: account.address,
-      token: 'DEMO_REDACTED',
-      amountDisplay: parsed.amount ? `${parsed.amount} REDACTED @ ${parsed.leverage}x` : undefined,
-      usdEstimate: estimateIntentUsd(parsed),
-      usdEstimateIsEstimate: true,
-    };
 
     // Map market string to enum value
     const marketMap: Record<string, number> = {
