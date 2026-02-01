@@ -1251,13 +1251,14 @@ async function executePerpEthereum(
 
         console.log(`[executePerpEthereum] Mint tx submitted: ${mintTxHash}`);
 
-        // Wait for mint confirmation
+        // Wait for mint confirmation with short timeout (1 confirmation, 10s max)
         await publicClient.waitForTransactionReceipt({
           hash: mintTxHash,
-          timeout: 30000,
+          timeout: 10000,
+          confirmations: 1,
         });
 
-        console.log(`[executePerpEthereum] Mint confirmed, new balance check...`);
+        console.log(`[executePerpEthereum] Mint confirmed`);
 
         // Re-check balance after mint
         balance = await publicClient.readContract({
@@ -1325,7 +1326,7 @@ async function executePerpEthereum(
 
       await publicClient.waitForTransactionReceipt({
         hash: approveTxHash,
-        timeout: 60000,
+        timeout: 15000,
       });
     }
 
@@ -1341,7 +1342,7 @@ async function executePerpEthereum(
     // Wait for confirmation
     const receipt = await publicClient.waitForTransactionReceipt({
       hash: txHash,
-      timeout: 60000,
+      timeout: 15000,
     });
 
     const latencyMs = Date.now() - startTime;
@@ -1630,7 +1631,7 @@ async function executeProofOnly(
     // Wait for confirmation
     const receipt = await publicClient.waitForTransactionReceipt({
       hash: txHash,
-      timeout: 60000,
+      timeout: 15000,
     });
 
     const latencyMs = Date.now() - startTime;
@@ -2063,7 +2064,7 @@ async function executeEthereum(
     // Wait for confirmation
     const receipt = await publicClient.waitForTransactionReceipt({
       hash: txHash,
-      timeout: 60000,
+      timeout: 15000,
     });
 
     const explorerUrl = `https://sepolia.etherscan.io/tx/${txHash}`;
