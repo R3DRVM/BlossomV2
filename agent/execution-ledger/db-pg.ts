@@ -405,12 +405,12 @@ export async function finalizeExecutionTransaction(params: {
     if (params.steps && params.steps.length > 0) {
       for (const step of params.steps) {
         const stepId = randomUUID();
+        // Use only columns that exist in Postgres schema
         const stepSql = convertPlaceholders(
           `INSERT INTO execution_steps (
-            id, execution_id, step_index, status, action, chain, venue,
-            amount, token, tx_hash, explorer_url, error_code, error_message,
-            created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            id, execution_id, step_index, status, action, stage,
+            tx_hash, explorer_url, error_code, error_message, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         );
 
         await client.query(stepSql, [
@@ -419,15 +419,11 @@ export async function finalizeExecutionTransaction(params: {
           step.stepIndex || 0,
           step.status || 'confirmed',
           step.action,
-          step.chain,
-          step.venue || null,
-          step.amount || null,
-          step.token || null,
+          step.stage || null,
           step.txHash || null,
           step.explorerUrl || null,
           null, // error_code
           null, // error_message
-          now,
           now,
         ]);
       }
@@ -548,12 +544,12 @@ export async function createExecutionStep(params: any) {
   const id = params.id || randomUUID();
   const now = Math.floor(Date.now() / 1000);
 
+  // Use only columns that exist in Postgres schema
   const sql = convertPlaceholders(
     `INSERT INTO execution_steps (
-      id, execution_id, step_index, status, action, chain, venue,
-      amount, token, tx_hash, explorer_url, error_code, error_message,
-      created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      id, execution_id, step_index, status, action, stage,
+      tx_hash, explorer_url, error_code, error_message, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     RETURNING *`
   );
 
@@ -563,15 +559,11 @@ export async function createExecutionStep(params: any) {
     params.stepIndex || 0,
     params.status || 'pending',
     params.action,
-    params.chain,
-    params.venue || null,
-    params.amount || null,
-    params.token || null,
+    params.stage || null,
     params.txHash || null,
     params.explorerUrl || null,
     params.errorCode || null,
     params.errorMessage || null,
-    now,
     now,
   ]);
 
