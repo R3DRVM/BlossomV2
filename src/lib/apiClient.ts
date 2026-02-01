@@ -140,6 +140,8 @@ export async function callAgent(
     const response = await fetch(url, {
       ...options,
       headers,
+      // Include credentials (cookies) for access gate authentication
+      credentials: 'include',
       // Add timeout to prevent hanging
       signal: AbortSignal.timeout(timeoutMs),
     });
