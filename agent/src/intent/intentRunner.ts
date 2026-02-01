@@ -1339,16 +1339,27 @@ async function executePerpEthereum(
       args: [encodedInnerData as `0x${string}`],
     });
 
-    // Wait for confirmation
-    const receipt = await publicClient.waitForTransactionReceipt({
-      hash: txHash,
-      timeout: 15000,
-    });
-
-    const latencyMs = Date.now() - startTime;
     const explorerUrl = buildExplorerUrl('ethereum', 'sepolia', txHash);
+    const latencyMs = Date.now() - startTime;
 
-    if (receipt.status === 'success') {
+    // Try to wait for confirmation, but don't fail if timeout occurs
+    // The tx was submitted successfully, so we can return pending status
+    let receipt: any = null;
+    let receiptStatus: 'confirmed' | 'pending' | 'failed' = 'pending';
+
+    try {
+      receipt = await publicClient.waitForTransactionReceipt({
+        hash: txHash,
+        timeout: 15000,
+      });
+      receiptStatus = receipt.status === 'success' ? 'confirmed' : 'failed';
+    } catch (receiptError: any) {
+      // Timeout waiting for receipt - tx is pending, not failed
+      console.log(`[executePerpEthereum] Receipt wait timed out for ${txHash}, marking as pending`);
+      receiptStatus = 'pending';
+    }
+
+    if (receiptStatus === 'confirmed') {
       // Prepare execution steps data
       const steps = [
         {
@@ -1453,7 +1464,7 @@ async function executePerpEthereum(
           },
         },
       };
-    } else {
+    } else if (receiptStatus === 'failed') {
       // ATOMIC TRANSACTION: Create execution + update intent to failed
       const result = await finalizeExecutionTransactionAsync({
         intentId,
@@ -1484,6 +1495,92 @@ async function executePerpEthereum(
           stage: 'confirm',
           code: 'TX_REVERTED',
           message: 'Perp position transaction reverted',
+        },
+      };
+    } else {
+      // receiptStatus === 'pending' - tx submitted but confirmation timed out
+      // This is NOT an error - the tx may still confirm, so return success with pending status
+      const steps = [
+        {
+          stepIndex: 0,
+          action: 'route',
+          chain: 'ethereum',
+          status: 'confirmed',
+        },
+        {
+          stepIndex: 1,
+          action: 'open_position',
+          chain: 'ethereum',
+          status: 'pending',
+          txHash: txHash,
+          explorerUrl: explorerUrl,
+        },
+      ];
+
+      const marketName = parsed.targetAsset?.toUpperCase() || 'BTC';
+      const positionSide = parsed.action === 'long' ? 'long' : 'short';
+
+      // Create execution with pending status
+      const result = await finalizeExecutionTransactionAsync({
+        intentId,
+        execution: {
+          ...executionData,
+          txHash,
+          explorerUrl,
+          status: 'pending',
+        },
+        steps,
+        intentStatus: {
+          status: 'pending', // Keep intent pending until confirmed
+          metadataJson: mergeMetadata(existingMetadataJson, {
+            parsed,
+            route,
+            executedKind: 'real',
+            txHash,
+            explorerUrl,
+            latencyMs,
+            perpDetails: {
+              market: marketName,
+              side: positionSide,
+              leverage,
+            },
+          }),
+        },
+      });
+
+      // Still create position record (will show as pending)
+      await createPositionAsync({
+        chain: 'ethereum',
+        network: 'sepolia',
+        venue: 'demo_perp',
+        market: marketName,
+        side: positionSide,
+        leverage,
+        margin_units: marginAmount.toString(),
+        margin_display: `${(Number(marginAmount) / 1e6).toFixed(2)} REDACTED`,
+        size_units: (marginAmount * BigInt(leverage)).toString(),
+        open_tx_hash: txHash,
+        open_explorer_url: explorerUrl,
+        user_address: account.address,
+        intent_id: intentId,
+        execution_id: result.executionId,
+      });
+
+      return {
+        ok: true, // TX was submitted successfully
+        intentId,
+        status: 'pending',
+        executionId: result.executionId,
+        txHash,
+        explorerUrl,
+        metadata: {
+          executedKind: 'real',
+          receiptPending: true,
+          perpDetails: {
+            market: marketName,
+            side: positionSide,
+            leverage,
+          },
         },
       };
     }
