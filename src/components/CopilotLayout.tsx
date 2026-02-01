@@ -107,29 +107,15 @@ export default function CopilotLayout() {
         {/* Center Header - Compact */}
         <div className="flex-shrink-0 bg-white border-b border-slate-100 px-4 py-2">
           <div className="flex items-center justify-between">
-            {/* Left: Logo + Title + Mini Tabs */}
-            <div className="flex items-center gap-4">
-              <div className="flex items-center gap-2">
-                <BlossomLogo size={20} className="drop-shadow-sm" />
-                <h1 className="text-sm font-semibold text-slate-900">Blossom</h1>
-                <span className="px-1.5 py-0.5 text-[9px] font-bold tracking-wide bg-blossom-pink/15 text-blossom-pink border border-blossom-pink/30 rounded">
-                  BETA
-                </span>
-              </div>
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={() => handleCenterViewChange('copilot')}
-                  className={`text-[11px] font-medium transition-colors ${
-                    centerView === 'copilot'
-                      ? 'text-slate-900 border-b border-pink-200 pb-0.5'
-                      : 'text-slate-500 hover:text-slate-700'
-                  }`}
-                >
-                  Copilot
-                </button>
-                {/* Risk Center and Portfolio Overview tabs hidden for beta */}
-                {/* TODO: Re-enable these tabs post-beta launch */}
-              </div>
+            {/* Left: Logo + Title + Beta + Copilot */}
+            <div className="flex items-center gap-2">
+              <BlossomLogo size={20} className="drop-shadow-sm" />
+              <h1 className="text-sm font-semibold text-slate-900">Blossom</h1>
+              <span className="px-1.5 py-0.5 text-[9px] font-bold tracking-wide bg-blossom-pink/15 text-blossom-pink border border-blossom-pink/30 rounded">
+                BETA
+              </span>
+              <span className="text-slate-300">|</span>
+              <span className="text-sm font-medium text-slate-700">Copilot</span>
             </div>
             
             {/* Right: Execution Mode + Venue Toggle */}

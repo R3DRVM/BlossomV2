@@ -7,6 +7,7 @@
 
 import { useState, useEffect } from 'react';
 import { X, RefreshCw, CheckCircle, XCircle, AlertTriangle } from 'lucide-react';
+import { callAgent } from '../lib/apiClient';
 
 interface PreflightData {
   ok: boolean;
@@ -53,14 +54,14 @@ export default function DebugPanel() {
   const refresh = async () => {
     setIsLoading(true);
     try {
-      // Fetch preflight
-      const preflightRes = await fetch('/api/execute/preflight');
+      // Fetch preflight using callAgent (routes to proper backend URL)
+      const preflightRes = await callAgent('/api/execute/preflight');
       if (preflightRes.ok) {
         setPreflight(await preflightRes.json());
       }
 
-      // Fetch backend health
-      const healthRes = await fetch('/api/health');
+      // Fetch backend health using callAgent
+      const healthRes = await callAgent('/health');
       if (healthRes.ok) {
         setBackendHealth(await healthRes.json());
       }

@@ -293,9 +293,17 @@ body {
   margin: 16px !important;
 }
 
-/* RainbowKit modal backdrop - ensure proper z-index */
-[data-rk] [data-testid="rk-connect-modal"] {
-  z-index: 100 !important;
+/* RainbowKit modal - ensure proper z-index above all app UI */
+[data-rk] [role="dialog"],
+[data-rk] [data-testid="rk-connect-modal"],
+[data-rk] [data-testid="rk-account-modal"] {
+  z-index: 9998 !important;
+}
+
+/* RainbowKit modal overlay/backdrop */
+[data-rk] [aria-hidden="true"],
+[data-rk] [data-overlay] {
+  z-index: 9997 !important;
 }
 
 /* RainbowKit modal content - scrollable */

@@ -165,6 +165,9 @@ export async function callAgent(
   }
 }
 
+// Track if this is the first health check (for cold start tolerance)
+let isFirstHealthCheck = true;
+
 /**
  * Check if backend is reachable
  * Returns { ok: true, ts } if reachable, throws if not
@@ -175,27 +178,32 @@ export async function checkBackendHealth(): Promise<{ ok: boolean; ts: number }>
   if (backendHealthCheckInProgress) {
     return { ok: backendHealthy, ts: Date.now() };
   }
-  
+
   backendHealthCheckInProgress = true;
-  
+
+  // Use longer timeout for first check (Vercel cold start can take 15-20s)
+  const timeoutMs = isFirstHealthCheck ? 20000 : 8000;
+
   try {
     const response = await fetch(`${AGENT_API_BASE_URL}/health`, {
       method: 'GET',
-      signal: AbortSignal.timeout(5000), // 5 second timeout for health check
+      signal: AbortSignal.timeout(timeoutMs),
     });
-    
+
     if (!response.ok) {
       setBackendHealthy(false);
       throw new Error(`Health check failed: ${response.status}`);
     }
-    
+
     const data = await response.json();
     const healthy = data.ok === true;
     setBackendHealthy(healthy);
-    
+    isFirstHealthCheck = false;
+
     return { ok: healthy, ts: data.ts || Date.now() };
   } catch (error: any) {
     setBackendHealthy(false);
+    isFirstHealthCheck = false;
     if (error.name === 'TimeoutError' || error.name === 'TypeError' || error.message?.includes('fetch')) {
       throw new Error('Backend unreachable');
     }

@@ -198,8 +198,9 @@ export async function executePlan(
         return {
           ok: false,
           mode: 'wallet',
-          error: 'No active session. Please enable one-click execution or sign transactions manually.',
+          error: 'Session not found. Please enable One-Click Session in the wallet panel, or use the Confirm button to sign manually.',
           errorCode: 'NO_SESSION',
+          notes: ['Go to the right sidebar and click "One-Click" to enable session mode.'],
         };
       }
 
@@ -255,8 +256,9 @@ export async function executePlan(
     return {
       ok: false,
       mode: 'wallet',
-      error: 'Direct execution requires wallet signature. Use the Confirm button to sign.',
+      error: 'This trade requires your wallet signature. Click "Confirm" in the plan card to sign with your wallet, or enable One-Click Session mode in the sidebar.',
       errorCode: 'DIRECT_MODE',
+      notes: ['Enable One-Click Session to skip manual confirmations for future trades.'],
     };
 
   } catch (error: any) {
