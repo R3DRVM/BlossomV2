@@ -17,7 +17,7 @@ import { HelpCircle } from 'lucide-react';
 import { detectHighRiskIntent } from '../lib/riskIntent';
 import HighRiskConfirmCard from './HighRiskConfirmCard';
 import { useWalletStatus } from './wallet/ConnectWalletButton';
-import DemoModeBanner from './DemoModeBanner';
+// DemoModeBanner removed - Beta pill is now in the header (see Header.tsx)
 import SessionResetButton from './SessionResetButton';
 import { isOneClickAuthorized } from './OneClickExecution';
 import { isManualSigningEnabled } from './SessionEnforcementModal';
@@ -4555,9 +4555,8 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
         {/* Helper overlay */}
         <BlossomHelperOverlay open={showHelper} onClose={() => setShowHelper(false)} />
         
-        {/* Demo mode banner + helper trigger */}
+        {/* Helper trigger (Demo mode banner removed - Beta pill is in header) */}
         <div className="absolute top-4 right-4 z-40 flex items-center gap-2">
-          <DemoModeBanner compact />
           <SessionResetButton variant="icon" />
           <button
             type="button"

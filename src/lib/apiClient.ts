@@ -2,22 +2,25 @@
  * API Client Configuration
  * Centralized base URL for agent API calls
  *
- * PRODUCTION: Uses same-origin relative paths (empty string) to avoid CORS
+ * PRODUCTION: Uses https://api.blossom.onl (backend is on separate subdomain)
  * LOCAL DEV: Uses VITE_AGENT_BASE_URL or falls back to http://localhost:3001
  */
 
 // Module-level flag to ensure logging happens only once
 let _hasLogged = false;
 
+// Production backend URL (frontend is app.blossom.onl, backend is api.blossom.onl)
+const PRODUCTION_BACKEND_URL = 'https://api.blossom.onl';
+
 export function getAgentApiBaseUrl(): string {
-  // PRODUCTION: Use same-origin relative paths for all deployed domains
+  // PRODUCTION: Must use explicit backend URL since frontend and backend are different subdomains
   if (typeof window !== 'undefined') {
     const hostname = window.location.hostname;
     const isProduction = hostname.includes('blossom.onl') || hostname.includes('vercel.app');
 
     if (isProduction) {
-      // Silently ignore any env vars in production - always use same-origin
-      return ''; // Empty string = same-origin relative paths (/api/...)
+      // Production requires explicit backend URL (app.blossom.onl -> api.blossom.onl)
+      return PRODUCTION_BACKEND_URL;
     }
   }
 
@@ -28,8 +31,7 @@ export function getAgentApiBaseUrl(): string {
   if (typeof window !== 'undefined' && window.location && import.meta.env.PROD) {
     const hostname = window.location.hostname;
     if (hostname.includes('blossom.onl') || hostname.includes('vercel.app')) {
-      // Silently force same-origin
-      return '';
+      return PRODUCTION_BACKEND_URL;
     }
   }
 
@@ -38,13 +40,19 @@ export function getAgentApiBaseUrl(): string {
 
 export const AGENT_API_BASE_URL = getAgentApiBaseUrl();
 
-// Log backend URL ONCE ONLY (idempotent)
+// Log backend URL ONCE ONLY (idempotent) + validate in production
 if (typeof window !== 'undefined' && !_hasLogged) {
   _hasLogged = true;
   const isProduction = window.location.hostname.includes('blossom.onl') || window.location.hostname.includes('vercel.app');
-  console.log(`🔗 [apiClient] Backend API base URL: "${AGENT_API_BASE_URL}" (${AGENT_API_BASE_URL === '' ? 'same-origin' : 'absolute'})`);
+  console.log(`🔗 [apiClient] Backend API base URL: "${AGENT_API_BASE_URL}"`);
   console.log(`   Environment: ${isProduction ? 'PRODUCTION' : 'DEV'}`);
   console.log(`   Hostname: ${window.location.hostname}`);
+
+  // CRITICAL: Validate backend URL is not empty in production
+  if (isProduction && (!AGENT_API_BASE_URL || AGENT_API_BASE_URL === '')) {
+    console.error('🚨 [apiClient] CRITICAL: Backend API URL is empty in production! This will cause API failures.');
+    console.error('   Expected: https://api.blossom.onl');
+  }
 
   // Only log env var in DEV mode (not spammy in production)
   if (!isProduction && (import.meta.env.VITE_AGENT_BASE_URL || import.meta.env.VITE_AGENT_API_URL)) {

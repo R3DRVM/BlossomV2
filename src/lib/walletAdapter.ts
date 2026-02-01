@@ -16,6 +16,134 @@ export interface PreparedTx {
   gasLimit?: string;
 }
 
+// Type for EIP-1193 compliant transaction params (all fields are strings)
+export interface Eip1193TxParams {
+  from: string;
+  to: string;
+  value: string;
+  data: string;
+  gas?: string;
+}
+
+/**
+ * Normalize a value to a hex string
+ * - If already a valid hex string, returns as-is (lowercased)
+ * - If a number, converts to hex
+ * - If undefined/null/empty, returns the default value
+ */
+function toHexString(value: string | number | undefined | null, defaultValue: string): string {
+  if (value === undefined || value === null || value === '') {
+    return defaultValue;
+  }
+
+  if (typeof value === 'number') {
+    return '0x' + value.toString(16);
+  }
+
+  if (typeof value === 'string') {
+    // Already a hex string
+    if (value.startsWith('0x')) {
+      return value.toLowerCase();
+    }
+    // Try to parse as number and convert
+    const num = parseInt(value, 10);
+    if (!isNaN(num)) {
+      return '0x' + num.toString(16);
+    }
+    // Invalid format, return default
+    console.warn('[walletAdapter] Invalid value format, using default:', value);
+    return defaultValue;
+  }
+
+  return defaultValue;
+}
+
+/**
+ * Validate and normalize an Ethereum address
+ * Returns lowercase hex address or throws if invalid
+ */
+function normalizeAddress(address: string | undefined | null, fieldName: string): string {
+  if (!address || typeof address !== 'string') {
+    throw new Error(`[walletAdapter] ${fieldName} is required and must be a string`);
+  }
+
+  const trimmed = address.trim().toLowerCase();
+
+  if (!trimmed.startsWith('0x') || trimmed.length !== 42) {
+    throw new Error(`[walletAdapter] ${fieldName} must be a valid 42-character hex address: ${address}`);
+  }
+
+  // Validate it's actually hex
+  if (!/^0x[a-f0-9]{40}$/.test(trimmed)) {
+    throw new Error(`[walletAdapter] ${fieldName} contains invalid characters: ${address}`);
+  }
+
+  return trimmed;
+}
+
+/**
+ * Normalize transaction params for EIP-1193 eth_sendTransaction
+ *
+ * Ensures:
+ * - from/to are lowercase hex addresses
+ * - value is a hex string (default "0x0")
+ * - data is a hex string (default "0x")
+ * - gas is a hex string (if provided)
+ * - NO chainId (MetaMask handles this internally)
+ * - NO undefined values
+ *
+ * This prevents MetaMask errors like "e.toLowerCase is not a function"
+ */
+export function normalizeEip1193Tx(
+  from: string | undefined | null,
+  tx: PreparedTx
+): Eip1193TxParams {
+  // Validate and normalize addresses
+  const normalizedFrom = normalizeAddress(from, 'from');
+  const normalizedTo = normalizeAddress(tx.to, 'to');
+
+  // Normalize value (default to 0x0 if not specified)
+  const normalizedValue = toHexString(tx.value, '0x0');
+
+  // Normalize data (default to 0x if not specified)
+  let normalizedData = '0x';
+  if (tx.data && typeof tx.data === 'string' && tx.data.trim()) {
+    normalizedData = tx.data.toLowerCase();
+    if (!normalizedData.startsWith('0x')) {
+      normalizedData = '0x' + normalizedData;
+    }
+  }
+
+  // Build params object - explicitly typed, no undefined values
+  const params: Eip1193TxParams = {
+    from: normalizedFrom,
+    to: normalizedTo,
+    value: normalizedValue,
+    data: normalizedData,
+  };
+
+  // Add gas only if provided (as hex string)
+  if (tx.gasLimit) {
+    params.gas = toHexString(tx.gasLimit, undefined as any);
+    if (!params.gas) {
+      delete params.gas; // Remove if conversion failed
+    }
+  }
+
+  // DO NOT include chainId - MetaMask handles this internally
+  // Including chainId can cause issues with some wallets
+
+  // Log the normalized params for debugging
+  if (import.meta.env.DEV) {
+    console.log('[walletAdapter] normalizeEip1193Tx:', {
+      original: { from, to: tx.to, value: tx.value, data: tx.data?.slice(0, 20) + '...', gasLimit: tx.gasLimit },
+      normalized: { ...params, data: params.data.slice(0, 20) + '...' },
+    });
+  }
+
+  return params;
+}
+
 // Cache for explicit connection state
 let explicitlyConnected = false;
 let cachedAddress: string | null = null;
@@ -196,43 +324,69 @@ export async function switchToSepolia(): Promise<boolean> {
 
 /**
  * Send a transaction
+ *
+ * Uses normalizeEip1193Tx to ensure params are EIP-1193 compliant:
+ * - All fields are strings (hex format)
+ * - No undefined values
+ * - No chainId (MetaMask handles this)
  */
 export async function sendTransaction(tx: PreparedTx): Promise<string | null> {
+  const logPrefix = '[walletAdapter]';
+
   try {
     const ethereum = getEthereum();
     if (!ethereum) {
-      console.warn('[walletAdapter] No ethereum provider for transaction');
+      console.warn(`${logPrefix} No ethereum provider for transaction`);
       return null;
     }
 
     const from = await getAddress();
     if (!from) {
-      console.warn('[walletAdapter] No connected address for transaction');
+      console.warn(`${logPrefix} No connected address for transaction`);
       return null;
     }
 
-    const txParams: any = {
-      from,
-      to: tx.to,
-      data: tx.data || '0x',
-    };
-
-    if (tx.value) {
-      txParams.value = tx.value;
+    // Normalize transaction params to ensure EIP-1193 compliance
+    // This prevents "e.toLowerCase is not a function" and similar errors
+    let txParams: Eip1193TxParams;
+    try {
+      txParams = normalizeEip1193Tx(from, tx);
+    } catch (normalizeError: any) {
+      console.error(`${logPrefix} Failed to normalize tx params:`, normalizeError.message);
+      console.error(`${logPrefix} Original tx:`, { from, to: tx.to, value: tx.value, data: tx.data?.slice(0, 50) });
+      return null;
     }
 
-    if (tx.gasLimit) {
-      txParams.gas = tx.gasLimit;
-    }
+    // Log the exact params being sent (for debugging)
+    console.log(`${logPrefix} Sending eth_sendTransaction:`, {
+      from: txParams.from,
+      to: txParams.to,
+      value: txParams.value,
+      dataLength: txParams.data?.length,
+      gas: txParams.gas,
+    });
 
+    // Send the transaction
     const txHash = await ethereum.request({
       method: 'eth_sendTransaction',
       params: [txParams],
     });
 
+    console.log(`${logPrefix} Transaction sent successfully:`, txHash);
     return txHash;
   } catch (error: any) {
-    console.warn('[walletAdapter] Transaction failed:', error?.message || error);
+    // Log detailed error info
+    console.error(`${logPrefix} Transaction failed:`, {
+      message: error?.message,
+      code: error?.code,
+      data: error?.data,
+    });
+
+    // Check for specific error patterns
+    if (error?.message?.includes('toLowerCase')) {
+      console.error(`${logPrefix} CRITICAL: toLowerCase error indicates malformed tx params. This should not happen after normalization.`);
+    }
+
     return null;
   }
 }
