@@ -14,6 +14,7 @@
  */
 
 import { randomUUID } from 'crypto';
+import { DEMO_PERP_ADAPTER_ADDRESS } from '../config';
 
 /**
  * Helper to merge new metadata with existing metadata, preserving caller info (source, domain, runId).
@@ -427,15 +428,14 @@ export function routeIntent(
       };
     }
 
-    // If no adapter configured, still attempt real execution through demo venue
-    // Only fall back to proof_only if explicitly requested or venue unavailable
+    // If no adapter configured, use proof_only mode since we can't execute without the adapter
     if (targetChain === 'ethereum') {
       return {
         chain: 'ethereum',
         network: 'sepolia',
         venue: 'demo_perp',
-        executionType: 'real',
-        warnings: ['DemoPerpAdapter not configured. Execution may require manual confirmation.'],
+        executionType: 'proof_only',
+        warnings: ['PROOF_ONLY: DEMO_PERP_ADAPTER_ADDRESS not configured. Set this env var for real perp execution.'],
       };
     }
 
