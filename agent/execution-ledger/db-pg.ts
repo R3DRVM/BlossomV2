@@ -680,3 +680,100 @@ export async function getSummaryStatsWithIntents() {
     })),
   };
 }
+
+/**
+ * Create a position in the ledger (Postgres)
+ */
+export async function createPosition(input: {
+  chain: string;
+  network: string;
+  venue: string;
+  market: string;
+  side: string;
+  leverage?: number;
+  margin_units?: string;
+  margin_display?: string;
+  size_units?: string;
+  entry_price?: string;
+  open_tx_hash?: string;
+  open_explorer_url?: string;
+  user_address: string;
+  on_chain_position_id?: string;
+  intent_id?: string;
+  execution_id?: string;
+}) {
+  const id = randomUUID();
+  const now = Math.floor(Date.now() / 1000);
+
+  const sql = convertPlaceholders(`
+    INSERT INTO positions (
+      id, chain, network, venue, market, side, leverage,
+      margin_units, margin_display, size_units, entry_price,
+      status, opened_at, open_tx_hash, open_explorer_url,
+      user_address, on_chain_position_id, intent_id, execution_id,
+      created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    RETURNING *
+  `);
+
+  const row = await queryOne(sql, [
+    id,
+    input.chain,
+    input.network,
+    input.venue,
+    input.market,
+    input.side,
+    input.leverage ?? null,
+    input.margin_units ?? null,
+    input.margin_display ?? null,
+    input.size_units ?? null,
+    input.entry_price ?? null,
+    now,
+    input.open_tx_hash ?? null,
+    input.open_explorer_url ?? null,
+    input.user_address,
+    input.on_chain_position_id ?? null,
+    input.intent_id ?? null,
+    input.execution_id ?? null,
+    now,
+    now,
+  ]);
+
+  console.log(`[Postgres] Created position: ${id} for ${input.market} ${input.side}`);
+  return row;
+}
+
+/**
+ * Get open positions (Postgres)
+ */
+export async function getOpenPositions(filters?: {
+  chain?: string;
+  network?: string;
+  venue?: string;
+  user_address?: string;
+}) {
+  let sql = 'SELECT * FROM positions WHERE status = $1';
+  const params: any[] = ['open'];
+  let paramIndex = 2;
+
+  if (filters?.chain) {
+    sql += ` AND chain = $${paramIndex++}`;
+    params.push(filters.chain);
+  }
+  if (filters?.network) {
+    sql += ` AND network = $${paramIndex++}`;
+    params.push(filters.network);
+  }
+  if (filters?.venue) {
+    sql += ` AND venue = $${paramIndex++}`;
+    params.push(filters.venue);
+  }
+  if (filters?.user_address) {
+    sql += ` AND user_address = $${paramIndex++}`;
+    params.push(filters.user_address);
+  }
+
+  sql += ' ORDER BY opened_at DESC';
+
+  return queryRows(sql, params);
+}

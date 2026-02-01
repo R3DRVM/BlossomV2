@@ -1063,8 +1063,8 @@ async function executePerpEthereum(
     getIntentAsync,
     updateIntentStatusAsync: updateIntentStatus,
     finalizeExecutionTransactionAsync,
+    createPositionAsync,
   } = await import('../../execution-ledger/db');
-  const { createPosition } = await import('../../execution-ledger/db');
   const { buildExplorerUrl } = await import('../ledger/ledger');
 
   const now = Math.floor(Date.now() / 1000);
@@ -1419,7 +1419,7 @@ async function executePerpEthereum(
       });
 
       // Create position in ledger (indexer will also catch it, but this is faster)
-      createPosition({
+      await createPositionAsync({
         chain: 'ethereum',
         network: 'sepolia',
         venue: 'demo_perp',

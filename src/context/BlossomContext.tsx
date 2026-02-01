@@ -1289,6 +1289,11 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
         };
 
         // Use execution kernel
+        // Check for session dynamically - if user has session ID stored, use session mode
+        const sessionKey = `blossom_session_${userAddress.toLowerCase()}`;
+        const hasSession = typeof window !== 'undefined' && localStorage.getItem(sessionKey);
+        const dynamicAuthMode = hasSession ? 'session' : executionAuthMode;
+
         const { executePlan } = await import('../lib/executionKernel');
         const result = await executePlan({
           draftId: id,
@@ -1302,7 +1307,7 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
             depositUsd: position.depositUsd,
             apyPct: position.apyPct,
           },
-        }, { executionAuthMode });
+        }, { executionAuthMode: dynamicAuthMode });
 
         // TRUTHFUL UI: Only mark as active if we have txHash and receipt is confirmed
         if (result.ok && result.txHash && result.receiptStatus === 'confirmed') {

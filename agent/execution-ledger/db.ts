@@ -1989,6 +1989,37 @@ export async function updateExecutionAsync(
 }
 
 /**
+ * Async-capable position creation (uses Postgres if DATABASE_URL is set)
+ */
+export async function createPositionAsync(input: CreatePositionInput): Promise<Position> {
+  if (dbType === 'postgres') {
+    const pgDb = await import('./db-pg.js');
+    return pgDb.createPosition(input as any);
+  }
+
+  // SQLite: use synchronous version
+  return createPosition(input);
+}
+
+/**
+ * Async-capable get open positions (uses Postgres if DATABASE_URL is set)
+ */
+export async function getOpenPositionsAsync(filters?: {
+  chain?: string;
+  network?: string;
+  venue?: string;
+  user_address?: string;
+}): Promise<Position[]> {
+  if (dbType === 'postgres') {
+    const pgDb = await import('./db-pg.js');
+    return pgDb.getOpenPositions(filters);
+  }
+
+  // SQLite: use synchronous version
+  return getOpenPositions(filters);
+}
+
+/**
  * Finalize execution in atomic transaction
  * Creates execution row + updates intent status in single transaction
  * Ensures both writes persist before serverless function exits
