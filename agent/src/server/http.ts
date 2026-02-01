@@ -7456,21 +7456,19 @@ app.get('/api/ledger/positions/recent', checkLedgerSecret, async (req, res) => {
  */
 app.get('/api/ledger/positions', checkLedgerSecret, async (req, res) => {
   try {
-    const { getOpenPositions, getPositionsByStatus } = await import('../../execution-ledger/db');
+    const { getOpenPositionsAsync } = await import('../../execution-ledger/db');
     const status = req.query.status as string;
     const chain = req.query.chain as string;
     const network = req.query.network as string;
     const venue = req.query.venue as string;
-    const limit = parseInt(req.query.limit as string) || 50;
+    const userAddress = req.query.userAddress as string;
 
     let positions;
     if (status === 'open') {
-      positions = getOpenPositions({ chain, network, venue });
-    } else if (status === 'closed' || status === 'liquidated') {
-      positions = getPositionsByStatus(status as any, limit);
+      positions = await getOpenPositionsAsync({ chain, network, venue, user_address: userAddress });
     } else {
       // Default to open positions
-      positions = getOpenPositions({ chain, network, venue });
+      positions = await getOpenPositionsAsync({ chain, network, venue, user_address: userAddress });
     }
 
     res.json({ ok: true, positions });
