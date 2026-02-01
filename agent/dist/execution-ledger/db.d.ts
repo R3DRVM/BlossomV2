@@ -585,6 +585,19 @@ export declare function updateExecutionAsync(id: string, updates: {
     latencyMs?: number;
 }): Promise<void>;
 /**
+ * Async-capable position creation (uses Postgres if DATABASE_URL is set)
+ */
+export declare function createPositionAsync(input: CreatePositionInput): Promise<Position>;
+/**
+ * Async-capable get open positions (uses Postgres if DATABASE_URL is set)
+ */
+export declare function getOpenPositionsAsync(filters?: {
+    chain?: string;
+    network?: string;
+    venue?: string;
+    user_address?: string;
+}): Promise<Position[]>;
+/**
  * Finalize execution in atomic transaction
  * Creates execution row + updates intent status in single transaction
  * Ensures both writes persist before serverless function exits

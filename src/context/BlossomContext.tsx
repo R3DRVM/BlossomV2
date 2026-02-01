@@ -1289,10 +1289,13 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
         };
 
         // Use execution kernel
-        // Check for session dynamically - if user has session ID stored, use session mode
-        const sessionKey = `blossom_session_${userAddress.toLowerCase()}`;
-        const hasSession = typeof window !== 'undefined' && localStorage.getItem(sessionKey);
-        const dynamicAuthMode = hasSession ? 'session' : executionAuthMode;
+        // Check for session dynamically using same logic as UI (isSessionEnabled)
+        const enabledKey = `blossom_oneclick_${userAddress.toLowerCase()}`;
+        const authorizedKey = `blossom_oneclick_auth_${userAddress.toLowerCase()}`;
+        const sessionEnabled = typeof window !== 'undefined' &&
+          localStorage.getItem(enabledKey) === 'true' &&
+          localStorage.getItem(authorizedKey) === 'true';
+        const dynamicAuthMode = sessionEnabled ? 'session' : executionAuthMode;
 
         const { executePlan } = await import('../lib/executionKernel');
         const result = await executePlan({

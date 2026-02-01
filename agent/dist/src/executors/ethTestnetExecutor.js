@@ -3,7 +3,7 @@
  * ETH Testnet Executor
  * Prepares execution plans and EIP-712 typed data for signing
  */
-import { EXECUTION_ROUTER_ADDRESS, MOCK_SWAP_ADAPTER_ADDRESS, UNISWAP_V3_ADAPTER_ADDRESS, UNISWAP_ADAPTER_ADDRESS, WETH_WRAP_ADAPTER_ADDRESS, ERC20_PULL_ADAPTER_ADDRESS, REDACTED_ADDRESS_SEPOLIA, WETH_ADDRESS_SEPOLIA, DEMO_REDACTED_ADDRESS, DEMO_WETH_ADDRESS, DEMO_LEND_VAULT_ADDRESS, DEMO_LEND_ADAPTER_ADDRESS, PROOF_ADAPTER_ADDRESS, DEMO_PERP_ADAPTER_ADDRESS, DEMO_PERP_ENGINE_ADDRESS, ETH_TESTNET_RPC_URL, ETH_TESTNET_CHAIN_ID, requireEthTestnetConfig, } from '../config';
+import { EXECUTION_ROUTER_ADDRESS, MOCK_SWAP_ADAPTER_ADDRESS, UNISWAP_V3_ADAPTER_ADDRESS, UNISWAP_ADAPTER_ADDRESS, WETH_WRAP_ADAPTER_ADDRESS, ERC20_PULL_ADAPTER_ADDRESS, REDACTED_ADDRESS_SEPOLIA, WETH_ADDRESS_SEPOLIA, DEMO_REDACTED_ADDRESS, DEMO_WETH_ADDRESS, DEMO_LEND_VAULT_ADDRESS, DEMO_LEND_ADAPTER_ADDRESS, PROOF_ADAPTER_ADDRESS, DEMO_PERP_ADAPTER_ADDRESS, DEMO_EVENT_ADAPTER_ADDRESS, ETH_TESTNET_RPC_URL, ETH_TESTNET_CHAIN_ID, requireEthTestnetConfig, } from '../config';
 import { getSwapQuote, getSwapRoutingDecision } from '../quotes/evmQuote';
 import { getLendingRoutingDecision } from '../quotes/lendingQuote';
 import { erc20_balanceOf, erc20_allowance } from './erc20Rpc';
@@ -17,18 +17,22 @@ export function executionRequestToIntent(executionRequest) {
     if (executionRequest.kind !== 'swap') {
         throw new Error('Only swap execution requests supported');
     }
-    if (!REDACTED_ADDRESS_SEPOLIA || !WETH_ADDRESS_SEPOLIA) {
-        throw new Error('Token addresses not configured');
+    // Use real addresses if configured, otherwise fallback to demo addresses
+    // This allows swap preparation to work when only demo tokens are configured
+    const usdcAddress = REDACTED_ADDRESS_SEPOLIA || DEMO_REDACTED_ADDRESS;
+    const wethAddress = WETH_ADDRESS_SEPOLIA || DEMO_WETH_ADDRESS;
+    if (!usdcAddress || !wethAddress) {
+        throw new Error('Token addresses not configured (set REDACTED_ADDRESS_SEPOLIA/WETH_ADDRESS_SEPOLIA or DEMO_REDACTED_ADDRESS/DEMO_WETH_ADDRESS)');
     }
     // Determine token addresses
     const tokenInAddr = executionRequest.tokenIn === 'ETH'
         ? 'ETH' // Special case for native ETH
         : executionRequest.tokenIn === 'WETH'
-            ? WETH_ADDRESS_SEPOLIA.toLowerCase()
-            : REDACTED_ADDRESS_SEPOLIA.toLowerCase();
+            ? wethAddress.toLowerCase()
+            : usdcAddress.toLowerCase();
     const tokenOutAddr = executionRequest.tokenOut === 'WETH'
-        ? WETH_ADDRESS_SEPOLIA.toLowerCase()
-        : REDACTED_ADDRESS_SEPOLIA.toLowerCase();
+        ? wethAddress.toLowerCase()
+        : usdcAddress.toLowerCase();
     // Determine executionIntent
     let executionIntent;
     if (executionRequest.tokenIn === 'REDACTED' && executionRequest.tokenOut === 'WETH') {
@@ -191,11 +195,14 @@ export async function prepareEthTestnetExecution(args) {
         if (!UNISWAP_V3_ADAPTER_ADDRESS) {
             throw new Error('UNISWAP_V3_ADAPTER_ADDRESS not configured for funding route');
         }
-        if (!WETH_ADDRESS_SEPOLIA) {
-            throw new Error('WETH_ADDRESS_SEPOLIA not configured');
+        // Use real or demo token addresses (fallback to demo if real not configured)
+        const wethAddress = WETH_ADDRESS_SEPOLIA || DEMO_WETH_ADDRESS;
+        const usdcAddress = REDACTED_ADDRESS_SEPOLIA || DEMO_REDACTED_ADDRESS;
+        if (!wethAddress) {
+            throw new Error('WETH address not configured (set WETH_ADDRESS_SEPOLIA or DEMO_WETH_ADDRESS)');
         }
-        if (!REDACTED_ADDRESS_SEPOLIA) {
-            throw new Error('REDACTED_ADDRESS_SEPOLIA not configured');
+        if (!usdcAddress) {
+            throw new Error('REDACTED address not configured (set REDACTED_ADDRESS_SEPOLIA or DEMO_REDACTED_ADDRESS)');
         }
         const wrapAmount = requestAmountIn; // Already validated above
         // Step 1: WRAP action (ETH → WETH)
@@ -213,7 +220,7 @@ export async function prepareEthTestnetExecution(args) {
         };
         // Step 2: SWAP action (only if tokenOut is not WETH)
         if (executionRequest.tokenOut === 'REDACTED') {
-            const tokenOut = REDACTED_ADDRESS_SEPOLIA.toLowerCase();
+            const tokenOut = usdcAddress.toLowerCase();
             const fee = 3000; // 0.3% fee tier
             const amountOutMin = 0n; // No slippage protection for MVP
             const recipient = userAddress.toLowerCase();
@@ -227,7 +234,7 @@ export async function prepareEthTestnetExecution(args) {
                 { type: 'address' },
                 { type: 'uint256' },
             ], [
-                WETH_ADDRESS_SEPOLIA.toLowerCase(),
+                wethAddress.toLowerCase(),
                 tokenOut,
                 fee,
                 wrapAmount, // Use wrapped amount as swap input
@@ -272,14 +279,20 @@ export async function prepareEthTestnetExecution(args) {
         // Check execution mode: real vs demo
         const { EXECUTION_SWAP_MODE } = await import('../config');
         const useRealExecution = EXECUTION_SWAP_MODE === 'real';
-        // Check if this is a demo swap (using demo tokens)
-        // Demo swap is enabled when:
-        // 1. EXECUTION_SWAP_MODE !== 'real', AND
-        // 2. (executionKind === 'demo_swap', OR executionRequest specifies REDACTED/WETH swap with demo tokens configured)
-        const useDemoTokens = !useRealExecution && DEMO_REDACTED_ADDRESS && DEMO_WETH_ADDRESS && (isDemoSwap ||
+        // Check token configuration
+        const realTokensConfigured = !!(REDACTED_ADDRESS_SEPOLIA && WETH_ADDRESS_SEPOLIA);
+        const demoTokensConfigured = !!(DEMO_REDACTED_ADDRESS && DEMO_WETH_ADDRESS);
+        // Use demo tokens if:
+        // 1. Not real mode and demo tokens configured and (isDemoSwap or swap request matches), OR
+        // 2. Real mode requested but real tokens not configured, fallback to demo if available
+        const useDemoTokens = demoTokensConfigured && (
+        // Case 1: Explicitly not real mode
+        (!useRealExecution && (isDemoSwap ||
             (executionRequest && executionRequest.kind === 'swap' &&
                 ((executionRequest.tokenIn === 'REDACTED' && executionRequest.tokenOut === 'WETH') ||
-                    (executionRequest.tokenIn === 'WETH' && executionRequest.tokenOut === 'REDACTED'))));
+                    (executionRequest.tokenIn === 'WETH' && executionRequest.tokenOut === 'REDACTED'))))) ||
+            // Case 2: Real mode but real tokens missing - fallback to demo
+            (useRealExecution && !realTokensConfigured));
         // Determine token addresses (demo or real)
         let tokenIn;
         let tokenOut;
@@ -763,92 +776,162 @@ export async function prepareEthTestnetExecution(args) {
         }
     }
     else {
-        // Check if strategy is perp or event for proof-of-execution
-        // Also check executionRequest for perp/event intents
+        // Check if strategy is perp or event
         const isPerpStrategy = strategy?.instrumentType === 'perp' || executionKind === 'perp' ||
             (executionRequest && executionRequest.kind === 'perp');
-        const isEventStrategy = strategy?.instrumentType === 'event' || executionKind === 'event';
-        // MVP: Use real perp execution if DEMO_PERP_ADAPTER is configured
-        if (isPerpStrategy && DEMO_PERP_ADAPTER_ADDRESS && DEMO_PERP_ENGINE_ADDRESS) {
-            // Build REAL perp execution action via DemoPerpAdapter
-            const { encodeAbiParameters, parseAbiParameters } = await import('viem');
-            // Extract perp parameters
-            const market = executionRequest?.market || strategy?.market || 'BTC-USD';
-            const side = executionRequest?.side || strategy?.direction || 'long';
-            const leverage = executionRequest?.leverage || strategy?.leverage || 5;
-            const riskPct = executionRequest?.riskPct || strategy?.riskPercent || 3;
-            const marginUsd = executionRequest?.marginUsd || strategy?.marginUsd || 100;
-            // Map market string to enum value (BTC=0, ETH=1, SOL=2)
-            const marketMap = { 'BTC': 0, 'BTC-USD': 0, 'ETH': 1, 'ETH-USD': 1, 'SOL': 2, 'SOL-USD': 2 };
-            const marketEnum = marketMap[market.toUpperCase()] ?? 0;
-            // Map side to enum (long=0, short=1)
-            const sideEnum = side.toLowerCase() === 'long' ? 0 : 1;
-            // Calculate margin in DEMO_REDACTED units (6 decimals)
-            const marginAmount = BigInt(Math.floor(marginUsd * 1e6));
-            // Encode inner data for DemoPerpAdapter: (action, user, market, side, margin, leverage)
-            // action: 1 = OPEN_POSITION
-            const ACTION_OPEN = 1;
-            const perpInnerData = encodeAbiParameters(parseAbiParameters('uint8, address, uint8, uint8, uint256, uint256'), [ACTION_OPEN, userAddress.toLowerCase(), marketEnum, sideEnum, marginAmount, BigInt(leverage)]);
-            // Wrap for session mode
-            let perpData;
+        const isEventStrategy = strategy?.instrumentType === 'event' || executionKind === 'event' ||
+            (executionRequest && executionRequest.kind === 'event');
+        // Use demo adapters for real on-chain execution if configured
+        const useDemoPerpAdapter = isPerpStrategy && DEMO_PERP_ADAPTER_ADDRESS && DEMO_REDACTED_ADDRESS;
+        const useDemoEventAdapter = isEventStrategy && DEMO_EVENT_ADAPTER_ADDRESS && DEMO_REDACTED_ADDRESS;
+        if (useDemoPerpAdapter) {
+            // Build PERP action using DemoPerpAdapter (real on-chain execution)
+            const { encodeAbiParameters } = await import('viem');
+            // Parse perp parameters
+            const market = strategy?.market || executionRequest?.market || 'ETH-USD';
+            const side = strategy?.direction || executionRequest?.direction || 'long';
+            const leverage = strategy?.leverage || executionRequest?.leverage || 5;
+            const marginUsd = strategy?.marginUsd || strategy?.notionalUsd || executionRequest?.marginUsd || 100;
+            // Convert market to enum: BTC=0, ETH=1, SOL=2
+            const marketMap = { 'BTC-USD': 0, 'ETH-USD': 1, 'SOL-USD': 2, 'BTC': 0, 'ETH': 1, 'SOL': 2 };
+            const marketEnum = marketMap[market.toUpperCase()] ?? 1; // Default to ETH
+            // Convert side to enum: Long=0, Short=1
+            const sideEnum = side.toLowerCase() === 'short' ? 1 : 0;
+            // Convert margin to REDACTED units (6 decimals)
+            const marginAmount = parseUnits(marginUsd.toString(), 6);
+            // Build adapter data: (uint8 action, address user, uint8 market, uint8 side, uint256 margin, uint256 leverage)
+            const adapterData = encodeAbiParameters([{ type: 'uint8' }, { type: 'address' }, { type: 'uint8' }, { type: 'uint8' }, { type: 'uint256' }, { type: 'uint256' }], [1, userAddress.toLowerCase(), marketEnum, sideEnum, marginAmount, BigInt(leverage)]);
+            // Build router data: (address margin, uint256 amount, bytes adapterData)
+            const routerData = encodeAbiParameters([{ type: 'address' }, { type: 'uint256' }, { type: 'bytes' }], [DEMO_REDACTED_ADDRESS.toLowerCase(), marginAmount, adapterData]);
+            // Wrap for session mode if needed
+            let actionData;
             if (authMode === 'session') {
-                perpData = encodeAbiParameters([{ type: 'uint256' }, { type: 'bytes' }], [0n, perpInnerData]);
+                const maxSpendUnits = marginAmount / (100n * 10n ** 6n) + 1n;
+                actionData = encodeAbiParameters([{ type: 'uint256' }, { type: 'bytes' }], [maxSpendUnits, routerData]);
             }
             else {
-                perpData = perpInnerData;
+                actionData = routerData;
             }
-            summary = `${side.toUpperCase()} ${market} @ ${leverage}x leverage (${riskPct}% risk)`;
+            actions = [
+                {
+                    actionType: 7, // PERP (from PlanTypes.ActionType enum)
+                    adapter: DEMO_PERP_ADAPTER_ADDRESS.toLowerCase(),
+                    data: actionData,
+                },
+            ];
+            summary = `${side.toUpperCase()} ${market} @ ${leverage}x leverage ($${marginUsd} margin)`;
             routingMetadata = {
-                venue: `Perps: ${market}`,
+                venue: `DemoPerps: ${market}`,
                 chain: 'Sepolia',
                 settlementEstimate: '~1 block',
-                routingSource: 'demo_perp',
-                executionVenue: 'DemoPerpEngine on Sepolia',
-                executionNote: 'Real on-chain perp execution via DemoPerpAdapter.',
+                routingSource: 'demo',
+                executionVenue: 'DemoPerpEngine (on-chain)',
+                executionNote: 'Real on-chain perp execution via DemoPerpEngine.',
                 actionType: 'perp',
-                venueType: 1,
             };
-            // Check if user needs DEMO_REDACTED approval (non-blocking - wrapped in try-catch)
-            if (DEMO_REDACTED_ADDRESS && EXECUTION_ROUTER_ADDRESS && ETH_TESTNET_RPC_URL) {
+            // Check approval requirements
+            if (ETH_TESTNET_RPC_URL && EXECUTION_ROUTER_ADDRESS) {
                 try {
-                    const currentAllowance = await erc20_allowance(ETH_TESTNET_RPC_URL, DEMO_REDACTED_ADDRESS.toLowerCase(), userAddress.toLowerCase(), EXECUTION_ROUTER_ADDRESS.toLowerCase());
-                    if (currentAllowance < marginAmount) {
+                    const allowance = await erc20_allowance(DEMO_REDACTED_ADDRESS, userAddress, EXECUTION_ROUTER_ADDRESS);
+                    if (allowance < marginAmount) {
+                        if (!approvalRequirements)
+                            approvalRequirements = [];
                         approvalRequirements.push({
                             token: DEMO_REDACTED_ADDRESS,
-                            spender: EXECUTION_ROUTER_ADDRESS,
+                            spender: EXECUTION_ROUTER_ADDRESS.toLowerCase(),
                             amount: '0x' + marginAmount.toString(16),
                         });
                     }
                 }
-                catch (e) {
-                    warnings.push(`Could not verify DEMO_REDACTED approval: ${e.message}. User may need to approve manually.`);
+                catch (error) {
+                    warnings.push(`Could not verify perp approval: ${error.message}. Proceeding anyway.`);
                 }
+            }
+        }
+        else if (useDemoEventAdapter) {
+            // Build EVENT action using DemoEventAdapter (real on-chain execution)
+            const { encodeAbiParameters, keccak256, stringToBytes } = await import('viem');
+            // Parse event parameters
+            const marketId = (executionRequest && executionRequest.kind === 'event')
+                ? executionRequest.marketId
+                : (strategy?.market || 'demo-market');
+            const outcome = (executionRequest && executionRequest.kind === 'event')
+                ? executionRequest.outcome
+                : (strategy?.outcome || strategy?.direction || 'YES');
+            const stakeUsd = (executionRequest && executionRequest.kind === 'event')
+                ? executionRequest.stakeUsd
+                : (strategy?.stakeUsd || 5);
+            // Convert marketId to bytes32 (hash if string)
+            const marketIdBytes32 = marketId.startsWith('0x') && marketId.length === 66
+                ? marketId
+                : keccak256(stringToBytes(marketId));
+            // Convert stake to REDACTED units (6 decimals)
+            const stakeAmount = parseUnits(stakeUsd.toString(), 6);
+            // Determine action: 1=BUY_YES, 2=BUY_NO
+            const actionType = outcome.toUpperCase() === 'NO' ? 2 : 1;
+            // Build adapter data: (uint8 action, address user, bytes32 marketId, uint256 amount)
+            const adapterData = encodeAbiParameters([{ type: 'uint8' }, { type: 'address' }, { type: 'bytes32' }, { type: 'uint256' }], [actionType, userAddress.toLowerCase(), marketIdBytes32, stakeAmount]);
+            // Build router data: (address stake, uint256 amount, bytes adapterData)
+            const routerData = encodeAbiParameters([{ type: 'address' }, { type: 'uint256' }, { type: 'bytes' }], [DEMO_REDACTED_ADDRESS.toLowerCase(), stakeAmount, adapterData]);
+            // Wrap for session mode if needed
+            let actionData;
+            if (authMode === 'session') {
+                const maxSpendUnits = stakeAmount / (100n * 10n ** 6n) + 1n;
+                actionData = encodeAbiParameters([{ type: 'uint256' }, { type: 'bytes' }], [maxSpendUnits, routerData]);
+            }
+            else {
+                actionData = routerData;
             }
             actions = [
                 {
-                    actionType: 8, // EXECUTE (from PlanTypes.ActionType enum - for custom adapter calls)
-                    adapter: DEMO_PERP_ADAPTER_ADDRESS.toLowerCase(),
-                    data: perpData,
+                    actionType: 8, // EVENT (from PlanTypes.ActionType enum)
+                    adapter: DEMO_EVENT_ADAPTER_ADDRESS.toLowerCase(),
+                    data: actionData,
                 },
             ];
+            summary = `${outcome.toUpperCase()} on ${marketId} ($${stakeUsd} stake)`;
+            routingMetadata = {
+                venue: `DemoEvents: ${marketId}`,
+                chain: 'Sepolia',
+                settlementEstimate: '~1 block',
+                routingSource: 'demo',
+                executionVenue: 'DemoEventMarket (on-chain)',
+                executionNote: 'Real on-chain event market execution via DemoEventMarket.',
+                actionType: 'event',
+            };
+            // Check approval requirements
+            if (ETH_TESTNET_RPC_URL && EXECUTION_ROUTER_ADDRESS) {
+                try {
+                    const allowance = await erc20_allowance(DEMO_REDACTED_ADDRESS, userAddress, EXECUTION_ROUTER_ADDRESS);
+                    if (allowance < stakeAmount) {
+                        if (!approvalRequirements)
+                            approvalRequirements = [];
+                        approvalRequirements.push({
+                            token: DEMO_REDACTED_ADDRESS,
+                            spender: EXECUTION_ROUTER_ADDRESS.toLowerCase(),
+                            amount: '0x' + stakeAmount.toString(16),
+                        });
+                    }
+                }
+                catch (error) {
+                    warnings.push(`Could not verify event approval: ${error.message}. Proceeding anyway.`);
+                }
+            }
         }
         else if ((isPerpStrategy || isEventStrategy) && PROOF_ADAPTER_ADDRESS) {
-            // Fallback: Build proof-of-execution action for perps (when no adapter) or events
-            const { encodeAbiParameters, keccak256, toBytes, stringToBytes } = await import('viem');
+            // Fallback: Build proof-of-execution action when demo adapters not configured
+            const { encodeAbiParameters, keccak256, stringToBytes } = await import('viem');
             // Determine venue type: 1 = perps, 2 = event
             const venueType = isPerpStrategy ? 1 : 2;
             // Build canonical intent payload for hashing
             let intentPayload;
             let summaryText;
             if (isPerpStrategy) {
-                // Perp intent: market, side, leverage, riskPercent, marginUsd/notionalUsd
                 const market = strategy?.market || 'ETH-USD';
                 const side = strategy?.direction || 'long';
                 const leverage = strategy?.leverage || 1;
                 const riskPct = strategy?.riskPercent || 3;
                 const marginUsd = strategy?.marginUsd || strategy?.notionalUsd || 100;
-                const tp = strategy?.takeProfitPrice || '';
-                const sl = strategy?.stopLossPrice || '';
                 intentPayload = JSON.stringify({
                     type: 'perp',
                     market,
@@ -856,26 +939,22 @@ export async function prepareEthTestnetExecution(args) {
                     leverage,
                     riskPct,
                     marginUsd,
-                    tp,
-                    sl,
                     timestamp: Math.floor(Date.now() / 1000),
                 });
                 summaryText = `PERP:${market}-${side.toUpperCase()}-${leverage}x-${riskPct}%`;
-                summary = `${side.toUpperCase()} ${market} @ ${leverage}x leverage (${riskPct}% risk)`;
+                summary = `${side.toUpperCase()} ${market} @ ${leverage}x leverage (${riskPct}% risk) [PROOF]`;
                 routingMetadata = {
                     venue: `Perps: ${market}`,
                     chain: 'Sepolia',
                     settlementEstimate: '~1 block',
                     routingSource: 'proof',
-                    executionVenue: 'On-chain proof (venue execution simulated)',
-                    executionNote: 'Proof-of-execution recorded. Real perp execution coming soon.',
+                    executionVenue: 'On-chain proof (demo adapters not configured)',
+                    executionNote: 'Proof-of-execution recorded. Configure DEMO_PERP_ADAPTER_ADDRESS for real execution.',
                     actionType: 'perp',
                     venueType,
                 };
             }
             else {
-                // Event intent: marketId, outcome, stakeUsd
-                // Get from executionRequest if available, else from strategy
                 const marketId = (executionRequest && executionRequest.kind === 'event')
                     ? executionRequest.marketId
                     : (strategy?.market || 'fed-rate-cut');
@@ -885,37 +964,29 @@ export async function prepareEthTestnetExecution(args) {
                 const stakeUsd = (executionRequest && executionRequest.kind === 'event')
                     ? executionRequest.stakeUsd
                     : (strategy?.stakeUsd || 5);
-                const price = (executionRequest && executionRequest.kind === 'event')
-                    ? executionRequest.price
-                    : undefined;
                 intentPayload = JSON.stringify({
                     type: 'event',
                     marketId,
                     outcome,
                     stakeUsd,
-                    price,
                     timestamp: Math.floor(Date.now() / 1000),
                 });
                 summaryText = `EVENT:${marketId}-${outcome}-${stakeUsd}USD`;
-                summary = `${outcome} on ${marketId} ($${stakeUsd} stake)`;
+                summary = `${outcome} on ${marketId} ($${stakeUsd} stake) [PROOF]`;
                 routingMetadata = {
                     venue: `Event: ${marketId}`,
                     chain: 'Sepolia',
                     settlementEstimate: '~1 block',
                     routingSource: 'proof',
-                    executionVenue: 'On-chain proof (venue execution simulated)',
-                    executionNote: 'Proof-of-execution recorded. Real event market execution coming soon.',
+                    executionVenue: 'On-chain proof (demo adapters not configured)',
+                    executionNote: 'Proof-of-execution recorded. Configure DEMO_EVENT_ADAPTER_ADDRESS for real execution.',
                     actionType: 'event',
                     venueType,
                 };
             }
-            // Hash the intent
             const intentHash = keccak256(stringToBytes(intentPayload));
-            // Truncate summary if needed
             const finalSummary = summaryText.slice(0, 160);
-            // Build proof action data
             const proofInnerData = encodeAbiParameters([{ type: 'address' }, { type: 'uint8' }, { type: 'bytes32' }, { type: 'string' }], [userAddress.toLowerCase(), venueType, intentHash, finalSummary]);
-            // Wrap for session mode if needed
             let proofData;
             if (authMode === 'session') {
                 proofData = encodeAbiParameters([{ type: 'uint256' }, { type: 'bytes' }], [0n, proofInnerData]);

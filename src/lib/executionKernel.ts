@@ -188,10 +188,17 @@ export async function executePlan(
   try {
     // For session mode, try relayed execution
     if (options?.executionAuthMode === 'session') {
-      // Get session ID from localStorage
-      const sessionId = typeof window !== 'undefined'
-        ? localStorage.getItem(`blossom_session_${params.userAddress?.toLowerCase()}`)
-        : null;
+      // Check session using the same keys the UI uses
+      const userAddr = params.userAddress?.toLowerCase();
+      const enabledKey = `blossom_oneclick_${userAddr}`;
+      const authorizedKey = `blossom_oneclick_auth_${userAddr}`;
+
+      const sessionEnabled = typeof window !== 'undefined' &&
+        localStorage.getItem(enabledKey) === 'true' &&
+        localStorage.getItem(authorizedKey) === 'true';
+
+      // For relayed execution, we use the address as the session identifier
+      const sessionId = sessionEnabled ? userAddr : null;
 
       if (!sessionId) {
         console.log(`${logPrefix} No session found, falling back to direct mode`);

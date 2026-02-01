@@ -55,7 +55,7 @@ import * as eventSim from '../plugins/event-sim';
 import { resetAllSims, getPortfolioSnapshot } from '../services/state';
 import { getOnchainTicker, getEventMarketsTicker } from '../services/ticker';
 import { logExecutionArtifact, getExecutionArtifacts } from '../utils/executionLogger';
-import { validateAccessCode, initializeAccessGate, checkAccess } from '../utils/accessGate';
+import { validateAccessCode, initializeAccessGate, getAllAccessCodes, createAccessCode, checkAccess } from '../utils/accessGate';
 import { logEvent, hashAddress } from '../telemetry/logger';
 import { waitForReceipt } from '../executors/evmReceipt';
 const app = express();
@@ -517,7 +517,7 @@ async function parseModelResponse(rawJson, isSwapPrompt = false, isDefiPrompt = 
         }
         // If model failed and we have a prompt, try deterministic fallback
         if (!modelOk && userMessage && (isSwapPrompt || isDefiPrompt || isPerpPrompt || isEventPrompt)) {
-            const fallback = await applyDeterministicFallback(userMessage, isSwapPrompt, isDefiPrompt, isPerpPrompt, isEventPrompt);
+            const fallback = await applyDeterministicFallback(userMessage, isSwapPrompt, isDefiPrompt, isPerpPrompt, isEventPrompt, portfolioForPrompt);
             if (fallback) {
                 return {
                     assistantMessage: `(Fallback planner) ${fallback.assistantMessage}`,
@@ -534,7 +534,7 @@ async function parseModelResponse(rawJson, isSwapPrompt = false, isDefiPrompt = 
         console.error('Raw JSON:', rawJson);
         // If parsing failed and we have a prompt, try deterministic fallback
         if (userMessage && (isSwapPrompt || isDefiPrompt || isPerpPrompt || isEventPrompt)) {
-            const fallback = await applyDeterministicFallback(userMessage, isSwapPrompt, isDefiPrompt, isPerpPrompt, isEventPrompt);
+            const fallback = await applyDeterministicFallback(userMessage, isSwapPrompt, isDefiPrompt, isPerpPrompt, isEventPrompt, portfolioForPrompt);
             if (fallback) {
                 return {
                     assistantMessage: `(Fallback planner) ${fallback.assistantMessage}`,
@@ -607,7 +607,7 @@ function normalizeUserInput(userMessage) {
 /**
  * Deterministic fallback for when LLM fails
  */
-async function applyDeterministicFallback(userMessage, isSwapPrompt, isDefiPrompt, isPerpPrompt = false, isEventPrompt = false) {
+async function applyDeterministicFallback(userMessage, isSwapPrompt, isDefiPrompt, isPerpPrompt = false, isEventPrompt = false, portfolio) {
     // Normalize input before parsing
     const normalizedMessage = normalizeUserInput(userMessage);
     const lowerMessage = normalizedMessage.toLowerCase();
@@ -641,11 +641,67 @@ async function applyDeterministicFallback(userMessage, isSwapPrompt, isDefiPromp
         const riskMatch = userMessage.match(/(\d+)%\s*risk/i) || userMessage.match(/risk.*?(\d+)%/i);
         const sideMatch = lowerMessage.match(/(long|short)/);
         const asset = assetMatch ? assetMatch[1].toUpperCase() : 'ETH';
-        const leverage = leverageMatch ? parseFloat(leverageMatch[1]) : 2;
+        let leverage = leverageMatch ? parseFloat(leverageMatch[1]) : 2;
         const riskPct = riskMatch ? parseFloat(riskMatch[1]) : 2;
         const side = sideMatch ? sideMatch[1] : 'long';
+        // P0 Fix: Check if user is asking for an execution plan (not immediate execution)
+        const isPlanRequest = /show\s*(me\s*)?(the\s+)?execution\s*plan|execution\s*plan|plan\s*across\s*venues|compare\s*venues/i.test(userMessage);
+        // P0 Fix: Clamp leverage to supported demo limits (1-20x)
+        const MAX_DEMO_LEVERAGE = 20;
+        const leverageWarning = leverage > MAX_DEMO_LEVERAGE
+            ? `Note: Requested ${leverage}x leverage exceeds demo max (${MAX_DEMO_LEVERAGE}x). Using ${MAX_DEMO_LEVERAGE}x instead.\n\n`
+            : '';
+        leverage = Math.min(leverage, MAX_DEMO_LEVERAGE);
+        // Supported markets in demo
+        const SUPPORTED_MARKETS = ['BTC', 'ETH', 'SOL'];
+        const isMarketSupported = SUPPORTED_MARKETS.includes(asset);
+        // If market not supported, suggest alternatives
+        if (!isMarketSupported) {
+            return {
+                assistantMessage: `**${asset} perps aren't available in the Sepolia demo yet.**\n\n` +
+                    `I can trade these markets:\n` +
+                    `• **BTC-USD** - Long/Short Bitcoin\n` +
+                    `• **ETH-USD** - Long/Short Ethereum\n` +
+                    `• **SOL-USD** - Long/Short Solana\n\n` +
+                    `Would you like me to open a ${side} position on ETH or BTC with ${leverage}x leverage instead?`,
+                actions: [],
+                executionRequest: null,
+            };
+        }
+        // Calculate margin based on risk and account value
+        const accountValue = portfolio?.accountValueUsd || 10000;
+        const marginUsd = Math.round((accountValue * riskPct) / 100);
+        // If asking for plan, provide a rich execution plan without auto-executing
+        if (isPlanRequest) {
+            const notionalUsd = marginUsd * leverage;
+            return {
+                assistantMessage: `**Execution Plan: ${side.toUpperCase()} ${asset} Perp**\n\n` +
+                    leverageWarning +
+                    `**Position Details:**\n` +
+                    `• Market: ${asset}-USD\n` +
+                    `• Side: ${side.charAt(0).toUpperCase() + side.slice(1)}\n` +
+                    `• Leverage: ${leverage}x\n` +
+                    `• Risk: ${riskPct}% of account\n` +
+                    `• Margin: $${marginUsd.toLocaleString()}\n` +
+                    `• Notional: $${notionalUsd.toLocaleString()}\n\n` +
+                    `**Venue:** Demo Perp Adapter (Sepolia Testnet)\n\n` +
+                    `This is a demo execution - no real funds at risk.\n\n` +
+                    `Type "execute" or "confirm" to proceed with this trade.`,
+                actions: [],
+                executionRequest: {
+                    kind: 'perp',
+                    chain: 'sepolia',
+                    market: `${asset}-USD`,
+                    side: side,
+                    leverage,
+                    riskPct,
+                    marginUsd,
+                    planOnly: true, // Frontend should show this as a draft
+                },
+            };
+        }
         return {
-            assistantMessage: `I'll open a ${side} ${asset} perp position with ${leverage}x leverage and ${riskPct}% risk.`,
+            assistantMessage: leverageWarning + `I'll open a ${side} ${asset} perp position with ${leverage}x leverage and ${riskPct}% risk.`,
             actions: [],
             executionRequest: {
                 kind: 'perp',
@@ -654,7 +710,7 @@ async function applyDeterministicFallback(userMessage, isSwapPrompt, isDefiPromp
                 side: side,
                 leverage,
                 riskPct,
-                marginUsd: 100,
+                marginUsd,
             },
         };
     }
@@ -705,15 +761,39 @@ async function applyDeterministicFallback(userMessage, isSwapPrompt, isDefiPromp
             console.log('[deterministic fallback] Parsed structured allocation:', { amount, vaultName, format: 'structured' });
         }
         else {
-            // FALLBACK: Natural language format: "deposit 500 REDACTED" or "park 10 usdc into yield"
-            const amountMatch = userMessage.match(/(\d+\.?\d*)\s*(?:usdc|dollar|into|in|to|for)?.*?(?:yield|vault|defi|aave|compound)/i) ||
-                userMessage.match(/(?:park|deposit|lend|supply)\s+(\d+\.?\d*)/i);
-            amount = amountMatch ? amountMatch[1] : '10';
-            // Get vault recommendation from DefiLlama
-            const { getVaultRecommendation } = await import('../quotes/defiLlamaQuote');
-            const vault = await getVaultRecommendation(parseFloat(amount));
-            vaultName = vault?.name;
-            console.log('[deterministic fallback] Parsed natural language allocation:', { amount, vaultName, format: 'natural' });
+            // FALLBACK: Natural language format with improved parsing (P0 Fix)
+            // Handles: "Deposit 10% of my REDACTED into X", "Deposit $500 REDACTED into X", etc.
+            // Check for percentage allocation first: "10%" or "10 percent"
+            const percentMatch = userMessage.match(/(\d+\.?\d*)\s*%\s*(?:of\s*(?:my\s*)?(?:usdc|balance|portfolio))?/i) ||
+                userMessage.match(/(\d+\.?\d*)\s*percent/i);
+            // Check for explicit protocol name in the message
+            const protocolMatch = userMessage.match(/(?:into|to|in|on)\s+([A-Za-z0-9\.\s]+?)(?:\s+(?:yield|vault|for)|$)/i);
+            const explicitProtocol = protocolMatch?.[1]?.trim();
+            if (percentMatch) {
+                // Percentage allocation: "Deposit 10% of my REDACTED into X"
+                const percentage = parseFloat(percentMatch[1]);
+                const accountValue = portfolio?.accountValueUsd || 10000;
+                const computedAmount = ((accountValue * percentage) / 100).toFixed(0);
+                amount = computedAmount;
+                vaultName = explicitProtocol || undefined;
+                console.log('[deterministic fallback] Parsed percentage allocation:', { percentage, amount, vaultName, format: 'natural-percent' });
+            }
+            else {
+                // Dollar amount: "Deposit $500 REDACTED into X" or "deposit 500 REDACTED"
+                const amountMatch = userMessage.match(/\$(\d+\.?\d*)/i) ||
+                    userMessage.match(/(\d+\.?\d*)\s*(?:usdc|dollar|into|in|to|for)?.*?(?:yield|vault|defi|aave|compound)/i) ||
+                    userMessage.match(/(?:park|deposit|lend|supply)\s+(\d+\.?\d*)/i);
+                amount = amountMatch ? amountMatch[1] : '10';
+                vaultName = explicitProtocol || undefined;
+                console.log('[deterministic fallback] Parsed dollar allocation:', { amount, vaultName, format: 'natural-dollar' });
+            }
+            // If no explicit protocol, get recommendation from DefiLlama
+            if (!vaultName) {
+                const { getVaultRecommendation } = await import('../quotes/defiLlamaQuote');
+                const vault = await getVaultRecommendation(parseFloat(amount));
+                vaultName = vault?.name;
+                console.log('[deterministic fallback] Using recommended vault:', { vaultName });
+            }
         }
         return {
             assistantMessage: `I'll allocate $${amount} to ${vaultName || 'yield vault'}. ${vaultName ? `Earning ~5-7% APY.` : 'Recommended: Aave REDACTED at 5.00% APY.'}`,
@@ -756,6 +836,120 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
         const portfolioForPrompt = clientPortfolio ? { ...portfolioBefore, ...clientPortfolio } : portfolioBefore;
         // Normalize user input first (handle edge cases like "5weth" → "5 weth")
         const normalizedUserMessage = normalizeUserInput(userMessage);
+        // =============================================================================
+        // CONVERSATIONAL BASELINE (P0 Fix: Friendly responses for common queries)
+        // =============================================================================
+        // These handlers provide instant, friendly responses without hitting the LLM
+        // for common conversational patterns that testers/users expect to work.
+        // 1. GREETINGS: "hi", "hello", "hey", "yo", "sup", "good morning", etc.
+        const GREETING_RE = /^(hi|hello|hey|yo|sup|howdy|hola|good\s*(morning|afternoon|evening)|what'?s?\s*up|greetings?)[\s!?.]*$/i;
+        if (GREETING_RE.test(normalizedUserMessage.trim())) {
+            console.log('[api/chat] Greeting detected - returning friendly response');
+            const portfolioAfter = buildPortfolioSnapshot();
+            const usdcBalance = portfolioAfter.balances.find(b => b.symbol === 'REDACTED')?.balanceUsd || 0;
+            let greeting = "Hi! I'm Blossom, your AI trading copilot. ";
+            if (usdcBalance > 0) {
+                greeting += `You have $${usdcBalance.toLocaleString()} REDACTED ready to deploy.\n\n`;
+            }
+            else {
+                greeting += "It looks like you don't have any tokens yet. Connect your wallet and visit the faucet to get test tokens.\n\n";
+            }
+            greeting += "Here's what I can help with:\n";
+            greeting += "• **Swaps**: 'Swap 10 REDACTED to WETH'\n";
+            greeting += "• **Perps**: 'Long ETH with 3x leverage'\n";
+            greeting += "• **DeFi Yield**: 'Deposit 100 REDACTED into Aave'\n";
+            greeting += "• **Prediction Markets**: 'Bet $20 YES on Fed rate cut'\n\n";
+            greeting += "What would you like to do?";
+            return res.json({
+                ok: true,
+                assistantMessage: greeting,
+                actions: [],
+                executionRequest: null,
+                modelOk: true,
+                portfolio: portfolioAfter,
+                executionResults: [],
+            });
+        }
+        // 2. BALANCE QUERIES: "what's my balance", "whats my balance", "balance", "how much do i have"
+        const BALANCE_RE = /^(what'?s?\s*(my\s*)?(balance|money|funds|holdings)|my\s*balance|balance|how\s*much\s*(do\s*i\s*have|money)|show\s*(my\s*)?(balance|funds))[\s?!]*$/i;
+        if (BALANCE_RE.test(normalizedUserMessage.trim())) {
+            console.log('[api/chat] Balance query detected');
+            const portfolioAfter = buildPortfolioSnapshot();
+            const balances = portfolioAfter.balances || [];
+            // Check if we have client portfolio with real balances
+            const hasRealBalances = clientPortfolio?.balances?.length > 0 || balances.some(b => b.balanceUsd > 0);
+            if (!hasRealBalances) {
+                // No wallet connected or no balances
+                const response = "I don't see any token balances yet. Here's what you can do:\n\n" +
+                    "1. **Connect your wallet** using the button in the top right\n" +
+                    "2. **Get test tokens** from the Sepolia faucet\n" +
+                    "3. Once you have tokens, I can help you swap, trade, or earn yield!\n\n" +
+                    "Need help getting started? Just ask!";
+                return res.json({
+                    ok: true,
+                    assistantMessage: response,
+                    actions: [],
+                    executionRequest: null,
+                    modelOk: true,
+                    portfolio: portfolioAfter,
+                    executionResults: [],
+                });
+            }
+            // Build balance response
+            let response = "**Your Current Balances:**\n\n";
+            const displayBalances = clientPortfolio?.balances?.length > 0 ? clientPortfolio.balances : balances;
+            for (const bal of displayBalances) {
+                if (bal.balanceUsd > 0) {
+                    response += `• ${bal.symbol}: $${bal.balanceUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\n`;
+                }
+            }
+            const totalValue = displayBalances.reduce((sum, b) => sum + (b.balanceUsd || 0), 0);
+            response += `\n**Total:** $${totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\n\n`;
+            response += "What would you like to do with your tokens?";
+            return res.json({
+                ok: true,
+                assistantMessage: response,
+                actions: [],
+                executionRequest: null,
+                modelOk: true,
+                portfolio: portfolioAfter,
+                executionResults: [],
+            });
+        }
+        // 3. HELP/CAPABILITY QUERIES: "help", "what can you do", "how do you work"
+        const HELP_RE = /^(help|what\s*can\s*you\s*(do|help\s*with)|how\s*(do\s*you\s*work|does\s*this\s*work)|what\s*are\s*you|who\s*are\s*you|getting\s*started|how\s*to\s*(start|begin|use))[\s?!]*$/i;
+        if (HELP_RE.test(normalizedUserMessage.trim())) {
+            console.log('[api/chat] Help query detected');
+            const portfolioAfter = buildPortfolioSnapshot();
+            const response = "I'm Blossom, your AI trading copilot! Here's what I can help with:\n\n" +
+                "**🔄 Swaps**\n" +
+                "• 'Swap 100 REDACTED to WETH'\n" +
+                "• 'Convert 0.1 ETH to REDACTED'\n\n" +
+                "**📈 Perpetual Trading**\n" +
+                "• 'Long ETH with 5x leverage using 3% risk'\n" +
+                "• 'Short BTC 10x with $50 margin'\n\n" +
+                "**💰 DeFi Yield**\n" +
+                "• 'Deposit 500 REDACTED into Aave'\n" +
+                "• 'Show me top DeFi protocols by TVL'\n\n" +
+                "**🎯 Prediction Markets**\n" +
+                "• 'Bet $20 YES on Fed rate cut'\n" +
+                "• 'Show top Polymarket events'\n\n" +
+                "**📊 Portfolio**\n" +
+                "• 'What's my balance?'\n" +
+                "• 'Show my positions'\n" +
+                "• 'What's my exposure?'\n\n" +
+                "Just type what you want to do in plain English!";
+            return res.json({
+                ok: true,
+                assistantMessage: response,
+                actions: [],
+                executionRequest: null,
+                modelOk: true,
+                portfolio: portfolioAfter,
+                executionResults: [],
+            });
+        }
+        // =============================================================================
         // CRITICAL: Detect DeFi TVL query FIRST (before LLM call)
         // Matches: "show me top 5 defi protocols by TVL", "list top defi protocols", etc.
         const LIST_DEFI_PROTOCOLS_RE = /\b(show\s+me\s+)?(top\s+(\d+)\s+)?(defi\s+)?protocols?\s+(by\s+)?(tvl|total\s+value\s+locked)\b/i;
@@ -802,14 +996,159 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
                 });
             }
         }
+        // CRITICAL: Detect Price Query FIRST (before LLM call)
+        // Matches: "what is ETH price", "btc price right now", "wuts btc doin", "eth price?", etc.
+        const PRICE_QUERY_RE = /\b(what('?s|\s+is)?\s+)?(the\s+)?(current\s+)?(eth|btc|sol|bitcoin|ethereum|solana)\s*(price|value|worth|cost|rate|doin|doing)?\s*(right\s+now|rn|today|currently)?\s*\??$/i;
+        const SLANG_PRICE_RE = /\b(wut|wuts|whats|wat|how\s+much)\s+(is\s+)?(eth|btc|sol|bitcoin|ethereum|solana)\s*(doing|doin|worth|at|rn|right\s+now)?\b/i;
+        // Matches: "is sol pumping", "is eth up", "is btc down today", "how is eth doing"
+        const PUMP_PRICE_RE = /\b(is|how\s+is)\s+(eth|btc|sol|bitcoin|ethereum|solana)\s+(pumping|dumping|up|down|doing|mooning|crashing|performing)\s*(today|rn|right\s+now|currently)?\s*\??$/i;
+        const hasPriceQueryIntent = PRICE_QUERY_RE.test(normalizedUserMessage) || SLANG_PRICE_RE.test(normalizedUserMessage) || PUMP_PRICE_RE.test(normalizedUserMessage);
+        if (hasPriceQueryIntent) {
+            console.log('[api/chat] Price query detected');
+            // Extract which asset(s) user is asking about
+            const ethMatch = /\b(eth|ethereum)\b/i.test(normalizedUserMessage);
+            const btcMatch = /\b(btc|bitcoin)\b/i.test(normalizedUserMessage);
+            const solMatch = /\b(sol|solana)\b/i.test(normalizedUserMessage);
+            try {
+                const { getPrice } = await import('../services/prices');
+                const prices = [];
+                if (ethMatch) {
+                    const ethPrice = await getPrice('ETH');
+                    prices.push({ symbol: 'ETH', priceUsd: ethPrice.priceUsd, source: ethPrice.source || 'coingecko' });
+                }
+                if (btcMatch) {
+                    const btcPrice = await getPrice('BTC');
+                    prices.push({ symbol: 'BTC', priceUsd: btcPrice.priceUsd, source: btcPrice.source || 'coingecko' });
+                }
+                if (solMatch) {
+                    const solPrice = await getPrice('SOL');
+                    prices.push({ symbol: 'SOL', priceUsd: solPrice.priceUsd, source: solPrice.source || 'coingecko' });
+                }
+                // Default to ETH if no specific match
+                if (prices.length === 0) {
+                    const ethPrice = await getPrice('ETH');
+                    prices.push({ symbol: 'ETH', priceUsd: ethPrice.priceUsd, source: ethPrice.source || 'coingecko' });
+                }
+                const timestamp = new Date().toISOString();
+                const priceLines = prices.map(p => `${p.symbol}: $${p.priceUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`).join('\n');
+                const sources = [...new Set(prices.map(p => p.source))].join(', ');
+                const portfolioAfter = buildPortfolioSnapshot();
+                return res.json({
+                    ok: true,
+                    assistantMessage: `${priceLines}\n\nSource: ${sources} | Updated: ${timestamp}`,
+                    actions: [],
+                    executionRequest: null,
+                    modelOk: true,
+                    portfolio: portfolioAfter,
+                    executionResults: [],
+                    priceData: prices.map(p => ({ ...p, timestamp })),
+                });
+            }
+            catch (error) {
+                console.error('[api/chat] Failed to fetch price:', error.message);
+                const portfolioAfter = buildPortfolioSnapshot();
+                return res.json({
+                    ok: false,
+                    assistantMessage: "I couldn't fetch the current price. Please try again.",
+                    actions: [],
+                    executionRequest: null,
+                    modelOk: false,
+                    portfolio: portfolioAfter,
+                    executionResults: [],
+                });
+            }
+        }
+        // CRITICAL: Detect Position/Exposure Query FIRST (before LLM call)
+        // Matches: "show my positions", "current exposure", "closest to liquidation", etc.
+        const POSITION_QUERY_RE = /\b(show|display|what('?s|'re|\s+are)?|list|get)\s+(my\s+)?(current\s+)?(positions?|exposure|holdings?|portfolio|balances?)\b/i;
+        const LIQUIDATION_QUERY_RE = /\b(closest|nearest|which)\s+(to\s+)?(liquidation|liq)\b/i;
+        const EXPOSURE_QUERY_RE = /\b(my\s+)?(current\s+)?(perp\s+)?exposure\b/i;
+        const hasPositionQueryIntent = POSITION_QUERY_RE.test(normalizedUserMessage) ||
+            LIQUIDATION_QUERY_RE.test(normalizedUserMessage) ||
+            EXPOSURE_QUERY_RE.test(normalizedUserMessage);
+        if (hasPositionQueryIntent) {
+            console.log('[api/chat] Position/exposure query detected');
+            // Use clientPortfolio if available, otherwise use server-side portfolio
+            const portfolio = clientPortfolio || portfolioBefore;
+            const balances = Array.isArray(portfolio.balances) ? portfolio.balances : [];
+            const defiPositions = Array.isArray(portfolio.defiPositions) ? portfolio.defiPositions : [];
+            const strategies = Array.isArray(portfolio.strategies) ? portfolio.strategies : [];
+            const perpExposure = portfolio.openPerpExposureUsd || 0;
+            const eventExposure = portfolio.eventExposureUsd || 0;
+            // Build response based on query type
+            let responseMessage = '';
+            if (LIQUIDATION_QUERY_RE.test(normalizedUserMessage)) {
+                // Find position closest to liquidation
+                const activePerps = strategies.filter((s) => s.status === 'active' && s.instrumentType === 'perp');
+                if (activePerps.length === 0) {
+                    responseMessage = "You don't have any active perp positions that could be liquidated.";
+                }
+                else {
+                    // Sort by distance to liquidation (simplified: higher leverage = closer to liq)
+                    const sorted = [...activePerps].sort((a, b) => (b.leverage || 1) - (a.leverage || 1));
+                    const closest = sorted[0];
+                    responseMessage = `Your position closest to liquidation:\n\n` +
+                        `**${closest.side || 'Long'} ${closest.market || 'ETH-USD'}** @ ${closest.leverage || 1}x\n` +
+                        `Entry: $${closest.entry?.toLocaleString() || 'N/A'}\n` +
+                        `Size: $${closest.notionalUsd?.toLocaleString() || 'N/A'}\n` +
+                        `PnL: ${closest.unrealizedPnlUsd >= 0 ? '+' : ''}$${closest.unrealizedPnlUsd?.toFixed(2) || '0.00'}`;
+                }
+            }
+            else if (EXPOSURE_QUERY_RE.test(normalizedUserMessage)) {
+                responseMessage = `**Current Exposure:**\n\n` +
+                    `Perp Exposure: $${perpExposure.toLocaleString()}\n` +
+                    `Event Exposure: $${eventExposure.toLocaleString()}\n` +
+                    `Total: $${(perpExposure + eventExposure).toLocaleString()}`;
+            }
+            else {
+                // General positions query
+                const positionLines = [];
+                if (balances.length > 0) {
+                    positionLines.push('**Balances:**');
+                    balances.slice(0, 5).forEach((b) => {
+                        positionLines.push(`  ${b.symbol}: $${(b.balanceUsd || 0).toLocaleString()}`);
+                    });
+                }
+                if (defiPositions.length > 0) {
+                    positionLines.push('\n**DeFi Positions:**');
+                    defiPositions.slice(0, 5).forEach((p) => {
+                        positionLines.push(`  ${p.protocol} ${p.type}: $${(p.valueUsd || 0).toLocaleString()} (${p.asset})`);
+                    });
+                }
+                const activeStrategies = strategies.filter((s) => s.status === 'active');
+                if (activeStrategies.length > 0) {
+                    positionLines.push('\n**Active Positions:**');
+                    activeStrategies.slice(0, 5).forEach((s) => {
+                        const pnl = s.unrealizedPnlUsd || 0;
+                        positionLines.push(`  ${s.side || 'Long'} ${s.market}: $${(s.notionalUsd || 0).toLocaleString()} (${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)})`);
+                    });
+                }
+                if (positionLines.length === 0) {
+                    responseMessage = "You don't have any positions yet. Try:\n- 'Swap 10 REDACTED to WETH'\n- 'Long BTC with 3x leverage'\n- 'Deposit 100 REDACTED for yield'";
+                }
+                else {
+                    responseMessage = positionLines.join('\n');
+                }
+            }
+            const portfolioAfter = buildPortfolioSnapshot();
+            return res.json({
+                ok: true,
+                assistantMessage: responseMessage,
+                actions: [],
+                executionRequest: null,
+                modelOk: true,
+                portfolio: portfolioAfter,
+                executionResults: [],
+            });
+        }
         // CRITICAL: Detect Event Markets list query FIRST (before LLM call)
         // Matches: "show me top 5 prediction markets by volume", "top event markets", etc.
-        const LIST_EVENT_MARKETS_RE = /\b(show\s+me\s+)?(top\s+(\d+)\s+)?(prediction|event)\s+markets?\s*(by\s+)?(volume|tvl)?\b/i;
+        const LIST_EVENT_MARKETS_RE = /\b(show\s+me\s+)?(top\s+(\d+)\s+)?(prediction|pred|event)\s+markets?\s*(by\s+)?(volume|tvl)?\b/i;
         const hasListEventMarketsIntent = LIST_EVENT_MARKETS_RE.test(normalizedUserMessage) ||
-            /\b(list|show|display|fetch|get|explore)\s+(top|best|highest)\s+(\d+)?\s*(prediction|event)\s+markets?\b/i.test(normalizedUserMessage) ||
-            /\b(best\s+prediction|top\s+prediction|top\s+event|explore\s+top\s+markets)\b/i.test(normalizedUserMessage) ||
-            /\b(top\s+5\s+prediction|top\s+prediction\s+markets|prediction\s+markets\s+by\s+volume)\b/i.test(normalizedUserMessage) ||
-            /\b(show\s+me\s+top\s+prediction\s+markets?)\b/i.test(normalizedUserMessage);
+            /\b(list|show|display|fetch|get|explore)\s+(top|best|highest)\s+(\d+)?\s*(prediction|pred|event)\s+markets?\b/i.test(normalizedUserMessage) ||
+            /\b(best\s+prediction|top\s+prediction|top\s+pred|top\s+event|explore\s+top\s+markets)\b/i.test(normalizedUserMessage) ||
+            /\b(top\s+5\s+prediction|top\s+prediction\s+markets|prediction\s+markets\s+by\s+volume|top\s+pred\s+markets?)\b/i.test(normalizedUserMessage) ||
+            /\b(show\s+me\s+top\s+(prediction|pred)\s+markets?)\b/i.test(normalizedUserMessage);
         if (hasListEventMarketsIntent) {
             console.log('[api/chat] Event Markets list query detected - fetching top markets');
             // Extract requested count (default: 5)
@@ -1061,7 +1400,7 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
                     (!modelResponse.executionRequest && (normalizedIsSwapPrompt || normalizedIsDefiPrompt || normalizedIsPerpPrompt || normalizedIsEventPrompt));
                 if (needsFallback && (normalizedIsSwapPrompt || normalizedIsDefiPrompt || normalizedIsPerpPrompt || normalizedIsEventPrompt)) {
                     console.log('[api/chat] Triggering deterministic fallback for execution intent');
-                    const fallback = await applyDeterministicFallback(normalizedUserMessage, normalizedIsSwapPrompt, normalizedIsDefiPrompt, normalizedIsPerpPrompt, normalizedIsEventPrompt);
+                    const fallback = await applyDeterministicFallback(normalizedUserMessage, normalizedIsSwapPrompt, normalizedIsDefiPrompt, normalizedIsPerpPrompt, normalizedIsEventPrompt, portfolioForPrompt);
                     if (fallback) {
                         modelResponse = {
                             assistantMessage: fallback.assistantMessage,
@@ -1078,7 +1417,7 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
                 console.error('LLM call or parsing error:', error.message);
                 // Try deterministic fallback before giving up
                 if (normalizedIsSwapPrompt || normalizedIsDefiPrompt || normalizedIsPerpPrompt || normalizedIsEventPrompt) {
-                    const fallback = await applyDeterministicFallback(normalizedUserMessage, normalizedIsSwapPrompt, normalizedIsDefiPrompt, normalizedIsPerpPrompt, normalizedIsEventPrompt);
+                    const fallback = await applyDeterministicFallback(normalizedUserMessage, normalizedIsSwapPrompt, normalizedIsDefiPrompt, normalizedIsPerpPrompt, normalizedIsEventPrompt, portfolioForPrompt);
                     if (fallback) {
                         modelResponse = {
                             assistantMessage: fallback.assistantMessage,
@@ -2170,12 +2509,20 @@ app.get('/api/execute/preflight', async (req, res) => {
             allowedAdapters.push(AAVE_ADAPTER_ADDRESS.toLowerCase());
         }
         // Check perps configuration
-        const { DEMO_PERP_ADAPTER_ADDRESS, DEMO_PERP_ENGINE_ADDRESS } = await import('../config');
+        const { DEMO_PERP_ADAPTER_ADDRESS, DEMO_PERP_ENGINE_ADDRESS, DEMO_EVENT_ADAPTER_ADDRESS, DEMO_EVENT_ENGINE_ADDRESS } = await import('../config');
         const perpsEnabled = !!DEMO_PERP_ADAPTER_ADDRESS && routerOk;
+        const eventsRealEnabled = !!DEMO_EVENT_ADAPTER_ADDRESS && routerOk;
+        // Add demo perp and event adapters to allowlist for real on-chain execution
+        if (DEMO_PERP_ADAPTER_ADDRESS) {
+            allowedAdapters.push(DEMO_PERP_ADAPTER_ADDRESS.toLowerCase());
+        }
+        if (DEMO_EVENT_ADAPTER_ADDRESS) {
+            allowedAdapters.push(DEMO_EVENT_ADAPTER_ADDRESS.toLowerCase());
+        }
         // Venue availability flags for frontend execution routing
         const swapEnabled = adapterOk && routerOk && rpcOk;
         const lendingEnabled = lendingStatus.enabled && routerOk;
-        const eventsEnabled = true; // Events always available (proof-only mode)
+        const eventsEnabled = eventsRealEnabled || true; // Events always available (real or proof-only mode)
         // MVP: Collect missing env vars for debugging production parity issues
         const missingEnvVars = [];
         if (!EXECUTION_ROUTER_ADDRESS)
@@ -2192,6 +2539,15 @@ app.get('/api/execute/preflight', async (req, res) => {
             missingEnvVars.push('DFLOW_API_KEY');
         if (DFLOW_ENABLED && !DFLOW_EVENTS_MARKETS_PATH)
             missingEnvVars.push('DFLOW_EVENTS_MARKETS_PATH');
+        // Swap token configuration check (can use real OR demo addresses)
+        const { REDACTED_ADDRESS_SEPOLIA, WETH_ADDRESS_SEPOLIA, DEMO_REDACTED_ADDRESS, DEMO_WETH_ADDRESS } = await import('../config');
+        const swapTokenConfigOk = !!((REDACTED_ADDRESS_SEPOLIA && WETH_ADDRESS_SEPOLIA) ||
+            (DEMO_REDACTED_ADDRESS && DEMO_WETH_ADDRESS));
+        const swapTokenAddresses = {
+            usdc: REDACTED_ADDRESS_SEPOLIA || DEMO_REDACTED_ADDRESS || null,
+            weth: WETH_ADDRESS_SEPOLIA || DEMO_WETH_ADDRESS || null,
+            source: REDACTED_ADDRESS_SEPOLIA ? 'real' : DEMO_REDACTED_ADDRESS ? 'demo' : 'none',
+        };
         res.json({
             mode: 'eth_testnet',
             ok,
@@ -2207,6 +2563,8 @@ app.get('/api/execute/preflight', async (req, res) => {
             dflow: dflowStatus,
             // Venue availability flags for frontend execution routing
             swapEnabled,
+            swapTokenConfigOk,
+            swapTokenAddresses,
             perpsEnabled,
             lendingEnabled,
             eventsEnabled,
@@ -4393,6 +4751,237 @@ app.post('/api/demo/faucet', maybeCheckAccess, async (req, res) => {
     }
 });
 /**
+ * POST /api/demo/execute-direct
+ * Execute a plan directly via executeBySender (for automated testing)
+ * This endpoint bypasses session requirements and sends tx directly from relayer
+ * ONLY enabled in non-production environments
+ */
+app.post('/api/demo/execute-direct', maybeCheckAccess, async (req, res) => {
+    try {
+        // Safety: Only allow in development/testing or with explicit flag
+        const nodeEnv = process.env.NODE_ENV;
+        const allowDirect = (process.env.ALLOW_DIRECT_EXECUTION || '').trim();
+        console.log('[api/demo/execute-direct] ENV check:', { nodeEnv, allowDirect });
+        if (nodeEnv === 'production' && allowDirect !== 'true') {
+            return res.status(403).json({
+                ok: false,
+                error: 'Direct execution not allowed in production without ALLOW_DIRECT_EXECUTION=true',
+            });
+        }
+        const { EXECUTION_MODE, EXECUTION_ROUTER_ADDRESS, ETH_TESTNET_RPC_URL, RELAYER_PRIVATE_KEY } = await import('../config');
+        if (EXECUTION_MODE !== 'eth_testnet') {
+            return res.status(400).json({
+                ok: false,
+                error: 'Direct execution only available in eth_testnet mode',
+            });
+        }
+        if (!EXECUTION_ROUTER_ADDRESS || !ETH_TESTNET_RPC_URL || !RELAYER_PRIVATE_KEY) {
+            return res.status(503).json({
+                ok: false,
+                error: 'Direct execution not configured',
+                missing: [
+                    !EXECUTION_ROUTER_ADDRESS && 'EXECUTION_ROUTER_ADDRESS',
+                    !ETH_TESTNET_RPC_URL && 'ETH_TESTNET_RPC_URL',
+                    !RELAYER_PRIVATE_KEY && 'RELAYER_PRIVATE_KEY',
+                ].filter(Boolean),
+            });
+        }
+        const { plan, userAddress, useRelayerAsUser } = req.body;
+        if (!plan) {
+            return res.status(400).json({
+                ok: false,
+                error: 'plan is required',
+            });
+        }
+        // Validate plan structure
+        if (!plan.user || !plan.nonce || !plan.deadline || !Array.isArray(plan.actions) || plan.actions.length === 0) {
+            return res.status(400).json({
+                ok: false,
+                error: 'Invalid plan structure',
+                required: ['user', 'nonce', 'deadline', 'actions[]'],
+            });
+        }
+        // Import viem for encoding
+        const { createWalletClient, createPublicClient, http, encodeFunctionData } = await import('viem');
+        const { sepolia } = await import('viem/chains');
+        const { privateKeyToAccount } = await import('viem/accounts');
+        // Create relayer account to get address
+        const relayerAccount = privateKeyToAccount(RELAYER_PRIVATE_KEY);
+        const relayerAddress = relayerAccount.address.toLowerCase();
+        // If useRelayerAsUser is true, override plan.user with relayer address
+        // This allows testing execution without session
+        let effectivePlan = { ...plan };
+        if (useRelayerAsUser) {
+            console.log('[api/demo/execute-direct] Using relayer as plan user for testing');
+            effectivePlan.user = relayerAddress;
+        }
+        // Validate plan.user matches sender (relayer) for executeBySender
+        if (effectivePlan.user.toLowerCase() !== relayerAddress) {
+            return res.status(400).json({
+                ok: false,
+                error: 'executeBySender requires plan.user to match sender. Set useRelayerAsUser=true for testing.',
+                planUser: effectivePlan.user,
+                relayerAddress,
+            });
+        }
+        console.log('[api/demo/execute-direct] Executing plan for', effectivePlan.user);
+        console.log('[api/demo/execute-direct] Plan:', {
+            user: effectivePlan.user,
+            nonce: effectivePlan.nonce,
+            deadline: effectivePlan.deadline,
+            actionsCount: effectivePlan.actions.length,
+        });
+        // executeBySender ABI
+        const executeBySenderAbi = [
+            {
+                name: 'executeBySender',
+                type: 'function',
+                stateMutability: 'nonpayable',
+                inputs: [
+                    {
+                        name: 'plan',
+                        type: 'tuple',
+                        components: [
+                            { name: 'user', type: 'address' },
+                            { name: 'nonce', type: 'uint256' },
+                            { name: 'deadline', type: 'uint256' },
+                            {
+                                name: 'actions',
+                                type: 'tuple[]',
+                                components: [
+                                    { name: 'actionType', type: 'uint8' },
+                                    { name: 'adapter', type: 'address' },
+                                    { name: 'data', type: 'bytes' },
+                                ],
+                            },
+                        ],
+                    },
+                ],
+                outputs: [],
+            },
+        ];
+        // Encode the call with effectivePlan
+        const data = encodeFunctionData({
+            abi: executeBySenderAbi,
+            functionName: 'executeBySender',
+            args: [
+                {
+                    user: effectivePlan.user,
+                    nonce: BigInt(effectivePlan.nonce),
+                    deadline: BigInt(effectivePlan.deadline),
+                    actions: effectivePlan.actions.map((a) => ({
+                        actionType: a.actionType,
+                        adapter: a.adapter,
+                        data: a.data,
+                    })),
+                },
+            ],
+        });
+        console.log('[api/demo/execute-direct] Encoded data length:', data.length);
+        // Create clients (reuse relayerAccount)
+        const publicClient = createPublicClient({
+            chain: sepolia,
+            transport: http(ETH_TESTNET_RPC_URL),
+        });
+        const walletClient = createWalletClient({
+            account: relayerAccount,
+            chain: sepolia,
+            transport: http(ETH_TESTNET_RPC_URL),
+        });
+        // Handle approval requirements if provided in request
+        const approvalRequirements = req.body.approvalRequirements || [];
+        const approvalTxHashes = [];
+        if (useRelayerAsUser && approvalRequirements.length > 0) {
+            console.log('[api/demo/execute-direct] Processing', approvalRequirements.length, 'approval(s)...');
+            const approveAbi = [
+                {
+                    name: 'approve',
+                    type: 'function',
+                    stateMutability: 'nonpayable',
+                    inputs: [
+                        { name: 'spender', type: 'address' },
+                        { name: 'amount', type: 'uint256' },
+                    ],
+                    outputs: [{ type: 'bool' }],
+                },
+            ];
+            for (const approval of approvalRequirements) {
+                const { token, spender, amount } = approval;
+                console.log('[api/demo/execute-direct] Approving', token, 'for', spender);
+                const approveData = encodeFunctionData({
+                    abi: approveAbi,
+                    functionName: 'approve',
+                    args: [spender, BigInt(amount)],
+                });
+                const approveTxHash = await walletClient.sendTransaction({
+                    to: token,
+                    data: approveData,
+                });
+                console.log('[api/demo/execute-direct] Approval tx:', approveTxHash);
+                await publicClient.waitForTransactionReceipt({ hash: approveTxHash });
+                approvalTxHashes.push(approveTxHash);
+            }
+        }
+        // Estimate gas
+        let gasLimit;
+        try {
+            const estimatedGas = await publicClient.estimateGas({
+                to: EXECUTION_ROUTER_ADDRESS,
+                data: data,
+                account: relayerAccount,
+            });
+            gasLimit = estimatedGas * BigInt(120) / BigInt(100); // 1.2x multiplier
+            if (gasLimit > BigInt(12_000_000)) {
+                gasLimit = BigInt(12_000_000);
+            }
+            console.log('[api/demo/execute-direct] Gas estimate:', estimatedGas.toString());
+        }
+        catch (error) {
+            console.error('[api/demo/execute-direct] Gas estimation failed:', error.message);
+            return res.status(400).json({
+                ok: false,
+                error: 'Gas estimation failed - transaction would likely revert',
+                details: error.message,
+                approvalTxHashes: approvalTxHashes.length > 0 ? approvalTxHashes : undefined,
+            });
+        }
+        // Send transaction
+        const txHash = await walletClient.sendTransaction({
+            to: EXECUTION_ROUTER_ADDRESS,
+            data: data,
+            gas: gasLimit,
+        });
+        console.log('[api/demo/execute-direct] Transaction sent:', txHash);
+        // Wait for receipt
+        const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+        console.log('[api/demo/execute-direct] Transaction confirmed:', {
+            hash: txHash,
+            status: receipt.status,
+            gasUsed: receipt.gasUsed.toString(),
+        });
+        res.json({
+            ok: true,
+            success: receipt.status === 'success',
+            txHash,
+            approvalTxHashes: approvalTxHashes.length > 0 ? approvalTxHashes : undefined,
+            receipt: {
+                status: receipt.status,
+                gasUsed: receipt.gasUsed.toString(),
+                blockNumber: receipt.blockNumber.toString(),
+            },
+            explorerUrl: `https://sepolia.etherscan.io/tx/${txHash}`,
+        });
+    }
+    catch (error) {
+        console.error('[api/demo/execute-direct] Error:', error);
+        res.status(500).json({
+            ok: false,
+            error: 'Direct execution failed',
+            details: error.message,
+        });
+    }
+});
+/**
  * Health check endpoint
  * Simple endpoint that never depends on chain config - just confirms server is up
  */
@@ -5138,7 +5727,7 @@ app.get('/api/debug/contracts', async (req, res) => {
         });
     }
     try {
-        const { EXECUTION_MODE, EXECUTION_ROUTER_ADDRESS, MOCK_SWAP_ADAPTER_ADDRESS, UNISWAP_V3_ADAPTER_ADDRESS, ERC20_PULL_ADAPTER_ADDRESS, WETH_WRAP_ADAPTER_ADDRESS, DEMO_LEND_ADAPTER_ADDRESS, PROOF_ADAPTER_ADDRESS, AAVE_ADAPTER_ADDRESS, DEMO_PERP_ENGINE_ADDRESS, DEMO_PERP_ADAPTER_ADDRESS, DEMO_REDACTED_ADDRESS, DEMO_WETH_ADDRESS, DEMO_SWAP_ROUTER_ADDRESS, DEMO_LEND_VAULT_ADDRESS, ETH_TESTNET_RPC_URL, } = await import('../config');
+        const { EXECUTION_MODE, EXECUTION_ROUTER_ADDRESS, MOCK_SWAP_ADAPTER_ADDRESS, UNISWAP_V3_ADAPTER_ADDRESS, ERC20_PULL_ADAPTER_ADDRESS, WETH_WRAP_ADAPTER_ADDRESS, DEMO_LEND_ADAPTER_ADDRESS, PROOF_ADAPTER_ADDRESS, AAVE_ADAPTER_ADDRESS, DEMO_PERP_ENGINE_ADDRESS, DEMO_PERP_ADAPTER_ADDRESS, DEMO_EVENT_ENGINE_ADDRESS, DEMO_EVENT_ADAPTER_ADDRESS, DEMO_REDACTED_ADDRESS, DEMO_WETH_ADDRESS, DEMO_SWAP_ROUTER_ADDRESS, DEMO_LEND_VAULT_ADDRESS, ETH_TESTNET_RPC_URL, } = await import('../config');
         // Check allowlist status for each adapter
         const allowlistStatus = {};
         const adaptersToCheck = [
@@ -5150,6 +5739,7 @@ app.get('/api/debug/contracts', async (req, res) => {
             { name: 'PROOF_ADAPTER', address: PROOF_ADAPTER_ADDRESS },
             { name: 'AAVE_ADAPTER', address: AAVE_ADAPTER_ADDRESS },
             { name: 'DEMO_PERP_ADAPTER', address: DEMO_PERP_ADAPTER_ADDRESS },
+            { name: 'DEMO_EVENT_ADAPTER', address: DEMO_EVENT_ADAPTER_ADDRESS },
         ];
         if (EXECUTION_ROUTER_ADDRESS && ETH_TESTNET_RPC_URL) {
             const { eth_call } = await import('../executors/evmRpc');
@@ -6045,22 +6635,19 @@ app.get('/api/ledger/positions/recent', checkLedgerSecret, async (req, res) => {
  */
 app.get('/api/ledger/positions', checkLedgerSecret, async (req, res) => {
     try {
-        const { getOpenPositions, getPositionsByStatus } = await import('../../execution-ledger/db');
+        const { getOpenPositionsAsync } = await import('../../execution-ledger/db');
         const status = req.query.status;
         const chain = req.query.chain;
         const network = req.query.network;
         const venue = req.query.venue;
-        const limit = parseInt(req.query.limit) || 50;
+        const userAddress = req.query.userAddress;
         let positions;
         if (status === 'open') {
-            positions = getOpenPositions({ chain, network, venue });
-        }
-        else if (status === 'closed' || status === 'liquidated') {
-            positions = getPositionsByStatus(status, limit);
+            positions = await getOpenPositionsAsync({ chain, network, venue, user_address: userAddress });
         }
         else {
             // Default to open positions
-            positions = getOpenPositions({ chain, network, venue });
+            positions = await getOpenPositionsAsync({ chain, network, venue, user_address: userAddress });
         }
         res.json({ ok: true, positions });
     }
@@ -6135,6 +6722,38 @@ app.post('/api/access/verify', async (req, res) => {
     }
 });
 /**
+ * POST /api/access/validate
+ * Alias for /api/access/verify (frontend compatibility)
+ */
+app.post('/api/access/validate', async (req, res) => {
+    try {
+        const { code, walletAddress } = req.body;
+        if (!code) {
+            return res.json({ ok: false, valid: false, error: 'Access code required' });
+        }
+        const result = await validateAccessCode(code, walletAddress);
+        if (result.valid) {
+            // Issue gate pass cookie
+            const gatePass = `blossom_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+            res.cookie('blossom_gate_pass', gatePass, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === 'production',
+                sameSite: 'lax',
+                maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+            });
+            console.log('[access] Gate pass issued via /validate endpoint');
+            return res.json({ ok: true, valid: true });
+        }
+        else {
+            return res.json({ ok: false, valid: false, error: result.error || 'Invalid access code' });
+        }
+    }
+    catch (error) {
+        console.error('[access] Validation error:', error.message);
+        res.json({ ok: false, valid: false, error: 'Validation failed' });
+    }
+});
+/**
  * GET /api/access/status
  * Check if user has valid gate pass (public endpoint)
  */
@@ -6161,6 +6780,69 @@ app.get('/api/access/status', async (req, res) => {
     catch (error) {
         console.error('[access] Status check error:', error.message);
         res.json({ ok: false, authorized: false, error: 'Status check failed' });
+    }
+});
+/**
+ * POST /api/admin/access/generate
+ * Generate a new access code (admin-only endpoint)
+ * Protected by ADMIN_API_KEY environment variable
+ */
+app.post('/api/admin/access/generate', async (req, res) => {
+    try {
+        const adminKey = process.env.ADMIN_API_KEY;
+        const providedKey = req.headers['x-admin-key'] || req.headers['authorization']?.replace('Bearer ', '');
+        if (!adminKey) {
+            console.warn('[admin] ADMIN_API_KEY not configured');
+            return res.status(503).json({ ok: false, error: 'Admin API not configured' });
+        }
+        if (providedKey !== adminKey) {
+            console.warn('[admin] Invalid admin key attempt');
+            return res.status(403).json({ ok: false, error: 'Invalid admin key' });
+        }
+        const { maxUses = 1000, expiresInDays, metadata } = req.body;
+        const expiresAt = expiresInDays ? Math.floor(Date.now() / 1000) + (expiresInDays * 24 * 60 * 60) : null;
+        const accessCode = await createAccessCode(maxUses, expiresAt, metadata);
+        if (!accessCode) {
+            return res.status(500).json({ ok: false, error: 'Failed to create access code' });
+        }
+        console.log(`[admin] Created access code: ${accessCode.code.slice(0, 8)}...`);
+        res.json({
+            ok: true,
+            code: accessCode.code,
+            maxUses: accessCode.max_uses,
+            expiresAt: accessCode.expires_at,
+        });
+    }
+    catch (error) {
+        console.error('[admin] Generate code error:', error.message);
+        res.status(500).json({ ok: false, error: 'Failed to generate code' });
+    }
+});
+/**
+ * GET /api/admin/access/codes
+ * List all access codes (admin-only endpoint)
+ */
+app.get('/api/admin/access/codes', async (req, res) => {
+    try {
+        const adminKey = process.env.ADMIN_API_KEY;
+        const providedKey = req.headers['x-admin-key'] || req.headers['authorization']?.replace('Bearer ', '');
+        if (!adminKey) {
+            return res.status(503).json({ ok: false, error: 'Admin API not configured' });
+        }
+        if (providedKey !== adminKey) {
+            return res.status(403).json({ ok: false, error: 'Invalid admin key' });
+        }
+        const codes = await getAllAccessCodes();
+        // Mask codes for security (show only first 8 chars)
+        const maskedCodes = codes.map(c => ({
+            ...c,
+            code: `${c.code.slice(0, 12)}...`,
+        }));
+        res.json({ ok: true, codes: maskedCodes, count: codes.length });
+    }
+    catch (error) {
+        console.error('[admin] List codes error:', error.message);
+        res.status(500).json({ ok: false, error: 'Failed to list codes' });
     }
 });
 /**

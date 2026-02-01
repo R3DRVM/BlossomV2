@@ -24,6 +24,8 @@ export declare const DEMO_LEND_VAULT_ADDRESS: string | undefined;
 export declare const DEMO_LEND_ADAPTER_ADDRESS: string | undefined;
 export declare const DEMO_PERP_ENGINE_ADDRESS: Address | undefined;
 export declare const DEMO_PERP_ADAPTER_ADDRESS: Address | undefined;
+export declare const DEMO_EVENT_ENGINE_ADDRESS: Address | undefined;
+export declare const DEMO_EVENT_ADAPTER_ADDRESS: Address | undefined;
 export declare const PROOF_ADAPTER_ADDRESS: string | undefined;
 export declare const DFLOW_ENABLED: boolean;
 export declare const DFLOW_API_KEY: string | undefined;

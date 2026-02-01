@@ -12,6 +12,7 @@
  *
  * This orchestrator is honest about what's implemented vs. not.
  */
+import { DEMO_PERP_ADAPTER_ADDRESS } from '../config';
 /**
  * Helper to merge new metadata with existing metadata, preserving caller info (source, domain, runId).
  * This ensures that source tracking persists through all status updates.
@@ -335,15 +336,14 @@ export function routeIntent(parsed, preferredChain) {
                 executionType: 'real',
             };
         }
-        // If no adapter configured, still attempt real execution through demo venue
-        // Only fall back to proof_only if explicitly requested or venue unavailable
+        // If no adapter configured, use proof_only mode since we can't execute without the adapter
         if (targetChain === 'ethereum') {
             return {
                 chain: 'ethereum',
                 network: 'sepolia',
                 venue: 'demo_perp',
-                executionType: 'real',
-                warnings: ['DemoPerpAdapter not configured. Execution may require manual confirmation.'],
+                executionType: 'proof_only',
+                warnings: ['PROOF_ONLY: DEMO_PERP_ADAPTER_ADDRESS not configured. Set this env var for real perp execution.'],
             };
         }
         // Non-Ethereum chains get proof_only with explanation
@@ -596,10 +596,11 @@ export async function runIntent(intentText, options = {}) {
  * Used for confirm-mode flow where user reviews plan first
  */
 export async function executeIntentById(intentId) {
-    const { getIntent, updateIntentStatus, } = await import('../../execution-ledger/db');
+    // CRITICAL: Use async versions that support Postgres in production
+    const { getIntentAsync, updateIntentStatusAsync: updateIntentStatus, } = await import('../../execution-ledger/db');
     const now = Math.floor(Date.now() / 1000);
-    // Get the intent
-    const intent = getIntent(intentId);
+    // Get the intent (use async for Postgres support)
+    const intent = await getIntentAsync(intentId);
     if (!intent) {
         return {
             ok: false,
@@ -853,13 +854,12 @@ async function executeOffchain(intentId, parsed, route) {
  * Real on-chain execution with margin deposit and position opening
  */
 async function executePerpEthereum(intentId, parsed, route) {
-    const { getIntent, updateIntentStatus, finalizeExecutionTransactionAsync, } = await import('../../execution-ledger/db');
-    const { createPosition } = await import('../../execution-ledger/db');
+    const { getIntentAsync, updateIntentStatusAsync: updateIntentStatus, finalizeExecutionTransactionAsync, createPositionAsync, } = await import('../../execution-ledger/db');
     const { buildExplorerUrl } = await import('../ledger/ledger');
     const now = Math.floor(Date.now() / 1000);
     const startTime = Date.now();
     // Get intent's existing metadata to preserve caller info (source, domain, runId)
-    const intent = getIntent(intentId);
+    const intent = await getIntentAsync(intentId);
     const existingMetadataJson = intent?.metadata_json;
     // Import config
     const { RELAYER_PRIVATE_KEY, ETH_TESTNET_RPC_URL, DEMO_PERP_ADAPTER_ADDRESS, DEMO_REDACTED_ADDRESS, EXECUTION_ROUTER_ADDRESS, ERC20_PULL_ADAPTER_ADDRESS, } = await import('../config');
@@ -900,6 +900,21 @@ async function executePerpEthereum(intentId, parsed, route) {
             },
         };
     }
+    // Prepare execution data BEFORE try block so catch can access it
+    // fromAddress will be updated once account is created
+    const executionData = {
+        chain: 'ethereum',
+        network: 'sepolia',
+        kind: 'perp',
+        venue: 'demo_perp',
+        intent: parsed.rawParams.original || 'Perp position',
+        action: parsed.action,
+        fromAddress: '0x0000000000000000000000000000000000000000', // Updated below
+        token: 'DEMO_REDACTED',
+        amountDisplay: parsed.amount ? `${parsed.amount} REDACTED @ ${parsed.leverage}x` : undefined,
+        usdEstimate: estimateIntentUsd(parsed),
+        usdEstimateIsEstimate: true,
+    };
     try {
         // Import viem for transaction
         const { encodeFunctionData, parseAbi } = await import('viem');
@@ -907,23 +922,11 @@ async function executePerpEthereum(intentId, parsed, route) {
         // Use failover RPC clients for reliability
         const { createFailoverPublicClient, createFailoverWalletClient, executeWithFailover, } = await import('../providers/rpcProvider');
         const account = privateKeyToAccount(RELAYER_PRIVATE_KEY);
+        // Update fromAddress now that we have the account
+        executionData.fromAddress = account.address;
         // Create clients with failover support (includes retry and circuit breaker)
         const publicClient = createFailoverPublicClient();
         const walletClient = createFailoverWalletClient(account);
-        // Prepare execution data (will be created in atomic transaction after TX succeeds)
-        const executionData = {
-            chain: 'ethereum',
-            network: 'sepolia',
-            kind: 'perp',
-            venue: 'demo_perp',
-            intent: parsed.rawParams.original || 'Perp position',
-            action: parsed.action,
-            fromAddress: account.address,
-            token: 'DEMO_REDACTED',
-            amountDisplay: parsed.amount ? `${parsed.amount} REDACTED @ ${parsed.leverage}x` : undefined,
-            usdEstimate: estimateIntentUsd(parsed),
-            usdEstimateIsEstimate: true,
-        };
         // Map market string to enum value
         const marketMap = {
             'BTC': 0,
@@ -975,12 +978,47 @@ async function executePerpEthereum(intentId, parsed, route) {
             'function balanceOf(address account) external view returns (uint256)',
         ]);
         // Check balance
-        const balance = await publicClient.readContract({
+        let balance = await publicClient.readContract({
             address: DEMO_REDACTED_ADDRESS,
             abi: erc20Abi,
             functionName: 'balanceOf',
             args: [account.address],
         });
+        // Auto-mint DEMO_REDACTED if balance is insufficient (testnet demo feature)
+        if (balance < marginAmount) {
+            console.log(`[executePerpEthereum] Relayer balance ${balance} < needed ${marginAmount}, auto-minting...`);
+            const mintAbi = parseAbi(['function mint(address to, uint256 amount) external']);
+            const mintAmount = marginAmount * BigInt(10); // Mint 10x to cover future trades
+            try {
+                const mintTxHash = await walletClient.writeContract({
+                    address: DEMO_REDACTED_ADDRESS,
+                    abi: mintAbi,
+                    functionName: 'mint',
+                    args: [account.address, mintAmount],
+                });
+                console.log(`[executePerpEthereum] Mint tx submitted: ${mintTxHash}`);
+                // Wait for mint confirmation with short timeout (1 confirmation, 10s max)
+                await publicClient.waitForTransactionReceipt({
+                    hash: mintTxHash,
+                    timeout: 10000,
+                    confirmations: 1,
+                });
+                console.log(`[executePerpEthereum] Mint confirmed`);
+                // Re-check balance after mint
+                balance = await publicClient.readContract({
+                    address: DEMO_REDACTED_ADDRESS,
+                    abi: erc20Abi,
+                    functionName: 'balanceOf',
+                    args: [account.address],
+                });
+                console.log(`[executePerpEthereum] New balance: ${balance}`);
+            }
+            catch (mintError) {
+                console.error(`[executePerpEthereum] Auto-mint failed:`, mintError.message);
+                // Continue with original insufficient balance error if mint fails
+            }
+        }
+        // Final balance check after potential auto-mint
         if (balance < marginAmount) {
             // Pre-flight check failed - create execution record showing why
             const result = await finalizeExecutionTransactionAsync({
@@ -993,7 +1031,6 @@ async function executePerpEthereum(intentId, parsed, route) {
                 },
                 intentStatus: {
                     status: 'failed',
-                    failedAt: Math.floor(Date.now() / 1000),
                     failureStage: 'execute',
                     errorCode: 'INSUFFICIENT_BALANCE',
                     errorMessage: 'Insufficient DEMO_REDACTED balance for perp margin',
@@ -1028,7 +1065,7 @@ async function executePerpEthereum(intentId, parsed, route) {
             });
             await publicClient.waitForTransactionReceipt({
                 hash: approveTxHash,
-                timeout: 60000,
+                timeout: 15000,
             });
         }
         // Execute the perp position directly via adapter
@@ -1042,7 +1079,7 @@ async function executePerpEthereum(intentId, parsed, route) {
         // Wait for confirmation
         const receipt = await publicClient.waitForTransactionReceipt({
             hash: txHash,
-            timeout: 60000,
+            timeout: 15000,
         });
         const latencyMs = Date.now() - startTime;
         const explorerUrl = buildExplorerUrl('ethereum', 'sepolia', txHash);
@@ -1114,7 +1151,7 @@ async function executePerpEthereum(intentId, parsed, route) {
                 },
             });
             // Create position in ledger (indexer will also catch it, but this is faster)
-            createPosition({
+            await createPositionAsync({
                 chain: 'ethereum',
                 network: 'sepolia',
                 venue: 'demo_perp',
@@ -1162,7 +1199,6 @@ async function executePerpEthereum(intentId, parsed, route) {
                 },
                 intentStatus: {
                     status: 'failed',
-                    failedAt: Math.floor(Date.now() / 1000),
                     failureStage: 'confirm',
                     errorCode: 'TX_REVERTED',
                     errorMessage: 'Perp position transaction reverted on-chain',
@@ -1195,7 +1231,6 @@ async function executePerpEthereum(intentId, parsed, route) {
             },
             intentStatus: {
                 status: 'failed',
-                failedAt: Math.floor(Date.now() / 1000),
                 failureStage: 'execute',
                 errorCode: 'PERP_EXECUTION_ERROR',
                 errorMessage: error.message?.slice(0, 200),
@@ -1219,10 +1254,10 @@ async function executePerpEthereum(intentId, parsed, route) {
  * Records intent on-chain with txHash and explorerUrl
  */
 async function executeProofOnly(intentId, parsed, route) {
-    const { getIntent, updateIntentStatusAsync, createExecutionAsync, updateExecutionAsync, linkExecutionToIntentAsync, } = await import('../../execution-ledger/db');
+    const { getIntentAsync, updateIntentStatusAsync, createExecutionAsync, updateExecutionAsync, linkExecutionToIntentAsync, } = await import('../../execution-ledger/db');
     const { buildExplorerUrl } = await import('../ledger/ledger');
     // Get intent's existing metadata to preserve caller info (source, domain, runId)
-    const intent = getIntent(intentId);
+    const intent = await getIntentAsync(intentId);
     const existingMetadataJson = intent?.metadata_json;
     const now = Math.floor(Date.now() / 1000);
     const startTime = Date.now();
@@ -1299,7 +1334,7 @@ async function executeProofOnly(intentId, parsed, route) {
         // Wait for confirmation
         const receipt = await publicClient.waitForTransactionReceipt({
             hash: txHash,
-            timeout: 60000,
+            timeout: 15000,
         });
         const latencyMs = Date.now() - startTime;
         const explorerUrl = buildExplorerUrl('ethereum', 'sepolia', txHash);
@@ -1390,10 +1425,10 @@ async function executeProofOnly(intentId, parsed, route) {
  * Execute proof-only transaction on Solana devnet
  */
 async function executeProofOnlySolana(intentId, parsed, route) {
-    const { getIntent, updateIntentStatusAsync, createExecutionAsync, updateExecutionAsync, linkExecutionToIntentAsync, } = await import('../../execution-ledger/db');
+    const { getIntentAsync, updateIntentStatusAsync, createExecutionAsync, updateExecutionAsync, linkExecutionToIntentAsync, } = await import('../../execution-ledger/db');
     const { buildExplorerUrl } = await import('../ledger/ledger');
     // Get intent's existing metadata to preserve caller info (source, domain, runId)
-    const intent = getIntent(intentId);
+    const intent = await getIntentAsync(intentId);
     const existingMetadataJson = intent?.metadata_json;
     const now = Math.floor(Date.now() / 1000);
     const startTime = Date.now();
@@ -1604,9 +1639,9 @@ async function executeProofOnlySolana(intentId, parsed, route) {
  * Execute on Ethereum Sepolia
  */
 async function executeEthereum(intentId, parsed, route) {
-    const { getIntent, updateIntentStatus, finalizeExecutionTransactionAsync, } = await import('../../execution-ledger/db');
+    const { getIntentAsync, updateIntentStatusAsync: updateIntentStatus, finalizeExecutionTransactionAsync, } = await import('../../execution-ledger/db');
     // Get intent's existing metadata to preserve caller info (source, domain, runId)
-    const intent = getIntent(intentId);
+    const intent = await getIntentAsync(intentId);
     const existingMetadataJson = intent?.metadata_json;
     const now = Math.floor(Date.now() / 1000);
     // Check config
@@ -1668,7 +1703,7 @@ async function executeEthereum(intentId, parsed, route) {
         // Wait for confirmation
         const receipt = await publicClient.waitForTransactionReceipt({
             hash: txHash,
-            timeout: 60000,
+            timeout: 15000,
         });
         const explorerUrl = `https://sepolia.etherscan.io/tx/${txHash}`;
         const latencyMs = Date.now() - (now * 1000);
@@ -1720,7 +1755,6 @@ async function executeEthereum(intentId, parsed, route) {
                 },
                 intentStatus: {
                     status: 'failed',
-                    failedAt: Math.floor(Date.now() / 1000),
                     failureStage: 'confirm',
                     errorCode: 'TX_REVERTED',
                     errorMessage: 'Transaction reverted on-chain',
@@ -1753,7 +1787,6 @@ async function executeEthereum(intentId, parsed, route) {
             },
             intentStatus: {
                 status: 'failed',
-                failedAt: Math.floor(Date.now() / 1000),
                 failureStage: 'execute',
                 errorCode: 'EXECUTION_ERROR',
                 errorMessage: error.message?.slice(0, 200),
@@ -1776,9 +1809,9 @@ async function executeEthereum(intentId, parsed, route) {
  * Execute on Solana Devnet
  */
 async function executeSolana(intentId, parsed, route) {
-    const { getIntent, updateIntentStatusAsync, createExecutionAsync, updateExecutionAsync, linkExecutionToIntentAsync, } = await import('../../execution-ledger/db');
+    const { getIntentAsync, updateIntentStatusAsync, createExecutionAsync, updateExecutionAsync, linkExecutionToIntentAsync, } = await import('../../execution-ledger/db');
     // Get intent's existing metadata to preserve caller info (source, domain, runId)
-    const existingIntent = getIntent(intentId);
+    const existingIntent = await getIntentAsync(intentId);
     const existingMetadataJson = existingIntent?.metadata_json;
     const now = Math.floor(Date.now() / 1000);
     // Check for Solana private key
@@ -1879,7 +1912,6 @@ export async function recordFailedIntent(params) {
         errorMessage: params.errorMessage,
         metadataJson: JSON.stringify({
             ...params.metadata,
-            failedAt: now,
         }),
     });
     return {

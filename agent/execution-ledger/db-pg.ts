@@ -335,6 +335,7 @@ export async function finalizeExecutionTransaction(params: {
     action: string;
     chain: string;
     venue?: string;
+    stage?: string;
     status?: string;
     txHash?: string;
     explorerUrl?: string;
