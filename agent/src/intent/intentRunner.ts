@@ -738,15 +738,16 @@ export async function runIntent(
 export async function executeIntentById(
   intentId: string
 ): Promise<IntentExecutionResult> {
+  // CRITICAL: Use async versions that support Postgres in production
   const {
-    getIntent,
-    updateIntentStatus,
+    getIntentAsync,
+    updateIntentStatusAsync: updateIntentStatus,
   } = await import('../../execution-ledger/db');
 
   const now = Math.floor(Date.now() / 1000);
 
-  // Get the intent
-  const intent = getIntent(intentId);
+  // Get the intent (use async for Postgres support)
+  const intent = await getIntentAsync(intentId);
   if (!intent) {
     return {
       ok: false,
@@ -1059,8 +1060,8 @@ async function executePerpEthereum(
   route: RouteDecision
 ): Promise<IntentExecutionResult> {
   const {
-    getIntent,
-    updateIntentStatus,
+    getIntentAsync,
+    updateIntentStatusAsync: updateIntentStatus,
     finalizeExecutionTransactionAsync,
   } = await import('../../execution-ledger/db');
   const { createPosition } = await import('../../execution-ledger/db');
@@ -1070,7 +1071,7 @@ async function executePerpEthereum(
   const startTime = Date.now();
 
   // Get intent's existing metadata to preserve caller info (source, domain, runId)
-  const intent = getIntent(intentId);
+  const intent = await getIntentAsync(intentId);
   const existingMetadataJson = intent?.metadata_json;
 
   // Import config
@@ -1485,7 +1486,7 @@ async function executeProofOnly(
   route: RouteDecision
 ): Promise<IntentExecutionResult> {
   const {
-    getIntent,
+    getIntentAsync,
     updateIntentStatusAsync,
     createExecutionAsync,
     updateExecutionAsync,
@@ -1494,7 +1495,7 @@ async function executeProofOnly(
   const { buildExplorerUrl } = await import('../ledger/ledger');
 
   // Get intent's existing metadata to preserve caller info (source, domain, runId)
-  const intent = getIntent(intentId);
+  const intent = await getIntentAsync(intentId);
   const existingMetadataJson = intent?.metadata_json;
 
   const now = Math.floor(Date.now() / 1000);
@@ -1689,7 +1690,7 @@ async function executeProofOnlySolana(
   route: RouteDecision
 ): Promise<IntentExecutionResult> {
   const {
-    getIntent,
+    getIntentAsync,
     updateIntentStatusAsync,
     createExecutionAsync,
     updateExecutionAsync,
@@ -1698,7 +1699,7 @@ async function executeProofOnlySolana(
   const { buildExplorerUrl } = await import('../ledger/ledger');
 
   // Get intent's existing metadata to preserve caller info (source, domain, runId)
-  const intent = getIntent(intentId);
+  const intent = await getIntentAsync(intentId);
   const existingMetadataJson = intent?.metadata_json;
 
   const now = Math.floor(Date.now() / 1000);
@@ -1939,13 +1940,13 @@ async function executeEthereum(
   route: RouteDecision
 ): Promise<IntentExecutionResult> {
   const {
-    getIntent,
-    updateIntentStatus,
+    getIntentAsync,
+    updateIntentStatusAsync: updateIntentStatus,
     finalizeExecutionTransactionAsync,
   } = await import('../../execution-ledger/db');
 
   // Get intent's existing metadata to preserve caller info (source, domain, runId)
-  const intent = getIntent(intentId);
+  const intent = await getIntentAsync(intentId);
   const existingMetadataJson = intent?.metadata_json;
 
   const now = Math.floor(Date.now() / 1000);
@@ -2137,7 +2138,7 @@ async function executeSolana(
   route: RouteDecision
 ): Promise<IntentExecutionResult> {
   const {
-    getIntent,
+    getIntentAsync,
     updateIntentStatusAsync,
     createExecutionAsync,
     updateExecutionAsync,
@@ -2145,7 +2146,7 @@ async function executeSolana(
   } = await import('../../execution-ledger/db');
 
   // Get intent's existing metadata to preserve caller info (source, domain, runId)
-  const existingIntent = getIntent(intentId);
+  const existingIntent = await getIntentAsync(intentId);
   const existingMetadataJson = existingIntent?.metadata_json;
 
   const now = Math.floor(Date.now() / 1000);
