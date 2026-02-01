@@ -286,83 +286,18 @@ body {
   overflow-y: auto !important;
 }
 
-/* RainbowKit - responsive modal */
-[data-rk] [role="dialog"] {
-  max-height: calc(100vh - 32px) !important;
-  max-width: calc(100vw - 32px) !important;
-  margin: 16px !important;
+/* ============================================
+ * RainbowKit Modal - Z-Index Fix Only
+ * DO NOT override position/transform - breaks internal layout
+ * ============================================ */
+
+/* RainbowKit modal wrapper - highest z-index to appear above all app UI */
+[data-rk] {
+  position: relative;
+  z-index: 99999 !important;
 }
 
-/* RainbowKit modal - ensure proper z-index above all app UI */
-[data-rk] [role="dialog"],
-[data-rk] [data-testid="rk-connect-modal"],
-[data-rk] [data-testid="rk-account-modal"] {
-  z-index: 9998 !important;
-}
-
-/* RainbowKit modal overlay/backdrop */
-[data-rk] [aria-hidden="true"],
-[data-rk] [data-overlay] {
-  z-index: 9997 !important;
-}
-
-/* RainbowKit modal content - scrollable */
-[data-rk] [role="dialog"] > div {
-  max-height: calc(100vh - 80px) !important;
-  overflow-y: auto !important;
-}
-
-/* Responsive adjustments for smaller screens */
-@media (max-height: 768px) {
-  .wallet-adapter-modal-container {
-    max-height: calc(100vh - 48px) !important;
-  }
-
-  [data-rk] [role="dialog"] {
-    max-height: calc(100vh - 48px) !important;
-  }
-
-  [data-rk] [role="dialog"] > div {
-    max-height: calc(100vh - 96px) !important;
-  }
-}
-
-/* MVP: Ensure wallet modals never clip on small screens (1366x768 and below) */
-@media (max-width: 1400px), (max-height: 800px) {
-  /* RainbowKit modal positioning */
-  [data-rk] [role="dialog"] {
-    position: fixed !important;
-    top: 50% !important;
-    left: 50% !important;
-    transform: translate(-50%, -50%) !important;
-    max-height: min(90vh, 600px) !important;
-    max-width: min(95vw, 400px) !important;
-    overflow-y: auto !important;
-  }
-
-  /* Solana wallet adapter modal */
-  .wallet-adapter-modal-container {
-    position: fixed !important;
-    z-index: 1000 !important;
-    max-height: min(90vh, 600px) !important;
-    overflow-y: auto !important;
-  }
-
-  /* Custom chain selection modal */
-  .fixed.inset-0.z-50 > div {
-    max-height: min(90vh, 400px) !important;
-    overflow-y: auto !important;
-  }
-}
-
-@media (max-width: 480px) {
-  .wallet-adapter-modal-container {
-    width: calc(100vw - 24px) !important;
-    max-width: none !important;
-  }
-
-  [data-rk] [role="dialog"] {
-    width: calc(100vw - 24px) !important;
-    max-width: none !important;
-  }
+/* Solana wallet adapter - also needs high z-index */
+.wallet-adapter-modal-wrapper {
+  z-index: 99999 !important;
 }
