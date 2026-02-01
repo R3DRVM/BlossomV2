@@ -447,10 +447,7 @@ export async function finalizeExecutionTransaction(params: {
       intentFields.push(`confirmed_at = $${intentParamIndex++}`);
       intentValues.push(params.intentStatus.confirmedAt);
     }
-    if (params.intentStatus.failedAt !== undefined) {
-      intentFields.push(`failed_at = $${intentParamIndex++}`);
-      intentValues.push(params.intentStatus.failedAt);
-    }
+    // Note: failedAt is not a column in the intents table - failure info stored in failure_stage, error_code, error_message
     if (params.intentStatus.failureStage !== undefined) {
       intentFields.push(`failure_stage = $${intentParamIndex++}`);
       intentValues.push(params.intentStatus.failureStage);
