@@ -1227,13 +1227,54 @@ async function executePerpEthereum(
     ]);
 
     // Check balance
-    const balance = await publicClient.readContract({
+    let balance = await publicClient.readContract({
       address: DEMO_REDACTED_ADDRESS as `0x${string}`,
       abi: erc20Abi,
       functionName: 'balanceOf',
       args: [account.address],
     });
 
+    // Auto-mint DEMO_REDACTED if balance is insufficient (testnet demo feature)
+    if (balance < marginAmount) {
+      console.log(`[executePerpEthereum] Relayer balance ${balance} < needed ${marginAmount}, auto-minting...`);
+
+      const mintAbi = parseAbi(['function mint(address to, uint256 amount) external']);
+      const mintAmount = marginAmount * BigInt(10); // Mint 10x to cover future trades
+
+      try {
+        const mintTxHash = await walletClient.writeContract({
+          address: DEMO_REDACTED_ADDRESS as `0x${string}`,
+          abi: mintAbi,
+          functionName: 'mint',
+          args: [account.address, mintAmount],
+        });
+
+        console.log(`[executePerpEthereum] Mint tx submitted: ${mintTxHash}`);
+
+        // Wait for mint confirmation
+        await publicClient.waitForTransactionReceipt({
+          hash: mintTxHash,
+          timeout: 30000,
+        });
+
+        console.log(`[executePerpEthereum] Mint confirmed, new balance check...`);
+
+        // Re-check balance after mint
+        balance = await publicClient.readContract({
+          address: DEMO_REDACTED_ADDRESS as `0x${string}`,
+          abi: erc20Abi,
+          functionName: 'balanceOf',
+          args: [account.address],
+        });
+
+        console.log(`[executePerpEthereum] New balance: ${balance}`);
+      } catch (mintError: any) {
+        console.error(`[executePerpEthereum] Auto-mint failed:`, mintError.message);
+        // Continue with original insufficient balance error if mint fails
+      }
+    }
+
+    // Final balance check after potential auto-mint
     if (balance < marginAmount) {
       // Pre-flight check failed - create execution record showing why
       const result = await finalizeExecutionTransactionAsync({
@@ -1246,7 +1287,6 @@ async function executePerpEthereum(
         },
         intentStatus: {
           status: 'failed',
-          failedAt: Math.floor(Date.now() / 1000),
           failureStage: 'execute',
           errorCode: 'INSUFFICIENT_BALANCE',
           errorMessage: 'Insufficient DEMO_REDACTED balance for perp margin',
@@ -1426,7 +1466,6 @@ async function executePerpEthereum(
         },
         intentStatus: {
           status: 'failed',
-          failedAt: Math.floor(Date.now() / 1000),
           failureStage: 'confirm',
           errorCode: 'TX_REVERTED',
           errorMessage: 'Perp position transaction reverted on-chain',
@@ -1459,7 +1498,6 @@ async function executePerpEthereum(
       },
       intentStatus: {
         status: 'failed',
-        failedAt: Math.floor(Date.now() / 1000),
         failureStage: 'execute',
         errorCode: 'PERP_EXECUTION_ERROR',
         errorMessage: error.message?.slice(0, 200),
@@ -2079,7 +2117,6 @@ async function executeEthereum(
         },
         intentStatus: {
           status: 'failed',
-          failedAt: Math.floor(Date.now() / 1000),
           failureStage: 'confirm',
           errorCode: 'TX_REVERTED',
           errorMessage: 'Transaction reverted on-chain',
@@ -2112,7 +2149,6 @@ async function executeEthereum(
       },
       intentStatus: {
         status: 'failed',
-        failedAt: Math.floor(Date.now() / 1000),
         failureStage: 'execute',
         errorCode: 'EXECUTION_ERROR',
         errorMessage: error.message?.slice(0, 200),
@@ -2279,7 +2315,6 @@ export async function recordFailedIntent(params: {
     errorMessage: params.errorMessage,
     metadataJson: JSON.stringify({
       ...params.metadata,
-      failedAt: now,
     }),
   });
 
