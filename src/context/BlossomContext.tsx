@@ -1369,6 +1369,14 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
               blockNumber: result.blockNumber,
             });
           }
+
+          // Refresh positions from ledger to ensure UI shows latest state
+          // Small delay allows backend indexing
+          setTimeout(() => {
+            refreshLedgerPositions().catch(err => {
+              console.warn('[confirmDefiPlan] Failed to refresh positions:', err);
+            });
+          }, 1500);
         } else if (result.mode === 'simulated' || result.mode === 'unsupported') {
           // TRUTHFUL UI: Show simulated/unsupported status, don't mark as active
           if (import.meta.env.DEV) {
@@ -2120,7 +2128,7 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
               intervalId = null;
             }
           }
-        }, 15000);
+        }, 30000);  // 30 seconds = 2 calls/min (50% reduction in API load)
       }
     };
     

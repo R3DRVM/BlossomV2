@@ -25,9 +25,9 @@ interface RightPanelProps {
 type PositionsTab = 'all' | 'perps' | 'defi' | 'events';
 
 export default function RightPanel(_props: RightPanelProps) {
-  const { 
-    account, 
-    strategies, 
+  const {
+    account,
+    strategies,
     defiPositions,
     selectedStrategyId,
     setSelectedStrategyId,
@@ -41,6 +41,7 @@ export default function RightPanel(_props: RightPanelProps) {
     updatePerpTpSlById,
     updatePerpLeverageById,
     setActiveTab: setGlobalActiveTab,
+    refreshLedgerPositions,
   } = useBlossomContext();
   const { events: activityEvents } = useActivityFeed();
   const [isPositionsOpen, setIsPositionsOpen] = useState(false);
@@ -536,6 +537,11 @@ export default function RightPanel(_props: RightPanelProps) {
       setBalanceFetchCompleted(false);
       setLastStateTransition('User clicked Refresh → CONNECTED_LOADING');
       window.dispatchEvent(new CustomEvent('blossom-wallet-connection-change'));
+
+      // Also refresh positions from ledger
+      refreshLedgerPositions().catch(err => {
+        console.warn('[RightPanel] Failed to refresh positions:', err);
+      });
     } else if (!isBackendHealthy()) {
       setWalletState('BACKEND_OFFLINE');
       setLastStateTransition('Backend offline → BACKEND_OFFLINE');
