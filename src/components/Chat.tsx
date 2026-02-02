@@ -3754,28 +3754,25 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
         }
         
         // Check if one-click execution is available (optional, not required)
-        const sessionStorageKey = `blossom_session_${userAddress.toLowerCase()}`;
-        const storedSessionId = localStorage.getItem(sessionStorageKey);
-        let hasActiveSession = false;
+        // Use the correct localStorage keys that OneClickExecution.tsx sets
+        const enabledKey = `blossom_oneclick_${userAddress.toLowerCase()}`;
+        const authorizedKey = `blossom_oneclick_auth_${userAddress.toLowerCase()}`;
+        const isSessionEnabled = localStorage.getItem(enabledKey) === 'true' &&
+                                 localStorage.getItem(authorizedKey) === 'true';
+        let hasActiveSession = isSessionEnabled;
 
-        if (storedSessionId && executionAuthMode === 'session') {
-          // Verify session is active (non-blocking)
-          try {
-            const sessionStatusResponse = await callAgent('/api/session/status', {
-              method: 'POST',
-              body: JSON.stringify({
-                userAddress,
-                sessionId: storedSessionId,
-              }),
-            });
-            if (sessionStatusResponse.ok) {
-              const sessionData = await sessionStatusResponse.json();
-              hasActiveSession = sessionData.status === 'active';
-            }
-          } catch {
-            // If status check fails, assume no active session and proceed with direct execution
-            hasActiveSession = false;
-          }
+        console.log('[handleConfirmTrade] Session check:', {
+          enabledKey,
+          authorizedKey,
+          enabledValue: localStorage.getItem(enabledKey),
+          authorizedValue: localStorage.getItem(authorizedKey),
+          isSessionEnabled,
+          executionAuthMode,
+        });
+
+        if (isSessionEnabled && executionAuthMode === 'session') {
+          // Session is active based on localStorage
+          hasActiveSession = true;
         }
 
         // Blocker #2: Check execution auth mode and enforce session requirement
@@ -3795,35 +3792,23 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
             return; // Don't proceed
           }
 
-          // Blocker #1: Use existing sessionId from localStorage - no duplicate session creation
-          const sessionStorageKey = `blossom_session_${userAddress.toLowerCase()}`;
-          const sessionId = localStorage.getItem(sessionStorageKey);
-
-          if (!sessionId) {
-            // This shouldn't happen if hasActiveSession is true, but guard anyway
-            const errorMessage: ChatMessage = {
-              id: `error-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-              text: 'Session ID not found. Please enable one-click execution first.',
-              isUser: false,
-              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
-            };
-            appendMessageToChat(targetChatId, errorMessage);
-            return;
-          }
+          // Session is enabled via oneclick keys - use userAddress as session identifier
+          // The backend will verify based on the address
+          const sessionId = userAddress.toLowerCase();
 
           // Session exists: use execution kernel (no wallet popups)
-          // Find the chat message that contains executionRequest
-          const chatMessage = messages.find((m: ChatMessage) => 
-            m.executionRequest && (m.executionRequest.kind === 'swap' || m.executionRequest.kind === 'lend' || m.executionRequest.kind === 'lend_supply')
+          // Find the chat message that contains executionRequest (including events)
+          const chatMessage = messages.find((m: ChatMessage) =>
+            m.executionRequest && (m.executionRequest.kind === 'swap' || m.executionRequest.kind === 'lend' || m.executionRequest.kind === 'lend_supply' || m.executionRequest.kind === 'event')
           );
           
           // Determine plan type and execution kind
-          const planType = chatMessage?.executionRequest?.kind === 'lend' || chatMessage?.executionRequest?.kind === 'lend_supply' 
-            ? 'defi' 
-            : executedStrategy?.instrumentType === 'perp' 
-              ? 'perp' 
-              : executedStrategy?.instrumentType === 'event'
-                ? 'event'
+          const planType = chatMessage?.executionRequest?.kind === 'lend' || chatMessage?.executionRequest?.kind === 'lend_supply'
+            ? 'defi'
+            : chatMessage?.executionRequest?.kind === 'event' || executedStrategy?.instrumentType === 'event'
+              ? 'event'
+              : executedStrategy?.instrumentType === 'perp'
+                ? 'perp'
                 : 'swap';
           const demoSwapKind = enableDemoSwap ? 'demo_swap' : 'default';
 
