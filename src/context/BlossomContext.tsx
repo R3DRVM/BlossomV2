@@ -414,8 +414,23 @@ function loadChatSessionsFromStorage(identityKey?: string): { sessions: ChatSess
     const activeId = localStorage.getItem(activeIdKey);
     if (stored) {
       const sessions = JSON.parse(stored) as ChatSession[];
-      console.log(`[Identity] Loaded ${sessions.length} chat sessions for identity: ${identity.substring(0, 25)}...`);
-      return { sessions, activeId };
+
+      // Sanitize messages: ensure all message.text fields are strings (prevents React error #31)
+      const sanitizedSessions = sessions.map(session => ({
+        ...session,
+        messages: (session.messages || []).map(msg => ({
+          ...msg,
+          // Ensure text is always a string
+          text: typeof msg.text === 'string'
+            ? msg.text
+            : (msg.text && typeof msg.text === 'object'
+                ? JSON.stringify(msg.text)
+                : String(msg.text ?? '')),
+        })),
+      }));
+
+      console.log(`[Identity] Loaded ${sanitizedSessions.length} chat sessions for identity: ${identity.substring(0, 25)}...`);
+      return { sessions: sanitizedSessions, activeId };
     }
   } catch (error) {
     console.error('Failed to load chat sessions from localStorage:', error);

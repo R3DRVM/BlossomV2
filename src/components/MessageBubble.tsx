@@ -335,7 +335,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
             className={`whitespace-pre-wrap m-0 ${isUser ? 'chat-message-text-user' : 'chat-message-text-assistant'}`}
             style={isUser ? { fontWeight: 400 } : { fontWeight: 400 }}
           >
-            {text}
+            {typeof text === 'string' ? text : (text && typeof text === 'object' ? JSON.stringify(text) : String(text ?? ''))}
           </p>
           {/* Intent Execution Card (from ledger system) */}
           {!isUser && intentExecution && (
