@@ -3385,28 +3385,27 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
       }
     }
 
-    // If session is disabled, force direct execution path (return success with notes)
+    // If session is disabled, return clear error (not silent success)
     if (!sessionEnabled) {
-      const portfolioAfter = buildPortfolioSnapshot();
-      return res.json({
-        success: true,
-        status: 'success',
-        notes: ['session_disabled_fell_back_to_direct'],
-        portfolio: portfolioAfter,
-        chainId: 11155111,
+      return res.status(503).json({
+        ok: false,
+        success: false,
+        error: 'Session execution not available. Please use manual signing or check backend configuration.',
+        errorCode: 'SESSION_NOT_CONFIGURED',
+        notes: ['Session mode requires EXECUTION_MODE=eth_testnet, EXECUTION_AUTH_MODE=session, and valid router contract'],
       });
     }
 
     const { draftId, userAddress, plan, sessionId } = req.body;
 
     if (!draftId || !userAddress || !plan || !sessionId) {
-      // Missing required fields - fall back to direct mode
-      const portfolioAfter = buildPortfolioSnapshot();
-      return res.json({
-        success: true,
-        status: 'success',
-        notes: ['session_disabled_fell_back_to_direct', 'missing_required_fields'],
-        portfolio: portfolioAfter,
+      // Missing required fields - return error
+      return res.status(400).json({
+        ok: false,
+        success: false,
+        error: 'Missing required fields for session execution',
+        errorCode: 'MISSING_FIELDS',
+        notes: ['Required: draftId, userAddress, plan, sessionId'],
         chainId: 11155111,
       });
     }
@@ -4171,8 +4170,102 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
       receiptError = receiptResult.error;
     }
 
+    // CRITICAL FIX: Record position to ledger when confirmed
+    if (receiptStatus === 'confirmed' && txHash) {
+      try {
+        const { createPosition, createExecution, updateExecution } = await import('../../execution-ledger/db');
+
+        // Extract position details from plan
+        const action = plan.actions[0];
+        const actionData = action?.data || {};
+        const metadata = plan.metadata || {};
+
+        // Determine instrument type and market
+        const actionType = action?.actionType;
+        let venue: any = 'swap_demo';
+        let market = 'ETH';
+        let side: 'long' | 'short' = 'long';
+        let leverage = 1;
+        let kind: any = 'swap';
+
+        if (actionType === 7) { // Perp
+          venue = 'perp_demo';
+          kind = 'perp';
+          market = actionData.asset || actionData.token || 'ETH';
+          side = actionData.direction === 'short' || actionData.isLong === false ? 'short' : 'long';
+          leverage = actionData.leverage || actionData.leverageX || 10;
+        } else if (actionType === 6) { // Event/Proof
+          venue = 'perp_demo'; // Use perp_demo for events too
+          kind = 'proof';
+          market = actionData.market || actionData.eventId || 'EVENT';
+          side = actionData.outcome === 'no' || actionData.outcome === false ? 'short' : 'long';
+        } else if (actionType === 3) { // Lend/DeFi
+          venue = 'deposit_demo';
+          kind = 'deposit';
+          market = actionData.asset || actionData.token || 'REDACTED';
+          side = 'long'; // Deposits are always "long"
+        } else if (actionType === 0) { // Swap
+          venue = 'swap_demo';
+          kind = 'swap';
+          market = actionData.tokenOut || 'ETH';
+          side = 'long';
+        }
+
+        // Record execution first
+        const execution = createExecution({
+          chain: 'ethereum',
+          network: 'sepolia',
+          fromAddress: userAddress,
+          toAddress: EXECUTION_ROUTER_ADDRESS || '',
+          token: market,
+          amountUnits: actionData.amount?.toString() || actionData.size?.toString() || '0',
+          amountDisplay: `${actionData.amount || actionData.depositUsd || 100} USD`,
+          usdEstimate: actionData.depositUsd || actionData.amount || 100,
+          kind,
+          venue,
+          intent: metadata.executionIntent || metadata.draftId || 'relayed_execution',
+          action: `${kind}_${market}`.toLowerCase(),
+          relayerAddress: RELAYER_PRIVATE_KEY ? 'relayer' : undefined,
+          sessionId: sessionId,
+        });
+
+        // Update execution with txHash
+        updateExecution(execution.id, {
+          txHash,
+          explorerUrl: `https://sepolia.etherscan.io/tx/${txHash}`,
+          status: 'confirmed',
+        });
+
+        // Record position (except for swaps which don't create persistent positions)
+        if (actionType !== 0) {
+          createPosition({
+            chain: 'ethereum',
+            network: 'sepolia',
+            venue,
+            market,
+            side,
+            leverage,
+            margin_units: actionData.amount?.toString() || actionData.depositUsd?.toString(),
+            margin_display: `${actionData.amount || actionData.depositUsd || 100} REDACTED`,
+            size_units: actionData.size?.toString(),
+            entry_price: actionData.entryPrice?.toString(),
+            user_address: userAddress.toLowerCase(),
+            open_tx_hash: txHash,
+            open_explorer_url: `https://sepolia.etherscan.io/tx/${txHash}`,
+            intent_id: metadata.draftId,
+            execution_id: execution.id,
+          });
+
+          console.log(`[relayed] Recorded position for ${userAddress.toLowerCase()}: ${market} ${side} on ${venue}`);
+        }
+      } catch (ledgerError: any) {
+        // Don't fail the execution, just log the ledger error
+        console.error('[relayed] Failed to record to ledger:', ledgerError.message);
+      }
+    }
+
     // V1: Only update portfolio if receipt.status === 1 (confirmed)
-    const portfolioAfter = receiptStatus === 'confirmed' 
+    const portfolioAfter = receiptStatus === 'confirmed'
       ? buildPortfolioSnapshot()
       : portfolioBefore;
 
@@ -4228,12 +4321,12 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
     });
 
     // Task 4: Add execution path proof
-    // Task 4: Add execution path proof
     res.json({
       ...result,
       chainId: 11155111, // Sepolia
       explorerUrl: `https://sepolia.etherscan.io/tx/${txHash}`,
       correlationId, // Include correlationId for client tracing
+      userAddress: userAddress.toLowerCase(), // Include userAddress for wallet scoping
       notes: ['execution_path:relayed'], // Task 4: Unambiguous evidence of execution path
     });
   } catch (error: any) {
