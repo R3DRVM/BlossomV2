@@ -227,21 +227,35 @@ export async function executePlan(
       const data = await response.json();
 
       if (!response.ok) {
+        // Parse error message - handle both string and object error formats
+        let errorMessage = 'Execution failed';
+        let errorCode = data.errorCode;
+
+        if (typeof data.error === 'string') {
+          errorMessage = data.error;
+        } else if (data.error && typeof data.error === 'object') {
+          errorMessage = data.error.message || data.error.code || 'Execution failed';
+          errorCode = errorCode || data.error.code;
+        } else if (data.message) {
+          errorMessage = data.message;
+        }
+
         // Check for specific error codes
-        if (data.errorCode === 'VENUE_NOT_CONFIGURED' || data.errorCode === 'ADAPTER_NOT_ALLOWED') {
+        const checkCode = errorCode || (data.error?.code);
+        if (checkCode === 'VENUE_NOT_CONFIGURED' || checkCode === 'ADAPTER_NOT_ALLOWED' || checkCode === 'ADAPTER_MISSING') {
           return {
             ok: false,
             mode: 'unsupported',
             error: getVenueUnavailableMessage(params.planType),
-            errorCode: data.errorCode,
+            errorCode: checkCode,
             notes: data.notes || [],
           };
         }
 
         return {
           ok: false,
-          error: data.error || data.message || 'Execution failed',
-          errorCode: data.errorCode,
+          error: errorMessage,
+          errorCode: checkCode,
         };
       }
 
@@ -291,7 +305,7 @@ export async function executePlan(
 /**
  * Build execution plan from params
  */
-function buildExecutionPlan(params: ExecutionParams): { actions: any[]; metadata: any } {
+function buildExecutionPlan(params: ExecutionParams): { actions: any[]; metadata: any; deadline: number } {
   const actions: any[] = [];
 
   // This is a simplified plan builder - the actual complex plan building
@@ -313,8 +327,12 @@ function buildExecutionPlan(params: ExecutionParams): { actions: any[]; metadata
     });
   }
 
+  // Set deadline to 5 minutes from now (must be in future but within 10 min limit)
+  const deadline = Math.floor(Date.now() / 1000) + 5 * 60;
+
   return {
     actions,
+    deadline,
     metadata: {
       draftId: params.draftId,
       planType: params.planType,

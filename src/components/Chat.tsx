@@ -3816,10 +3816,18 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
           }, { executionAuthMode: 'session' });
 
           // Handle execution result - TRUTHFUL UI: only mark executed if txHash exists
+          // Ensure error is always a string to prevent React crash
+          const safeErrorText = (err: unknown): string => {
+            if (typeof err === 'string') return err;
+            if (err && typeof err === 'object' && 'message' in err) return String((err as any).message);
+            if (err && typeof err === 'object') return JSON.stringify(err);
+            return 'Execution failed. Strategy remains pending.';
+          };
+
           if (!result.ok) {
             const errorMessage: ChatMessage = {
               id: `error-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-              text: result.error || 'Execution failed. Strategy remains pending.',
+              text: safeErrorText(result.error),
               isUser: false,
               timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
             };
@@ -3831,7 +3839,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
           if (result.mode === 'simulated' || result.mode === 'unsupported') {
             const simulatedMessage: ChatMessage = {
               id: `simulated-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-              text: `⚠️ ${result.mode === 'simulated' ? 'Simulated' : 'Not supported'}: ${result.error || 'Execution not performed on-chain'}`,
+              text: `⚠️ ${result.mode === 'simulated' ? 'Simulated' : 'Not supported'}: ${safeErrorText(result.error)}`,
               isUser: false,
               timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
             };
@@ -3859,6 +3867,13 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
 
           // Trigger wallet balance refresh after successful execution
           window.dispatchEvent(new CustomEvent('blossom-wallet-connection-change'));
+
+          // Refresh positions from ledger to show in positions tray
+          try {
+            await refreshLedgerPositions();
+          } catch (e) {
+            console.warn('[handleConfirmTrade] Failed to refresh ledger positions:', e);
+          }
 
           // Handle receipt status
           if (result.receiptStatus === 'failed') {
@@ -4456,10 +4471,22 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
           }
         }
       } catch (error: any) {
-        // Catch-all for unexpected errors
+        // Catch-all for unexpected errors - ensure safe string conversion
+        let errorText = 'Unknown error';
+        try {
+          if (typeof error === 'string') {
+            errorText = error;
+          } else if (error?.message && typeof error.message === 'string') {
+            errorText = error.message;
+          } else if (error) {
+            errorText = JSON.stringify(error);
+          }
+        } catch {
+          errorText = 'Unexpected error occurred';
+        }
         const errorMessage: ChatMessage = {
           id: `error-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-          text: `Execution error: ${error.message || 'Unknown error'}. Strategy remains pending.`,
+          text: `Execution error: ${errorText}. Strategy remains pending.`,
           isUser: false,
           timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
         };

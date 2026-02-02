@@ -2966,6 +2966,119 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
                 chainId: 11155111,
             });
         }
+        // ================================================================
+        // PLAN NORMALIZATION: Convert high-level intent to on-chain format
+        // ================================================================
+        // The frontend sends a simplified intent format. We need to convert it
+        // to the on-chain ExecutionPlan format before validation and execution.
+        // Add missing plan fields
+        if (!plan.user) {
+            plan.user = userAddress;
+        }
+        if (plan.nonce === undefined || plan.nonce === null) {
+            // Generate nonce from timestamp + random to ensure uniqueness
+            plan.nonce = Math.floor(Date.now() / 1000) * 1000 + Math.floor(Math.random() * 1000);
+        }
+        if (!plan.deadline) {
+            // Default deadline: 5 minutes from now
+            plan.deadline = Math.floor(Date.now() / 1000) + 5 * 60;
+        }
+        // Map action type strings to numeric actionType enum
+        const actionTypeMap = {
+            'swap': 0,
+            'demo_swap': 0,
+            'wrap': 1,
+            'unwrap': 2,
+            'lend': 3,
+            'lend_supply': 3,
+            'defi': 3,
+            'borrow': 4,
+            'repay': 5,
+            'proof': 6,
+            'event': 6, // Event markets use proof adapter
+            'perp': 7,
+        };
+        // Normalize actions
+        for (const action of plan.actions) {
+            // Convert string type to numeric actionType
+            if (action.type && action.actionType === undefined) {
+                action.actionType = actionTypeMap[action.type] ?? 0;
+            }
+            // If data is an object (execution request), we need to handle it
+            // For now, encode it as a simple proof/event action
+            if (action.data && typeof action.data === 'object' && !action.data.startsWith?.('0x')) {
+                const { encodeAbiParameters } = await import('viem');
+                // Get action type for encoding
+                const actionType = action.actionType ?? actionTypeMap[action.type] ?? 0;
+                if (actionType === 6) { // Proof/Event action
+                    // Encode event market data: (bytes32 marketId, uint8 outcome, uint256 amount)
+                    const eventData = action.data;
+                    const marketId = eventData.eventId || eventData.marketId ||
+                        `0x${Buffer.from(eventData.market || 'unknown').toString('hex').padStart(64, '0')}`;
+                    const outcome = eventData.outcome === 'yes' || eventData.outcome === true ? 1 : 0;
+                    const amount = BigInt(Math.floor((eventData.amount || 10) * 1e6)); // Convert to REDACTED decimals
+                    try {
+                        action.data = encodeAbiParameters([
+                            { type: 'bytes32', name: 'marketId' },
+                            { type: 'uint8', name: 'outcome' },
+                            { type: 'uint256', name: 'amount' },
+                        ], [marketId, outcome, amount]);
+                    }
+                    catch (encodeError) {
+                        console.warn('[relayed] Failed to encode event data, using fallback:', encodeError.message);
+                        // Fallback: encode as simple bytes
+                        action.data = '0x' + Buffer.from(JSON.stringify(eventData)).toString('hex');
+                    }
+                }
+                else if (actionType === 7) { // Perp action
+                    // Encode perp data: (bytes32 market, bool isLong, uint256 size, uint256 leverage)
+                    const perpData = action.data;
+                    const market = `0x${Buffer.from(perpData.token || perpData.asset || 'ETH').toString('hex').padStart(64, '0')}`;
+                    const isLong = perpData.direction === 'long' || perpData.isLong === true;
+                    const size = BigInt(Math.floor((perpData.depositUsd || perpData.amount || 100) * 1e6));
+                    const leverage = BigInt(perpData.leverage || perpData.leverageX || 10);
+                    try {
+                        action.data = encodeAbiParameters([
+                            { type: 'bytes32', name: 'market' },
+                            { type: 'bool', name: 'isLong' },
+                            { type: 'uint256', name: 'size' },
+                            { type: 'uint256', name: 'leverage' },
+                        ], [market, isLong, size, leverage]);
+                    }
+                    catch (encodeError) {
+                        console.warn('[relayed] Failed to encode perp data, using fallback:', encodeError.message);
+                        action.data = '0x' + Buffer.from(JSON.stringify(perpData)).toString('hex');
+                    }
+                }
+                else if (actionType === 3) { // Lend action
+                    // Encode lend data: (address token, uint256 amount)
+                    const lendData = action.data;
+                    const token = lendData.token || lendData.asset || '0x0000000000000000000000000000000000000000';
+                    const amount = BigInt(Math.floor((lendData.amount || 100) * 1e6));
+                    try {
+                        action.data = encodeAbiParameters([
+                            { type: 'address', name: 'token' },
+                            { type: 'uint256', name: 'amount' },
+                        ], [token, amount]);
+                    }
+                    catch (encodeError) {
+                        console.warn('[relayed] Failed to encode lend data, using fallback:', encodeError.message);
+                        action.data = '0x' + Buffer.from(JSON.stringify(lendData)).toString('hex');
+                    }
+                }
+                else {
+                    // Default: encode as JSON bytes
+                    action.data = '0x' + Buffer.from(JSON.stringify(action.data)).toString('hex');
+                }
+            }
+        }
+        console.log('[relayed] Normalized plan:', {
+            user: plan.user?.slice(0, 10),
+            nonce: plan.nonce,
+            deadline: plan.deadline,
+            actionsCount: plan.actions?.length,
+            firstActionType: plan.actions?.[0]?.actionType,
+        });
         // STRICT SERVER-SIDE GUARDS
         const guardConfig = await import('../config');
         const EXECUTION_ROUTER_ADDRESS = guardConfig.EXECUTION_ROUTER_ADDRESS;
@@ -3023,14 +3136,44 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
         if (DEMO_PERP_ADAPTER_ADDRESS_RELAYED) {
             allowedAdapters.add(DEMO_PERP_ADAPTER_ADDRESS_RELAYED.toLowerCase());
         }
+        // Resolve adapters and validate
+        const DEMO_EVENT_ADAPTER_ADDRESS = adapterConfig.DEMO_EVENT_ADAPTER_ADDRESS;
+        if (DEMO_EVENT_ADAPTER_ADDRESS) {
+            allowedAdapters.add(DEMO_EVENT_ADAPTER_ADDRESS.toLowerCase());
+        }
         for (const action of plan.actions) {
-            const adapter = action.adapter?.toLowerCase();
+            let adapter = action.adapter?.toLowerCase();
+            // If adapter is zero address or missing, resolve based on action type
+            if (!adapter || adapter === '0x0000000000000000000000000000000000000000') {
+                // Resolve adapter based on action type from metadata
+                const actionType = action.type || action.data?.kind || plan.metadata?.planType;
+                console.log('[relayed] Resolving adapter for action type:', actionType);
+                if (actionType === 'swap' || actionType === 'demo_swap') {
+                    adapter = MOCK_SWAP_ADAPTER_ADDRESS?.toLowerCase() || UNISWAP_V3_ADAPTER_ADDRESS?.toLowerCase();
+                }
+                else if (actionType === 'defi' || actionType === 'lend' || actionType === 'lend_supply') {
+                    adapter = DEMO_LEND_ADAPTER_ADDRESS?.toLowerCase() || AAVE_ADAPTER_ADDRESS_RELAYED?.toLowerCase();
+                }
+                else if (actionType === 'perp') {
+                    adapter = DEMO_PERP_ADAPTER_ADDRESS_RELAYED?.toLowerCase();
+                }
+                else if (actionType === 'event') {
+                    adapter = DEMO_EVENT_ADAPTER_ADDRESS?.toLowerCase() || PROOF_ADAPTER_ADDRESS?.toLowerCase();
+                }
+                else if (actionType === 'proof' || action.actionType === 6) {
+                    adapter = PROOF_ADAPTER_ADDRESS?.toLowerCase();
+                }
+                if (adapter) {
+                    action.adapter = adapter;
+                    console.log('[relayed] Resolved adapter to:', adapter);
+                }
+            }
             if (!adapter) {
                 return res.status(400).json({
                     ok: false,
                     error: {
                         code: 'ADAPTER_MISSING',
-                        message: 'Action missing adapter address',
+                        message: 'Action missing adapter address and could not be resolved',
                     },
                     correlationId,
                 });
