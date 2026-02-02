@@ -188,20 +188,37 @@ export async function executePlan(
   try {
     // For session mode, try relayed execution
     if (options?.executionAuthMode === 'session') {
-      // Check session using the same keys the UI uses
+      // Check session using the same keys that OneClickExecution.tsx sets
       const userAddr = params.userAddress?.toLowerCase();
       const enabledKey = `blossom_oneclick_${userAddr}`;
       const authorizedKey = `blossom_oneclick_auth_${userAddr}`;
+      const sessionIdKey = `blossom_oneclick_sessionid_${userAddr}`;
 
       const sessionEnabled = typeof window !== 'undefined' &&
         localStorage.getItem(enabledKey) === 'true' &&
         localStorage.getItem(authorizedKey) === 'true';
 
-      // For relayed execution, we use the address as the session identifier
-      const sessionId = sessionEnabled ? userAddr : null;
+      // Retrieve the sessionId that was generated and stored during session creation
+      let sessionId: string | null = null;
+      if (sessionEnabled && userAddr) {
+        const storedSessionId = typeof window !== 'undefined' ? localStorage.getItem(sessionIdKey) : null;
+
+        if (storedSessionId) {
+          sessionId = storedSessionId;
+          console.log(`${logPrefix} Using stored sessionId:`, sessionId.substring(0, 16) + '...');
+        } else {
+          // Fallback: Use address (will fail, but provides clear error)
+          console.warn(`${logPrefix} No stored sessionId found, using address as fallback`);
+          sessionId = userAddr.toLowerCase();
+        }
+      }
 
       if (!sessionId) {
-        console.log(`${logPrefix} No session found, falling back to direct mode`);
+        console.log(`${logPrefix} No session found for address ${userAddr?.slice(0, 10)}:`, {
+          enabledKey,
+          enabled: typeof window !== 'undefined' ? localStorage.getItem(enabledKey) : null,
+          authorized: typeof window !== 'undefined' ? localStorage.getItem(authorizedKey) : null,
+        });
         return {
           ok: false,
           mode: 'wallet',
@@ -210,6 +227,24 @@ export async function executePlan(
           notes: ['Go to the right sidebar and click "One-Click" to enable session mode.'],
         };
       }
+
+      // Validate sessionId format (must be bytes32: 0x + 64 hex chars)
+      if (sessionId.length !== 66 || !sessionId.startsWith('0x')) {
+        console.error(`${logPrefix} Invalid sessionId format:`, {
+          sessionId: sessionId.substring(0, 16) + '...',
+          length: sessionId.length,
+          expected: 66,
+        });
+        return {
+          ok: false,
+          mode: 'wallet',
+          error: 'Invalid session ID format. Please disable and re-enable One-Click mode.',
+          errorCode: 'INVALID_SESSION_ID',
+          notes: ['Session ID must be 66 characters (0x + 64 hex). Try recreating your session.'],
+        };
+      }
+
+      console.log(`${logPrefix} Session mode enabled for address:`, userAddr?.slice(0, 10));
 
       // Build plan for relayed execution
       const plan = buildExecutionPlan(params);

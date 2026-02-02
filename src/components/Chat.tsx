@@ -1388,13 +1388,6 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
               status: result.status,
             });
           }
-
-          // Refresh positions to show in RightPanel if execution was successful
-          if (result.ok && result.status === 'confirmed') {
-            setTimeout(() => {
-              refreshLedgerPositions();
-            }, 1000);
-          }
         }
       } catch (error: any) {
         console.error('[Chat] Intent execution error:', error);
@@ -3640,13 +3633,6 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
           status: result.status,
         });
       }
-
-      // Refresh positions on success
-      if (result.ok && result.status === 'confirmed') {
-        setTimeout(() => {
-          refreshLedgerPositions();
-        }, 1000);
-      }
     } catch (error: any) {
       console.error('[handleConfirmIntent] Error:', error);
 
@@ -3868,12 +3854,8 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
           // Trigger wallet balance refresh after successful execution
           window.dispatchEvent(new CustomEvent('blossom-wallet-connection-change'));
 
-          // Refresh positions from ledger to show in positions tray
-          try {
-            await refreshLedgerPositions();
-          } catch (e) {
-            console.warn('[handleConfirmTrade] Failed to refresh ledger positions:', e);
-          }
+          // Refresh positions from ledger to show in positions tray (don't await to not block)
+          refreshLedgerPositions();
 
           // Handle receipt status
           if (result.receiptStatus === 'failed') {

@@ -19,6 +19,7 @@ interface OneClickExecutionProps {
 // LocalStorage keys
 const getEnabledKey = (address: string) => `blossom_oneclick_${address.toLowerCase()}`;
 const getAuthorizedKey = (address: string) => `blossom_oneclick_auth_${address.toLowerCase()}`;
+const getSessionIdKey = (address: string) => `blossom_oneclick_sessionid_${address.toLowerCase()}`;
 
 // Authorization message
 const getAuthMessage = (address: string) =>
@@ -59,11 +60,33 @@ export default function OneClickExecution({
 
     try {
       if (!isEnabled) {
-        // Enabling: require signature authorization
+        // Enabling: require signature authorization and create session
         const message = getAuthMessage(userAddress);
         const signature = await signMessageAsync({ message });
 
         if (signature) {
+          // Call backend to prepare session (generates sessionId)
+          const { callAgent } = await import('../lib/apiClient');
+          const response = await callAgent('/api/session/prepare', {
+            method: 'POST',
+            body: JSON.stringify({ userAddress }),
+          });
+
+          if (!response.ok) {
+            throw new Error('Failed to prepare session');
+          }
+
+          const data = await response.json();
+
+          // Store the generated sessionId for later use
+          if (data.session?.sessionId) {
+            localStorage.setItem(getSessionIdKey(userAddress), data.session.sessionId);
+
+            if (import.meta.env.DEV) {
+              console.log('[OneClickExecution] Stored sessionId:', data.session.sessionId.substring(0, 16) + '...');
+            }
+          }
+
           // Store authorization
           localStorage.setItem(getEnabledKey(userAddress), 'true');
           localStorage.setItem(getAuthorizedKey(userAddress), 'true');
@@ -78,6 +101,7 @@ export default function OneClickExecution({
       } else {
         // Disabling: clear state
         localStorage.setItem(getEnabledKey(userAddress), 'false');
+        localStorage.removeItem(getSessionIdKey(userAddress)); // Clear stored sessionId
         setIsEnabled(false);
         onDisabled?.();
 
@@ -87,9 +111,9 @@ export default function OneClickExecution({
       }
     } catch (error: any) {
       if (import.meta.env.DEV) {
-        console.warn('[OneClickExecution] Signature failed:', error.message);
+        console.warn('[OneClickExecution] Signature or session creation failed:', error.message);
       }
-      // User rejected signature - don't enable
+      // User rejected signature or session creation failed - don't enable
     } finally {
       setIsLoading(false);
     }

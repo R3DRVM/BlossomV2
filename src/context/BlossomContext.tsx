@@ -307,7 +307,8 @@ export function isOpenPerp(strategy: Strategy): boolean {
   return (
     strategy.instrumentType === 'perp' &&
     (strategy.status === 'executed' || strategy.status === 'executing') &&
-    !strategy.isClosed
+    !strategy.isClosed &&
+    (strategy.notionalUsd ?? 0) > 0  // Match derivePerpPositionsFromStrategies filter
   );
 }
 
@@ -316,13 +317,17 @@ export function isOpenEvent(strategy: Strategy): boolean {
   return (
     strategy.instrumentType === 'event' &&
     (strategy.status === 'executed' || strategy.status === 'executing') &&
-    !strategy.isClosed
+    !strategy.isClosed &&
+    (strategy.stakeUsd ?? 0) > 0  // Ensure stake amount exists
   );
 }
 
 // Helper to check if a DeFi position is active
 export function isActiveDefi(position: DefiPosition): boolean {
-  return position.status === 'active';
+  return (
+    position.status === 'active' &&
+    (position.depositUsd ?? 0) > 0  // Ensure deposit amount exists
+  );
 }
 
 // Helper to get total count of open positions
@@ -669,6 +674,10 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
   const [latestDefiProposal, setLatestDefiProposal] = useState<DefiPosition | null>(null);
   const [riskProfile, setRiskProfile] = useState<RiskProfile>(loadRiskProfileFromStorage());
   const [manualWatchlist, setManualWatchlist] = useState<ManualWatchAsset[]>(loadManualWatchlistFromStorage());
+
+  // Refs for position refresh deduplication (Phase 2 - Fix duplicate positions)
+  const refreshInProgressRef = useRef<boolean>(false);
+  const lastRefreshTimestampRef = useRef<number>(0);
 
   const addDraftStrategy = useCallback((strategyInput: Partial<Strategy> & { sourceText: string }): Strategy => {
     const newStrategy: Strategy = {
@@ -1369,14 +1378,6 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
               blockNumber: result.blockNumber,
             });
           }
-
-          // Refresh positions from ledger to ensure UI shows latest state
-          // Small delay allows backend indexing
-          setTimeout(() => {
-            refreshLedgerPositions().catch(err => {
-              console.warn('[confirmDefiPlan] Failed to refresh positions:', err);
-            });
-          }, 1500);
         } else if (result.mode === 'simulated' || result.mode === 'unsupported') {
           // TRUTHFUL UI: Show simulated/unsupported status, don't mark as active
           if (import.meta.env.DEV) {
@@ -1720,12 +1721,44 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
 
   // Sync ledger positions to strategies
   const refreshLedgerPositions = useCallback(async () => {
+    const now = Date.now();
+    const timeSinceLastRefresh = now - lastRefreshTimestampRef.current;
+
+    // Debounce: Skip if last refresh was less than 2 seconds ago
+    if (timeSinceLastRefresh < 2000) {
+      if (import.meta.env.DEV) {
+        console.log('[refreshLedgerPositions] Skipping - too soon after last refresh:', {
+          timeSinceLastRefresh,
+          threshold: 2000,
+        });
+      }
+      return;
+    }
+
+    // Skip if refresh already in progress
+    if (refreshInProgressRef.current) {
+      if (import.meta.env.DEV) {
+        console.log('[refreshLedgerPositions] Skipping - refresh already in progress');
+      }
+      return;
+    }
+
+    refreshInProgressRef.current = true;
+    lastRefreshTimestampRef.current = now;
+
     try {
       const { getOpenPositions } = await import('../lib/apiClient');
       const positions = await getOpenPositions();
 
       if (positions.length === 0) {
         return; // No positions to sync
+      }
+
+      if (import.meta.env.DEV) {
+        console.log('[refreshLedgerPositions] Fetched positions from ledger:', {
+          count: positions.length,
+          positions: positions.map((p: any) => ({ id: p.id, market: p.market, side: p.side })),
+        });
       }
 
       // Convert ledger positions to Strategy format
@@ -1778,16 +1811,21 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
       setStrategies(prev => {
         // Filter out any existing ledger positions (they'll be replaced with fresh data)
         const nonLedgerStrategies = prev.filter(s => !s.id.startsWith('ledger-'));
+
+        if (import.meta.env.DEV) {
+          console.log('[refreshLedgerPositions] Merging positions:', {
+            newLedgerCount: ledgerStrategies.length,
+            existingNonLedger: nonLedgerStrategies.length,
+            totalAfter: ledgerStrategies.length + nonLedgerStrategies.length,
+          });
+        }
+
         return [...ledgerStrategies, ...nonLedgerStrategies];
       });
-
-      if (import.meta.env.DEV) {
-        console.log('[BlossomContext] Synced ledger positions:', ledgerStrategies.length);
-      }
     } catch (error: any) {
-      if (import.meta.env.DEV) {
-        console.warn('[BlossomContext] Failed to sync ledger positions:', error.message);
-      }
+      console.error('[refreshLedgerPositions] Failed to fetch positions:', error);
+    } finally {
+      refreshInProgressRef.current = false;
     }
   }, []);
 
