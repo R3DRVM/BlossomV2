@@ -3472,14 +3472,45 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
       allowedAdapters.add(DEMO_PERP_ADAPTER_ADDRESS_RELAYED.toLowerCase());
     }
 
+    // Resolve adapters and validate
+    const DEMO_EVENT_ADAPTER_ADDRESS = adapterConfig.DEMO_EVENT_ADAPTER_ADDRESS;
+    if (DEMO_EVENT_ADAPTER_ADDRESS) {
+      allowedAdapters.add(DEMO_EVENT_ADAPTER_ADDRESS.toLowerCase());
+    }
+
     for (const action of plan.actions) {
-      const adapter = action.adapter?.toLowerCase();
+      let adapter = action.adapter?.toLowerCase();
+
+      // If adapter is zero address or missing, resolve based on action type
+      if (!adapter || adapter === '0x0000000000000000000000000000000000000000') {
+        // Resolve adapter based on action type from metadata
+        const actionType = action.type || action.data?.kind || plan.metadata?.planType;
+        console.log('[relayed] Resolving adapter for action type:', actionType);
+
+        if (actionType === 'swap' || actionType === 'demo_swap') {
+          adapter = MOCK_SWAP_ADAPTER_ADDRESS?.toLowerCase() || UNISWAP_V3_ADAPTER_ADDRESS?.toLowerCase();
+        } else if (actionType === 'defi' || actionType === 'lend' || actionType === 'lend_supply') {
+          adapter = DEMO_LEND_ADAPTER_ADDRESS?.toLowerCase() || AAVE_ADAPTER_ADDRESS_RELAYED?.toLowerCase();
+        } else if (actionType === 'perp') {
+          adapter = DEMO_PERP_ADAPTER_ADDRESS_RELAYED?.toLowerCase();
+        } else if (actionType === 'event') {
+          adapter = DEMO_EVENT_ADAPTER_ADDRESS?.toLowerCase() || PROOF_ADAPTER_ADDRESS?.toLowerCase();
+        } else if (actionType === 'proof' || action.actionType === 6) {
+          adapter = PROOF_ADAPTER_ADDRESS?.toLowerCase();
+        }
+
+        if (adapter) {
+          action.adapter = adapter;
+          console.log('[relayed] Resolved adapter to:', adapter);
+        }
+      }
+
       if (!adapter) {
         return res.status(400).json({
           ok: false,
           error: {
             code: 'ADAPTER_MISSING',
-            message: 'Action missing adapter address',
+            message: 'Action missing adapter address and could not be resolved',
           },
           correlationId,
         });
