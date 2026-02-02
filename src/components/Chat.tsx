@@ -3770,30 +3770,21 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
           executionAuthMode,
         });
 
-        if (isSessionEnabled && executionAuthMode === 'session') {
-          // Session is active based on localStorage
+        // If user has session mode enabled in UI, use session execution
+        // The UI session toggle overrides the global executionAuthMode config
+        if (isSessionEnabled) {
           hasActiveSession = true;
         }
 
-        // Blocker #2: Check execution auth mode and enforce session requirement
-        // Allow manual signing users to bypass session check - they'll use direct wallet signing
+        // Check for manual signing preference
         const userHasManualSigning = isManualSigningEnabled(userAddress);
 
-        if (executionAuthMode === 'session' && !userHasManualSigning) {
-          // Blocker #2: Block execution if no active session in session-only mode (unless manual signing)
-          if (!hasActiveSession) {
-            const errorMessage: ChatMessage = {
-              id: `error-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-              text: 'One-click execution is required but not enabled. Please enable it in the wallet panel first, or choose "Sign Each Transaction" mode.',
-              isUser: false,
-              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
-            };
-            appendMessageToChat(targetChatId, errorMessage);
-            return; // Don't proceed
-          }
+        // Session execution path: if user has enabled session mode and is not using manual signing
+        // This should trigger regardless of the global executionAuthMode config
+        if (isSessionEnabled && !userHasManualSigning) {
+          console.log('[handleConfirmTrade] Using session execution path');
 
           // Session is enabled via oneclick keys - use userAddress as session identifier
-          // The backend will verify based on the address
           const sessionId = userAddress.toLowerCase();
 
           // Session exists: use execution kernel (no wallet popups)
