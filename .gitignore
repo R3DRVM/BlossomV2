@@ -12,12 +12,30 @@ dist
 dist-ssr
 *.local
 
-# Environment variables
+# Environment variables (NEVER commit secrets!)
 .env
-.env.*.local
+.env.*
 .env.local
+.env.development
 .env.development.local
+.env.production
 .env.production.local
+.env.staging
+.env.test
+agent/.env
+agent/.env.*
+agent/.env.local
+agent/.env.development
+agent/.env.production
+agent/.env.staging
+agent/.env.vercel
+agent/.env.prod-query
+
+# Only allow .env.example files (templates without secrets)
+!.env.example
+!.env.*.example
+!agent/.env.example
+!agent/.env.*.example
 
 # Editor directories and files
 .vscode/*
