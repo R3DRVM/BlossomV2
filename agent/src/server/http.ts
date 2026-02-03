@@ -2602,7 +2602,11 @@ app.get('/api/execute/preflight', async (req, res) => {
 
     // Check router deployment
     let routerOk = false;
-    if (EXECUTION_ROUTER_ADDRESS && ETH_TESTNET_RPC_URL && rpcOk) {
+    const routerAddressValid = !!EXECUTION_ROUTER_ADDRESS && /^0x[a-fA-F0-9]{40}$/.test(EXECUTION_ROUTER_ADDRESS);
+    if (!routerAddressValid && EXECUTION_ROUTER_ADDRESS) {
+      notes.push(`Router address invalid format: ${EXECUTION_ROUTER_ADDRESS}`);
+    }
+    if (routerAddressValid && ETH_TESTNET_RPC_URL && rpcOk) {
       try {
         const { eth_getCode } = await import('../executors/evmRpc');
         const code = await eth_getCode(ETH_TESTNET_RPC_URL, EXECUTION_ROUTER_ADDRESS);
@@ -2614,12 +2618,13 @@ app.get('/api/execute/preflight', async (req, res) => {
         notes.push(`Router check error: ${error.message}`);
       }
     } else {
-      notes.push('Cannot check router: missing EXECUTION_ROUTER_ADDRESS or RPC');
+      notes.push('Cannot check router: missing/invalid EXECUTION_ROUTER_ADDRESS or RPC');
     }
 
     // Check adapter allowlist (if router is deployed)
     let adapterOk = false;
-    if (routerOk && MOCK_SWAP_ADAPTER_ADDRESS && ETH_TESTNET_RPC_URL) {
+    const mockAdapterValid = !!MOCK_SWAP_ADAPTER_ADDRESS && /^0x[a-fA-F0-9]{40}$/.test(MOCK_SWAP_ADAPTER_ADDRESS);
+    if (routerOk && mockAdapterValid && ETH_TESTNET_RPC_URL) {
       try {
         const { eth_call } = await import('../executors/evmRpc');
         const { encodeFunctionData } = await import('viem');
@@ -2664,6 +2669,8 @@ app.get('/api/execute/preflight', async (req, res) => {
         notes.push(`Adapter check error: ${error.message}`);
         console.error('[preflight] Adapter check failed:', error);
       }
+    } else if (routerOk && MOCK_SWAP_ADAPTER_ADDRESS && !mockAdapterValid) {
+      notes.push(`Adapter address invalid format: ${MOCK_SWAP_ADAPTER_ADDRESS}`);
     }
 
     // Check nonce fetching capability
@@ -2757,6 +2764,8 @@ app.get('/api/execute/preflight', async (req, res) => {
       } else {
         notes.push('Live routing: enabled (1inch - API key present but connectivity check failed)');
       }
+    } else if (ROUTING_MODE === 'dflow') {
+      notes.push('Live routing: enabled (dFlow)');
     } else {
       notes.push('Live routing: disabled (deterministic fallback)');
     }
@@ -2834,7 +2843,7 @@ app.get('/api/execute/preflight', async (req, res) => {
 
     const dflowStatus = {
       enabled: DFLOW_ENABLED,
-      ok: DFLOW_ENABLED && !!DFLOW_API_KEY && !!DFLOW_BASE_URL,
+      ok: DFLOW_ENABLED && !!DFLOW_API_KEY,
       required: DFLOW_REQUIRE,
       capabilities: {
         eventsMarkets: DFLOW_ENABLED && !!DFLOW_EVENTS_MARKETS_PATH,
@@ -2843,28 +2852,23 @@ app.get('/api/execute/preflight', async (req, res) => {
       },
     };
 
-    if (DFLOW_ENABLED) {
-      if (dflowStatus.ok) {
-        const caps = [];
-        if (dflowStatus.capabilities.eventsMarkets) caps.push('events-markets');
-        if (dflowStatus.capabilities.eventsQuotes) caps.push('events-quotes');
-        if (dflowStatus.capabilities.swapsQuotes) caps.push('swaps-quotes');
-        notes.push(`dFlow: enabled (${caps.join(', ') || 'no capabilities'})`);
-      } else {
-        notes.push('dFlow: enabled but not configured (missing API_KEY or BASE_URL)');
-        if (DFLOW_REQUIRE) {
-          ok = false;
-          notes.push('dFlow is required but not properly configured');
-        }
-      }
+    if (DFLOW_ENABLED && dflowStatus.ok) {
+      const caps = [];
+      if (dflowStatus.capabilities.eventsMarkets) caps.push('events-markets');
+      if (dflowStatus.capabilities.eventsQuotes) caps.push('events-quotes');
+      if (dflowStatus.capabilities.swapsQuotes) caps.push('swaps-quotes');
+      notes.push(`dFlow: enabled (${caps.join(', ') || 'no capabilities'})`);
     } else {
-      notes.push('dFlow: disabled');
+      if (DFLOW_ENABLED && !DFLOW_API_KEY) {
+        notes.push('dFlow: enabled but missing API key');
+      } else {
+        notes.push('dFlow: disabled (optional for MVP)');
+      }
     }
-
-    // Update routing notes based on dFlow
-    if (ROUTING_MODE === 'dflow' && dflowStatus.capabilities.swapsQuotes) {
-      notes.push('Live routing: enabled (dFlow)');
+    if (DFLOW_REQUIRE && !dflowStatus.ok) {
+      notes.push('dFlow: required but not configured (MVP uses deterministic routing)');
     }
+    // Do NOT set ok = false for dFlow; Sepolia execution must not be blocked by missing dFlow
 
     // Build allowed adapters list for capabilities
     // Note: AAVE_ADAPTER_ADDRESS already imported above at line 2224
@@ -2923,8 +2927,7 @@ app.get('/api/execute/preflight', async (req, res) => {
     if (!ETH_TESTNET_RPC_URL) missingEnvVars.push('ETH_TESTNET_RPC_URL');
     if (!DEMO_PERP_ADAPTER_ADDRESS) missingEnvVars.push('DEMO_PERP_ADAPTER_ADDRESS');
     if (!DEMO_PERP_ENGINE_ADDRESS) missingEnvVars.push('DEMO_PERP_ENGINE_ADDRESS');
-    if (DFLOW_ENABLED && !DFLOW_API_KEY) missingEnvVars.push('DFLOW_API_KEY');
-    if (DFLOW_ENABLED && !DFLOW_EVENTS_MARKETS_PATH) missingEnvVars.push('DFLOW_EVENTS_MARKETS_PATH');
+    // dFlow is optional for MVP; do not add to missingEnvVars
 
     // Swap token configuration check (can use real OR demo addresses)
     const { REDACTED_ADDRESS_SEPOLIA, WETH_ADDRESS_SEPOLIA, DEMO_REDACTED_ADDRESS, DEMO_WETH_ADDRESS } = await import('../config');
@@ -3387,6 +3390,9 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
 
     // If session is disabled, return clear error (not silent success)
     if (!sessionEnabled) {
+      if (process.env.DEBUG_DIAGNOSTICS === 'true') {
+        console.log('[DEBUG_DIAGNOSTICS] session unauthorized: session execution not configured (router/relayer/RPC check)');
+      }
       return res.status(503).json({
         ok: false,
         success: false,
@@ -3399,7 +3405,9 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
     const { draftId, userAddress, plan, sessionId } = req.body;
 
     if (!draftId || !userAddress || !plan || !sessionId) {
-      // Missing required fields - return error
+      if (process.env.DEBUG_DIAGNOSTICS === 'true') {
+        console.log('[DEBUG_DIAGNOSTICS] session unauthorized: missing required fields (draftId, userAddress, plan, sessionId)');
+      }
       return res.status(400).json({
         ok: false,
         success: false,
@@ -4330,6 +4338,9 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
       notes: ['execution_path:relayed'], // Task 4: Unambiguous evidence of execution path
     });
   } catch (error: any) {
+    if (process.env.DEBUG_DIAGNOSTICS === 'true') {
+      console.log('[DEBUG_DIAGNOSTICS] execution failed after session:', error?.message || String(error));
+    }
     console.error('[api/execute/relayed] Error:', error);
     
     // Trace log: relayed error
@@ -4885,6 +4896,93 @@ app.post('/api/session/status', async (req, res) => {
     });
   }
 });
+
+/**
+ * GET /api/debug/session (read-only, gated by DEBUG_DIAGNOSTICS=true)
+ * Returns session config and optional on-chain session presence. No secrets; only boolean flags and prefixes.
+ * Session state (enabledKey, authorizedKey, sessionId) lives in client localStorage; server cannot see it unless
+ * caller passes ?sessionId=...&userAddress=... for a redacted on-chain check.
+ */
+if (process.env.DEBUG_DIAGNOSTICS === 'true') {
+  app.get('/api/debug/session', async (req, res) => {
+    try {
+      const { EXECUTION_MODE, EXECUTION_AUTH_MODE, EXECUTION_ROUTER_ADDRESS, ETH_TESTNET_RPC_URL } = await import('../config');
+      const sessionEnabled = EXECUTION_MODE === 'eth_testnet' && EXECUTION_AUTH_MODE === 'session';
+      const sessionId = typeof req.query?.sessionId === 'string' ? req.query.sessionId.trim() : null;
+      const userAddress = typeof req.query?.userAddress === 'string' ? req.query.userAddress.trim().toLowerCase() : null;
+
+      const base: Record<string, unknown> = {
+        ok: true,
+        executionMode: EXECUTION_MODE,
+        authMode: EXECUTION_AUTH_MODE,
+        sessionEnabled,
+        serverSeesSession: false,
+        note: 'Session state is client-side (localStorage). Server cannot see it. Pass ?sessionId=0x...&userAddress=0x... for redacted on-chain check.',
+      };
+
+      if (!sessionId && !userAddress) {
+        return res.json(base);
+      }
+
+      const sessionIdPrefix = sessionId ? sessionId.slice(0, 8) : null;
+      const addressPrefix = userAddress ? userAddress.slice(0, 8) : null;
+      base.enabledKeyPrefix = userAddress ? `blossom_oneclick_${userAddress.slice(0, 8)}` : null;
+      base.authorizedKeyPrefix = userAddress ? `blossom_oneclick_auth_${userAddress.slice(0, 8)}` : null;
+      base.sessionIdPrefix = sessionIdPrefix;
+
+      if (!sessionId || sessionId.length !== 66 || !sessionId.startsWith('0x')) {
+        base.hasSession = null;
+        base.sessionCheckNote = 'sessionId missing or invalid format (need 0x + 64 hex).';
+        return res.json(base);
+      }
+
+      if (!ETH_TESTNET_RPC_URL || !EXECUTION_ROUTER_ADDRESS) {
+        base.hasSession = null;
+        base.sessionCheckNote = 'RPC or router not configured; cannot check on-chain.';
+        return res.json(base);
+      }
+
+      try {
+        const { createPublicClient, http } = await import('viem');
+        const { sepolia } = await import('viem/chains');
+        const publicClient = createPublicClient({
+          chain: sepolia,
+          transport: http(ETH_TESTNET_RPC_URL),
+        });
+        const sessionAbi = [
+          { name: 'sessions', type: 'function', stateMutability: 'view', inputs: [{ name: '', type: 'bytes32' }], outputs: [
+            { name: 'owner', type: 'address' }, { name: 'executor', type: 'address' }, { name: 'expiresAt', type: 'uint64' },
+            { name: 'maxSpend', type: 'uint256' }, { name: 'spent', type: 'uint256' }, { name: 'active', type: 'bool' },
+          ] },
+        ] as const;
+        const normalizedSessionId = sessionId.startsWith('0x') ? sessionId : `0x${sessionId}`;
+        const sessionResult = await Promise.race([
+          publicClient.readContract({
+            address: EXECUTION_ROUTER_ADDRESS as `0x${string}`,
+            abi: sessionAbi,
+            functionName: 'sessions',
+            args: [normalizedSessionId as `0x${string}`],
+          }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000)),
+        ]) as [string, string, bigint, bigint, bigint, boolean];
+        const [, , expiresAt, , , active] = sessionResult;
+        const now = BigInt(Math.floor(Date.now() / 1000));
+        const hasSession = active && expiresAt > now;
+        base.hasSession = hasSession;
+        base.serverSeesSession = hasSession;
+        base.sessionCheckNote = hasSession ? 'on-chain session active and not expired' : (active ? 'on-chain session expired' : 'no on-chain session for this sessionId');
+      } catch (onChainErr: any) {
+        base.hasSession = null;
+        base.serverSeesSession = false;
+        base.sessionCheckNote = `on-chain check failed: ${onChainErr?.message || String(onChainErr)}`;
+      }
+
+      return res.json(base);
+    } catch (e) {
+      return res.status(500).json({ ok: false, error: String((e as Error).message) });
+    }
+  });
+}
 
 /**
  * POST /api/session/revoke/prepare
@@ -8159,4 +8257,3 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
   
   res.status(err.status || 500).json(errorResponse);
 });
-
