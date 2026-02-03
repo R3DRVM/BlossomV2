@@ -40,6 +40,11 @@ agent/execution-ledger/ledger.db
 agent/execution-ledger/ledger.db-shm
 agent/execution-ledger/ledger.db-wal
 
+# Generated artifacts / test outputs
+artifacts/
+test-results/
+agent/test-results/
+
 # Never commit private keys
 **/solana-*.key
 **/dev-wallet-*.json
