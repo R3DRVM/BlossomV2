@@ -216,24 +216,24 @@ Execute strategies that span multiple chains:
 
 ## Roadmap
 
-### Phase 1: Foundation (Q1 2025) 
+### Phase 1: Foundation (Q1 2026) 
 - Core chat interface
 - Beta execution engine
 - Complete AI execution logic and testing
 - Private beta deployment
 
-### Phase 2: Testnet MVP (Q1 2025) 
+### Phase 2: Testnet MVP (Q1 2026) 
 - Public beta deployment
 - Developer API testing
 - Hybrid routing
 
-### Phase 3: Production (Q2 2025)
+### Phase 3: Production (Q2 2026)
 - Mainnet deployment
 - Additional venues
 - Advanced strategies
 - API & SDK private beta
 
-### Phase 4: Scale (Q3 2025)
+### Phase 4: Scale (Q3 2026)
 - Multi-chain expansion
 - Institutional features
 - API access
