@@ -1,0 +1,19 @@
+{
+  "timestamp": "2026-01-29T19:48:12.569Z",
+  "total": 8,
+  "passed": 8,
+  "failed": 0,
+  "perpUsesRealAction": true,
+  "eventUsesRealAction": true,
+  "allPass": true,
+  "results": [
+    {"name": "swap_chat", "pass": true, "evidence": "kind=swap"},
+    {"name": "swap_prepare", "pass": true, "evidence": "actions=[2,0]"},
+    {"name": "lend_chat", "pass": true, "evidence": "kind=lend_supply"},
+    {"name": "lend_prepare", "pass": true, "evidence": "actions=[2,3]"},
+    {"name": "perp_chat", "pass": true, "evidence": "kind=perp"},
+    {"name": "perp_prepare", "pass": true, "evidence": "actions=[7]"},
+    {"name": "event_chat", "pass": true, "evidence": "kind=event"},
+    {"name": "event_prepare", "pass": true, "evidence": "actions=[8]"}
+  ]
+}

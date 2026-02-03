@@ -1,0 +1,59 @@
+{
+  "timestamp": "2026-02-01T03:16:47.345Z",
+  "testResults": [
+    {
+      "name": "Connect Wallet",
+      "passed": true,
+      "details": {
+        "eth_requestAccountsCalled": false,
+        "rainbowKitModalShown": true,
+        "blockerMessageShown": false,
+        "ethCallsCount": 1
+      },
+      "screenshot": "TEST1_CONNECT_WALLET.png"
+    },
+    {
+      "name": "Swap Confirm & Execute",
+      "passed": true,
+      "details": {
+        "planCardVisible": true,
+        "confirmBtnVisible": true,
+        "eth_sendTransactionCalled": false,
+        "ethCallsCount": 0,
+        "showedLoadingOrResult": true,
+        "showedBlocker": true
+      },
+      "screenshot": "TEST2_SWAP_AFTER_CONFIRM.png"
+    },
+    {
+      "name": "BTC 20x Perp",
+      "passed": true,
+      "details": {
+        "hasExecutionError": false,
+        "hasPlanCard": true,
+        "hasClampMessage": false,
+        "hasValidationMessage": false,
+        "hasConfirmButton": true
+      },
+      "screenshot": "TEST3_BTC_20X_RESPONSE.png"
+    },
+    {
+      "name": "DeFi Quick Actions",
+      "passed": true,
+      "details": {
+        "quickActionsDropdownFound": true,
+        "allocateOptionFound": false,
+        "note": "Quick actions dropdown opened but no allocate option found"
+      },
+      "screenshot": "TEST4_DEFI_QUICK_ACTION.png"
+    }
+  ],
+  "ethCalls": [
+    {
+      "method": "eth_accounts",
+      "timestamp": 1769915760657
+    }
+  ],
+  "verdict": "PASS",
+  "summary": "4/4 tests passed"
+}

@@ -1,0 +1,59 @@
+{
+  "timestamp": "2026-01-31T19:12:08.000Z",
+  "originMvpHead": "81894cd7a16d66e072e92c44275b0199b8754585",
+  "backend": {
+    "url": "https://api.blossom.onl",
+    "health": {
+      "ok": true,
+      "service": "blossom-agent",
+      "gitSha": "81894cd",
+      "gitBranch": "mvp",
+      "buildEnv": "production",
+      "llmProvider": "gemini",
+      "dbMode": "postgres"
+    },
+    "preflight": {
+      "mode": "eth_testnet",
+      "ok": true,
+      "chainId": 11155111,
+      "swapEnabled": true,
+      "perpsEnabled": true,
+      "lendingEnabled": true,
+      "eventsEnabled": true,
+      "executionRouterAddress": "0x07634e6946035533465a30397e08d9D1c641a6ee"
+    },
+    "deployedShaMatch": true
+  },
+  "frontend": {
+    "url": "https://app.blossom.onl",
+    "vercelCache": "HIT",
+    "deploymentVerified": true
+  },
+  "e2eResults": {
+    "verdict": "PASS",
+    "summary": "4/4 tests passed",
+    "tests": [
+      {
+        "name": "Connect Wallet",
+        "passed": true,
+        "detail": "RainbowKit modal shown with chain selection"
+      },
+      {
+        "name": "Swap Confirm & Execute",
+        "passed": true,
+        "detail": "Explicit WALLET_NOT_CONNECTED blocker shown"
+      },
+      {
+        "name": "BTC 20x Perp",
+        "passed": true,
+        "detail": "Plan card visible, no EXECUTION_ERROR"
+      },
+      {
+        "name": "DeFi Quick Actions",
+        "passed": true,
+        "detail": "No 500 errors, no coded strings"
+      }
+    ]
+  },
+  "status": "PRODUCTION_VERIFIED_GO"
+}

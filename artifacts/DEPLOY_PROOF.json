@@ -1,0 +1,11 @@
+{
+  "ok": true,
+  "ts": 1769744292245,
+  "service": "blossom-agent",
+  "llmProvider": "gemini",
+  "dbMode": "postgres",
+  "dbIdentityHash": "25239fc4374e810e",
+  "gitSha": "308fda6",
+  "gitBranch": "mvp",
+  "buildEnv": "production"
+}

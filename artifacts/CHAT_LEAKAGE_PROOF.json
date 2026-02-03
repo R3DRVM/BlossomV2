@@ -1,0 +1,53 @@
+{
+  "timestamp": "2026-01-30T17:18:00Z",
+  "scenarioA": {
+    "description": "Same access code, two isolated browser contexts",
+    "contextA": {
+      "anonId": "anon-1769792061288-gdep9m6t7yb",
+      "chatStorageKeys": [
+        "blossom_chat_sessions_anon-1769792061288-gdep9m6t7yb",
+        "blossom_active_chat_id_anon-1769792061288-gdep9m6t7yb"
+      ],
+      "sentMessage": "LEAK_TEST_A_1769792067686"
+    },
+    "contextB": {
+      "anonId": "anon-1769792071146-1gfmyvqls2c",
+      "chatStorageKeys": [],
+      "sentMessage": "LEAK_TEST_B_1769792077458",
+      "sawContextAMessage": false
+    },
+    "reverseCheck": {
+      "contextASawContextBMessage": false
+    },
+    "pass": true
+  },
+  "scenarioB": {
+    "description": "Verify storage namespace is NOT access-code scoped",
+    "identityKeyA": "anon-1769792061288-gdep9m6t7yb",
+    "identityKeyB": "anon-1769792071146-1gfmyvqls2c",
+    "storageKeysA": ["blossom_chat_sessions_anon-...", "blossom_active_chat_id_anon-..."],
+    "storageKeysB": [],
+    "anonIdsDifferent": true,
+    "accessCodeNotUsedAsNamespace": true,
+    "namespaceUsesAnonId": true,
+    "pass": true
+  },
+  "scenarioC": {
+    "description": "Prove backend stores zero chat history",
+    "evidence": [
+      "No 'chatHistory', 'persistChat', 'saveChat', 'chatMessages' found in agent/src",
+      "No 'CREATE TABLE chat' or chat-related tables in DB schema",
+      "Chat is stored client-side only in localStorage with per-user namespace"
+    ],
+    "backendStoresChatHistory": false,
+    "pass": true
+  },
+  "assertions": {
+    "uiLeakDetected": false,
+    "storageNamespaceIsolated": true,
+    "accessCodeNotUsedAsNamespace": true,
+    "anonIdsDifferent": true,
+    "backendStoresChatHistory": false
+  },
+  "verdict": "PASS - NO LEAKAGE DETECTED"
+}

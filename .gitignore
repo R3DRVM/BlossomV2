@@ -49,3 +49,6 @@ ACCESS_CODES_LOCAL.md
 ACCESS_CODES_LOCAL.csv
 access-codes-*.txt
 .env*.local
+
+# Strict mode: do not track Markdown files
+*.md

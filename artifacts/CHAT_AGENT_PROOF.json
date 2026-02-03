@@ -1,0 +1,42 @@
+{
+  "timestamp": "2026-01-30T17:13:00Z",
+  "tests": [
+    {
+      "input": "hi",
+      "assertions": ["friendly greeting", "mentions all 4 venues"],
+      "response_excerpt": "Hi! I'm Blossom, your AI trading copilot... Swaps, Perps, DeFi Yield, Prediction Markets...",
+      "mentions_swap": true,
+      "mentions_perp": true,
+      "mentions_lend": true,
+      "mentions_event": true,
+      "pass": true
+    },
+    {
+      "input": "help",
+      "assertions": ["capability list", "example prompts"],
+      "response_excerpt": "🔄 Swaps... 📈 Perpetual Trading... 💰 DeFi Yield... 🎯 Prediction Markets... 📊 Portfolio...",
+      "has_examples": true,
+      "pass": true
+    },
+    {
+      "input": "whats my balance",
+      "assertions": ["responds safely", "no error"],
+      "response_excerpt": "**Your Current Balances:** USDC: $5,000.00 **Total:** $5,000.00",
+      "contains_error": false,
+      "pass": true
+    },
+    {
+      "input": "im new here what do i do first?",
+      "assertions": ["onboarding steps", "example commands"],
+      "response_excerpt": "I can help with swaps, perps trading, DeFi yield, and prediction markets... Try: Swap 10 USDC...",
+      "has_guidance": true,
+      "pass": true
+    }
+  ],
+  "summary": {
+    "total": 4,
+    "passed": 4,
+    "failed": 0
+  },
+  "verdict": "PASS"
+}

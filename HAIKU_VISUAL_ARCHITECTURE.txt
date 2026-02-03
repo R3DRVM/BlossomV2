@@ -1,0 +1,337 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                    HAIKU TRADE ARCHITECTURE OVERVIEW                        ║
+║                  Visual Reference for Implementation                         ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ LAYER 1: INTENT INPUT                                                        │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                               │
+│  User → API Request → Intent Parser → Intent Object                         │
+│                                                                               │
+│  Intent = {                                                                 │
+│    inputs: [{USDC, 10000}, {ETH, 1}],                                      │
+│    targets: [{BTC, 50%}, {USDC, 50%}],                                    │
+│    constraints: {maxSlippage: 1%, deadline: 300s}                           │
+│  }                                                                           │
+│                                                                               │
+└──────────────────────────────────────────────────────────────────────────────┘
+                                      ↓
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ LAYER 2: DYNAMIC ROUTING ENGINE                                              │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                               │
+│  ┌─────────────────────────────────────────────────────────────────┐        │
+│  │ Step 1: Generate All Possible Paths                            │        │
+│  │                                                                  │        │
+│  │  Single-Chain Paths:                                           │        │
+│  │  • ETH → Uniswap → USDC → Curve → BTC                         │        │
+│  │  • ETH → Curve → BTC (direct)                                  │        │
+│  │                                                                  │        │
+│  │  Multi-Chain Paths:                                            │        │
+│  │  • USDC on Ethereum → Bridge to Solana → Jupiter → BTC        │        │
+│  │  • ETH on Ethereum → Bridge → Solana → Orca → BTC            │        │
+│  │                                                                  │        │
+│  └─────────────────────────────────────────────────────────────────┘        │
+│                                      ↓                                       │
+│  ┌─────────────────────────────────────────────────────────────────┐        │
+│  │ Step 2: Score Each Path                                         │        │
+│  │                                                                  │        │
+│  │  Cost Function:                                                │        │
+│  │  Score = Output Value - (Gas + Slippage + Bridge Fees)        │        │
+│  │                                                                  │        │
+│  │  Path 1: Score = 0.10 BTC - (0.001 ETH + 0.0005 slippage)   │        │
+│  │  Path 2: Score = 0.099 BTC - (0.003 ETH + 0.001 slippage)   │        │
+│  │  Path 3: Score = 0.098 BTC - (0.0015 ETH + 0.0008 slippage)  │        │
+│  │                                                                  │        │
+│  │  Winner: Path 1 (highest net output)                          │        │
+│  │                                                                  │        │
+│  └─────────────────────────────────────────────────────────────────┘        │
+│                                      ↓                                       │
+│  ┌─────────────────────────────────────────────────────────────────┐        │
+│  │ Step 3: Generate Quote                                          │        │
+│  │                                                                  │        │
+│  │  Quote = {                                                      │        │
+│  │    steps: [                                                     │        │
+│  │      { type: SWAP, venue: uniswap, amountIn: 10000, ... },    │        │
+│  │      { type: BRIDGE, venue: wormhole, fee: 5, ... },          │        │
+│  │      { type: SWAP, venue: jupiter, ... }                       │        │
+│  │    ],                                                           │        │
+│  │    expectedOutput: 0.10 BTC,                                   │        │
+│  │    estimatedGas: 0.002 ETH,                                    │        │
+│  │    validUntil: now + 60s                                       │        │
+│  │  }                                                              │        │
+│  │                                                                  │        │
+│  └─────────────────────────────────────────────────────────────────┘        │
+│                                                                               │
+└──────────────────────────────────────────────────────────────────────────────┘
+                                      ↓
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ LAYER 3: ATOMIC BUNDLER & EXECUTION                                          │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                               │
+│  User Signature → Validate Quote → Bundle Execution Plan                    │
+│                                                                               │
+│  ┌─────────────────────────────────────────────────────────────────┐        │
+│  │ EVM (Ethereum/Polygon/Arbitrum)                                 │        │
+│  │                                                                  │        │
+│  │  Single Transaction:                                           │        │
+│  │  ┌────────────────────────────────────────────────────────┐   │        │
+│  │  │ Router Contract Call: executeIntent(                   │   │        │
+│  │  │   steps = [                                            │   │        │
+│  │  │     call(uniswapRouter, swapData),                    │   │        │
+│  │  │     call(wormhole, bridgeData),                       │   │        │
+│  │  │     call(jupiter, ... )   ← cross-chain              │   │        │
+│  │  │   ]                                                   │   │        │
+│  │  │ )                                                      │   │        │
+│  │  │                                                        │   │        │
+│  │  │ Result: All succeed or all revert (atomic)           │   │        │
+│  │  │ Gas cost: 1 base fee (saves 50-70% vs sequential)    │   │        │
+│  │  └────────────────────────────────────────────────────────┘   │        │
+│  │                                                                  │        │
+│  └─────────────────────────────────────────────────────────────────┘        │
+│                                                                               │
+│  ┌─────────────────────────────────────────────────────────────────┐        │
+│  │ Solana                                                           │        │
+│  │                                                                  │        │
+│  │  Single Transaction with Multiple Instructions:               │        │
+│  │  ┌────────────────────────────────────────────────────────┐   │        │
+│  │  │ Transaction:                                           │   │        │
+│  │  │   Instruction 1: Orca program (swap SOL → USDC)      │   │        │
+│  │  │   Instruction 2: Portal program (bridge USDC)         │   │        │
+│  │  │   Instruction 3: Jupiter program (swap USDC → BTC)   │   │        │
+│  │  │                                                        │   │        │
+│  │  │ Result: Single-slot atomic, all succeed or revert    │   │        │
+│  │  └────────────────────────────────────────────────────────┘   │        │
+│  │                                                                  │        │
+│  └─────────────────────────────────────────────────────────────────┘        │
+│                                                                               │
+└──────────────────────────────────────────────────────────────────────────────┘
+                                      ↓
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ SETTLEMENT & VERIFICATION                                                    │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                               │
+│  Check Final State Matches Intent Target:                                   │
+│                                                                               │
+│  Intent Target: {BTC: 50%, USDC: 50%}                                       │
+│  Final State:  {BTC: 0.1, USDC: 5000}                                      │
+│  Verify:       Weights match ± slippage tolerance                          │
+│                                                                               │
+│  ✓ If verified: Transaction confirmed                                       │
+│  ✗ If failed:   Entire transaction reverted                                │
+│                                                                               │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+
+═══════════════════════════════════════════════════════════════════════════════
+VENUE ADAPTER PATTERN (Plugin Architecture)
+═══════════════════════════════════════════════════════════════════════════════
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│                        VenueAdapter (Abstract)                             │
+├────────────────────────────────────────────────────────────────────────────┤
+│  + abstract getQuote()                                                     │
+│  + abstract buildTransaction()                                            │
+│  + supports(chain)                                                        │
+│  + supportsPair(tokenIn, tokenOut)                                        │
+└────────────────────────────────────────────────────────────────────────────┘
+         ↑              ↑              ↑              ↑              ↑
+         │              │              │              │              │
+    ┌────┴────┐    ┌────┴────┐   ┌────┴────┐   ┌────┴────┐   ┌────┴────┐
+    │Uniswap  │    │  Curve  │   │ Jupiter  │   │ Raydium │   │  Orca   │
+    │Adapter  │    │ Adapter │   │ Adapter  │   │ Adapter │   │ Adapter │
+    │(EVM)    │    │ (EVM)   │   │ (Solana) │   │ (Solana)│   │ (Solana)│
+    └─────────┘    └─────────┘   └──────────┘   └─────────┘   └─────────┘
+
+    Router queries all adapters:
+    for each VenueAdapter:
+        quote = adapter.getQuote(tokenIn, tokenOut, amount)
+        candidates.push(quote)
+    
+    return best_by_output(candidates)
+
+    Adding new venue = 1 new adapter class (~200 lines TypeScript)
+
+
+═══════════════════════════════════════════════════════════════════════════════
+MULTI-SOURCE PRICE ORACLE (Resilience Pattern)
+═══════════════════════════════════════════════════════════════════════════════
+
+┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐
+│  Chainlink Feed  │  │  Uniswap TWAP    │  │  Pyth Network    │
+│   $100.50        │  │   $100.45        │  │   $100.55        │
+└────────┬─────────┘  └────────┬─────────┘  └────────┬─────────┘
+         │                     │                     │
+         └─────────────────────┼─────────────────────┘
+                               ↓
+                    ┌─────────────────────┐
+                    │ Sort & Calculate    │
+                    │ Weighted Median     │
+                    │                     │
+                    │ Sorted: [$100.45,   │
+                    │          $100.50,   │
+                    │          $100.55]   │
+                    │                     │
+                    │ Median: $100.50     │
+                    │ Confidence: 0.98    │
+                    └─────────┬───────────┘
+                              ↓
+                    Use $100.50 as price
+                    
+    Fallback: If Chainlink fails, use Uniswap TWAP
+             If both fail, use cached price
+             If all fail, reject transaction
+
+
+═══════════════════════════════════════════════════════════════════════════════
+ATOMIC BUNDLING: GAS EFFICIENCY COMPARISON
+═══════════════════════════════════════════════════════════════════════════════
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ WITHOUT BUNDLING (Sequential Transactions)                                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  Tx 1: Approve USDC to Uniswap              Gas: 45,000                   │
+│    ├─ Base: 21,000                                                        │
+│    └─ Approval: 24,000                                                    │
+│                                                                              │
+│  Tx 2: Swap USDC → ETH on Uniswap          Gas: 120,000                   │
+│    ├─ Base: 21,000                                                        │
+│    └─ Swap: 99,000                                                        │
+│                                                                              │
+│  Tx 3: Bridge ETH to Solana                 Gas: 200,000                   │
+│    ├─ Base: 21,000                                                        │
+│    └─ Bridge: 179,000                                                     │
+│                                                                              │
+│  TOTAL GAS: 365,000 units (~$80 at $200 gwei)                             │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ WITH BUNDLING (Atomic Transaction)                                          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  Tx 1: executeIntent([swap, bridge, swap])  Gas: 180,000                  │
+│    ├─ Base: 21,000                                                        │
+│    └─ Combined execution: 159,000                                         │
+│       (No duplicate approvals, sequential vs parallel overhead)            │
+│                                                                              │
+│  TOTAL GAS: 180,000 units (~$40 at $200 gwei)                             │
+│                                                                              │
+│  SAVINGS: 51% reduction (365,000 → 180,000)                               │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+═══════════════════════════════════════════════════════════════════════════════
+CROSS-CHAIN SETTLEMENT (Optimistic Oracle Pattern)
+═══════════════════════════════════════════════════════════════════════════════
+
+Timeline:
+         Now              +10s                    +60s
+          │                │                       │
+          ▼                ▼                       ▼
+    ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
+    │ User submits │  │  Relayer     │  │  Settlement  │
+    │ claim on     │→ │  executes    │→ │  verified    │
+    │ chain A      │  │  swap on     │  │  by oracle   │
+    │              │  │  chain B     │  │              │
+    └──────────────┘  └──────────────┘  └──────────────┘
+         
+    Optimistic: Assume claim valid unless disputed
+    
+    If disputed during 50s window:
+        UMA oracle resolves dispute → Reward honest party
+
+
+═══════════════════════════════════════════════════════════════════════════════
+IMPLEMENTATION TIMELINE
+═══════════════════════════════════════════════════════════════════════════════
+
+Week 1-3: FOUNDATION (EVM Only)
+    │
+    ├─ Define TypeScript types (Intent, Quote, ExecutionStep)
+    │
+    ├─ Build HaikuSolver (single-chain routing)
+    │
+    ├─ Implement Uniswap V3 adapter
+    │
+    └─ Test on Ethereum testnet (Sepolia)
+                                    │
+                                    ▼
+Week 4-5: MULTI-VENUE
+    │
+    ├─ Add Curve adapter
+    │
+    ├─ Add Chainlink oracle integration
+    │
+    ├─ Build QuoteAggregator
+    │
+    └─ Add venue registry
+                                    │
+                                    ▼
+Week 6-7: MULTI-CHAIN
+    │
+    ├─ Add Jupiter adapter (Solana)
+    │
+    ├─ Bridge cost modeling
+    │
+    ├─ Cross-chain solver optimization
+    │
+    └─ Evaluate Wormhole/Portal/Across
+                                    │
+                                    ▼
+Week 8-9: BUNDLING & PRODUCTION
+    │
+    ├─ Smart contract router (EVM)
+    │
+    ├─ Permit2 integration
+    │
+    ├─ Test gas savings (50%+ target)
+    │
+    └─ Comprehensive error handling
+                                    │
+                                    ▼
+Week 10+: OPTIONAL (Stellar/Advanced)
+    │
+    ├─ Soroban smart contracts
+    │
+    ├─ Axelar GMP integration
+    │
+    └─ Production deployment
+
+
+═══════════════════════════════════════════════════════════════════════════════
+FIVE PATTERNS FOR ADOPTION
+═══════════════════════════════════════════════════════════════════════════════
+
+┌─────────────┐
+│   PATTERN   │ COMPLEXITY │ PRIORITY │ IMPLEMENTATION
+├─────────────┼───────────┼──────────┼──────────────────────────────
+│             │           │          │
+│ 1. Adapter  │ Low       │ Critical │ Week 1-2: VenueAdapter interface
+│             │           │          │ + Uniswap implementation
+│             │           │          │
+├─────────────┼───────────┼──────────┼──────────────────────────────
+│             │           │          │
+│ 2. Intent-  │ Medium    │ Critical │ Week 2-3: Solver + pathfinding
+│    Solver   │           │          │ algorithm
+│             │           │          │
+├─────────────┼───────────┼──────────┼──────────────────────────────
+│             │           │          │
+│ 3. Quote    │ Medium    │ High     │ Week 4: Multi-source oracle
+│    Oracle   │           │          │ + weighted median
+│             │           │          │
+├─────────────┼───────────┼──────────┼──────────────────────────────
+│             │           │          │
+│ 4. Bundler  │ Medium-   │ Critical │ Week 8-9: Smart contract
+│             │ High      │          │ router + Permit2
+│             │           │          │
+├─────────────┼───────────┼──────────┼──────────────────────────────
+│             │           │          │
+│ 5. Settlement│ High      │ Medium   │ Week 10+: Optimistic oracle
+│             │           │          │ + UMA integration
+│             │           │          │
+└─────────────┴───────────┴──────────┴──────────────────────────────
+

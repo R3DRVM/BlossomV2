@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bloom - Premium Dither Effect Demo</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: white;
+            color: #111111;
+            overflow-x: hidden;
+        }
+
+        /* Main container */
+        #container {
+            position: relative;
+            min-height: 100vh;
+        }
+
+        /* Overlays */
+        #grain-canvas,
+        #dither-canvas {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 5;
+        }
+
+        #grain-canvas {
+            mix-blend-mode: multiply;
+            opacity: 0.8;
+        }
+
+        #dither-canvas {
+            mix-blend-mode: multiply;
+            opacity: 0.6;
+        }
+
+        /* Content */
+        .content {
+            position: relative;
+            z-index: 10;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 100px 40px;
+        }
+
+        h1 {
+            font-family: Georgia, 'Times New Roman', serif;
+            font-size: 72px;
+            font-weight: 500;
+            margin-bottom: 20px;
+            line-height: 1.1;
+        }
+
+        .pink {
+            color: #F25AA2;
+            font-style: italic;
+        }
+
+        p {
+            font-size: 20px;
+            color: #666;
+            max-width: 600px;
+            line-height: 1.6;
+            margin-bottom: 40px;
+        }
+
+        .controls {
+            position: fixed;
+            bottom: 40px;
+            left: 40px;
+            background: rgba(255, 255, 255, 0.9);
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid #E5E5E5;
+            backdrop-filter: blur(10px);
+            z-index: 50;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+        }
+
+        .control-group {
+            margin-bottom: 15px;
+        }
+
+        .control-group:last-child {
+            margin-bottom: 0;
+        }
+
+        label {
+            display: block;
+            font-size: 12px;
+            font-weight: 600;
+            color: #666;
+            margin-bottom: 5px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        input[type="range"] {
+            width: 200px;
+        }
+
+        .value {
+            display: inline-block;
+            margin-left: 10px;
+            font-weight: 600;
+            color: #F25AA2;
+        }
+
+        button {
+            margin-top: 10px;
+            padding: 8px 16px;
+            background: #F25AA2;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        button:hover {
+            background: #d94a8f;
+        }
+
+        .feature-card {
+            background: rgba(255, 255, 255, 0.6);
+            backdrop-filter: blur(10px);
+            border: 1px solid #E5E5E5;
+            border-radius: 12px;
+            padding: 30px;
+            margin-bottom: 20px;
+        }
+
+        .feature-card h3 {
+            font-size: 24px;
+            margin-bottom: 10px;
+            color: #111;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <!-- Film Grain Canvas -->
+        <canvas id="grain-canvas"></canvas>
+        
+        <!-- ASCII Dither Canvas -->
+        <canvas id="dither-canvas"></canvas>
+
+        <!-- Content -->
+        <div class="content">
+            <h1>
+                The Intelligent<br>
+                <span class="pink">Execution Layer</span>
+            </h1>
+            <p>
+                Your AI-native copilot for on-chain perps and DeFi. 
+                Command strategy, execution, and risk management with natural language.
+            </p>
+
+            <div class="feature-card">
+                <h3>Premium Visual Texture</h3>
+                <p>Subtle dither + grain + motion effects add depth and sophistication to the landing experience.</p>
+            </div>
+
+            <div class="feature-card">
+                <h3>Customizable Intensity</h3>
+                <p>Use the controls below to adjust the effect in real-time. Find the perfect balance for your brand.</p>
+            </div>
+        </div>
+
+        <!-- Controls -->
+        <div class="controls">
+            <h4 style="margin-bottom: 15px; font-size: 14px;">Effect Controls</h4>
+            
+            <div class="control-group">
+                <label>Grain Intensity</label>
+                <input type="range" id="grain-intensity" min="0" max="30" value="12" step="1">
+                <span class="value" id="grain-value">0.12</span>
+            </div>
+
+            <div class="control-group">
+                <label>Dither Intensity</label>
+                <input type="range" id="dither-intensity" min="0" max="50" value="25" step="1">
+                <span class="value" id="dither-value">0.25</span>
+            </div>
+
+            <div class="control-group">
+                <label>Particle Speed</label>
+                <input type="range" id="particle-speed" min="0" max="200" value="80" step="10">
+                <span class="value" id="speed-value">0.8</span>
+            </div>
+
+            <button onclick="resetDefaults()">Reset to Recommended</button>
+        </div>
+    </div>
+
+    <script>
+        // Film Grain Effect
+        const grainCanvas = document.getElementById('grain-canvas');
+        const grainCtx = grainCanvas.getContext('2d', { alpha: true });
+        let grainIntensity = 0.12;
+
+        // ASCII Dither Effect
+        const ditherCanvas = document.getElementById('dither-canvas');
+        const ditherCtx = ditherCanvas.getContext('2d');
+        let ditherIntensity = 0.25;
+        let particleSpeed = 0.8;
+
+        // Resize canvases
+        function resizeCanvases() {
+            grainCanvas.width = ditherCanvas.width = window.innerWidth;
+            grainCanvas.height = ditherCanvas.height = window.innerHeight;
+        }
+        resizeCanvases();
+        window.addEventListener('resize', resizeCanvases);
+
+        // ASCII characters
+        const ASCII_CHARS = ' ·∴∵∷⋮⁞⁝⋯⸱•∙⊙◦○◌◍◎●';
+
+        // Particle system
+        class Particle {
+            constructor() {
+                this.reset();
+            }
+
+            reset() {
+                this.x = Math.random() * ditherCanvas.width;
+                this.y = Math.random() * ditherCanvas.height;
+                this.vx = (Math.random() - 0.5) * particleSpeed;
+                this.vy = (Math.random() - 0.5) * particleSpeed;
+                this.maxLife = Math.random() * 200 + 100;
+                this.life = this.maxLife;
+                this.char = ASCII_CHARS[Math.floor(Math.random() * ASCII_CHARS.length)];
+                this.size = Math.random() * 8 + 8;
+            }
+
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.life--;
+
+                if (this.x < 0) this.x = ditherCanvas.width;
+                if (this.x > ditherCanvas.width) this.x = 0;
+                if (this.y < 0) this.y = ditherCanvas.height;
+                if (this.y > ditherCanvas.height) this.y = 0;
+
+                if (this.life <= 0) {
+                    this.reset();
+                }
+            }
+
+            draw() {
+                const alpha = (this.life / this.maxLife) * ditherIntensity;
+                ditherCtx.globalAlpha = alpha;
+                ditherCtx.font = `${this.size}px monospace`;
+                ditherCtx.fillStyle = '#F25AA2';
+                ditherCtx.fillText(this.char, this.x, this.y);
+            }
+        }
+
+        // Create particles
+        const particleCount = Math.floor((ditherCanvas.width * ditherCanvas.height) / 5000);
+        const particles = [];
+        for (let i = 0; i < particleCount; i++) {
+            particles.push(new Particle());
+        }
+
+        // Film grain animation
+        function drawFilmGrain() {
+            const imageData = grainCtx.createImageData(grainCanvas.width, grainCanvas.height);
+            const data = imageData.data;
+
+            for (let i = 0; i < data.length; i += 4) {
+                const noise = Math.random() * 255 * grainIntensity;
+                data[i] = noise;
+                data[i + 1] = noise;
+                data[i + 2] = noise;
+                data[i + 3] = grainIntensity * 100;
+            }
+
+            grainCtx.putImageData(imageData, 0, 0);
+        }
+
+        // Scanlines
+        function drawScanlines() {
+            grainCtx.fillStyle = 'rgba(0, 0, 0, 0.02)';
+            for (let y = 0; y < grainCanvas.height; y += 2) {
+                grainCtx.fillRect(0, y, grainCanvas.width, 1);
+            }
+        }
+
+        // Dither pattern
+        function drawDitherPattern(time) {
+            const cellSize = 40;
+            ditherCtx.globalAlpha = ditherIntensity * 0.2;
+            ditherCtx.font = '10px monospace';
+
+            for (let y = 0; y < ditherCanvas.height; y += cellSize) {
+                for (let x = 0; x < ditherCanvas.width; x += cellSize) {
+                    const distance = Math.sqrt(
+                        Math.pow(x - ditherCanvas.width / 2, 2) +
+                        Math.pow(y - ditherCanvas.height / 2, 2)
+                    );
+                    const wave = Math.sin(distance * 0.005 + time * 0.001) * 0.5 + 0.5;
+
+                    if (Math.random() < wave * ditherIntensity) {
+                        const charIndex = Math.floor(wave * (ASCII_CHARS.length - 1));
+                        const char = ASCII_CHARS[charIndex];
+                        ditherCtx.fillStyle = '#F25AA2';
+                        ditherCtx.fillText(char, x, y);
+                    }
+                }
+            }
+        }
+
+        // Main animation loop
+        let time = 0;
+        function animate() {
+            time++;
+
+            // Clear grain canvas
+            grainCtx.clearRect(0, 0, grainCanvas.width, grainCanvas.height);
+            drawFilmGrain();
+            drawScanlines();
+
+            // Clear dither canvas with fade
+            ditherCtx.globalAlpha = 0.1;
+            ditherCtx.fillStyle = 'rgba(255, 255, 255, 0.02)';
+            ditherCtx.fillRect(0, 0, ditherCanvas.width, ditherCanvas.height);
+
+            // Draw dither pattern
+            drawDitherPattern(time);
+
+            // Update and draw particles
+            ditherCtx.globalAlpha = 1;
+            particles.forEach(particle => {
+                particle.update();
+                particle.draw();
+            });
+
+            requestAnimationFrame(animate);
+        }
+
+        animate();
+
+        // Mouse interaction
+        ditherCanvas.addEventListener('mousemove', (e) => {
+            particles.forEach(particle => {
+                const dx = e.clientX - particle.x;
+                const dy = e.clientY - particle.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance < 150) {
+                    const force = (150 - distance) / 150;
+                    particle.vx -= (dx / distance) * force * 0.5;
+                    particle.vy -= (dy / distance) * force * 0.5;
+                }
+            });
+        });
+
+        // Controls
+        document.getElementById('grain-intensity').addEventListener('input', (e) => {
+            grainIntensity = e.target.value / 100;
+            document.getElementById('grain-value').textContent = grainIntensity.toFixed(2);
+        });
+
+        document.getElementById('dither-intensity').addEventListener('input', (e) => {
+            ditherIntensity = e.target.value / 100;
+            document.getElementById('dither-value').textContent = ditherIntensity.toFixed(2);
+        });
+
+        document.getElementById('particle-speed').addEventListener('input', (e) => {
+            particleSpeed = e.target.value / 100;
+            document.getElementById('speed-value').textContent = particleSpeed.toFixed(1);
+            particles.forEach(p => p.reset());
+        });
+
+        function resetDefaults() {
+            document.getElementById('grain-intensity').value = 12;
+            document.getElementById('dither-intensity').value = 25;
+            document.getElementById('particle-speed').value = 80;
+            grainIntensity = 0.12;
+            ditherIntensity = 0.25;
+            particleSpeed = 0.8;
+            document.getElementById('grain-value').textContent = '0.12';
+            document.getElementById('dither-value').textContent = '0.25';
+            document.getElementById('speed-value').textContent = '0.8';
+        }
+    </script>
+</body>
+</html>

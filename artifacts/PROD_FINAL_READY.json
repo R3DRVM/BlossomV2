@@ -1,0 +1,161 @@
+{
+  "timestamp": "2026-01-30T23:03:04.932Z",
+  "apiUrl": "https://api.blossom.onl",
+  "appUrl": "https://app.blossom.onl",
+  "gitSha": "81894cd",
+  "phases": {
+    "phase0": [
+      {
+        "phase": "0",
+        "name": "health",
+        "pass": true,
+        "evidence": "ok=true, gitBranch=mvp, buildEnv=production, gitSha=81894cd",
+        "details": {
+          "ok": true,
+          "ts": 1769814178838,
+          "service": "blossom-agent",
+          "llmProvider": "gemini",
+          "dbMode": "postgres",
+          "dbIdentityHash": "25239fc4374e810e",
+          "gitSha": "81894cd",
+          "gitBranch": "mvp",
+          "buildEnv": "production"
+        }
+      },
+      {
+        "phase": "0",
+        "name": "preflight",
+        "pass": true,
+        "evidence": "chainId=11155111, router=0x07634e69..., venues=true/true/true/true, adapters=8",
+        "details": {
+          "checks": {
+            "chainId": true,
+            "router": true,
+            "swapEnabled": true,
+            "lendingEnabled": true,
+            "perpsEnabled": true,
+            "eventsEnabled": true,
+            "demoPerpInAllowlist": true,
+            "demoEventInAllowlist": true
+          },
+          "adaptersCount": 8
+        }
+      }
+    ],
+    "phase1": [
+      {
+        "phase": "1",
+        "name": "header_auth",
+        "pass": true,
+        "evidence": "withAuth=200, noAuth=401"
+      }
+    ],
+    "phase2": [
+      {
+        "phase": "2",
+        "name": "baseline_hi",
+        "pass": true,
+        "evidence": "Hi! I'm Blossom, your AI trading copilot. You have $4,000 USDC ready to deploy.\n\nHere's what I can h..."
+      },
+      {
+        "phase": "2",
+        "name": "baseline_help",
+        "pass": true,
+        "evidence": "I'm Blossom, your AI trading copilot! Here's what I can help with:\n\n**🔄 Swaps**\n• 'Swap 100 USDC to..."
+      },
+      {
+        "phase": "2",
+        "name": "baseline_balance",
+        "pass": true,
+        "evidence": "**Your Current Balances:**\n\n• USDC: $5,000.00\n\n**Total:** $5,000.00\n\nWhat would you like to do with ..."
+      }
+    ],
+    "phase3": [
+      {
+        "phase": "3",
+        "name": "swap_chat",
+        "pass": true,
+        "evidence": "kind=swap"
+      },
+      {
+        "phase": "3",
+        "name": "swap_prepare",
+        "pass": true,
+        "evidence": "actions=[2,0]",
+        "details": {
+          "actionTypes": [
+            2,
+            0
+          ]
+        }
+      },
+      {
+        "phase": "3",
+        "name": "lend_chat",
+        "pass": true,
+        "evidence": "kind=lend_supply"
+      },
+      {
+        "phase": "3",
+        "name": "lend_prepare",
+        "pass": true,
+        "evidence": "actions=[2,3]",
+        "details": {
+          "actionTypes": [
+            2,
+            3
+          ]
+        }
+      },
+      {
+        "phase": "3",
+        "name": "perp_chat",
+        "pass": true,
+        "evidence": "kind=perp"
+      },
+      {
+        "phase": "3",
+        "name": "perp_prepare",
+        "pass": true,
+        "evidence": "actions=[7]",
+        "details": {
+          "actionTypes": [
+            7
+          ]
+        }
+      },
+      {
+        "phase": "3",
+        "name": "event_chat",
+        "pass": true,
+        "evidence": "kind=event"
+      },
+      {
+        "phase": "3",
+        "name": "event_prepare",
+        "pass": true,
+        "evidence": "actions=[8]",
+        "details": {
+          "actionTypes": [
+            8
+          ]
+        }
+      }
+    ]
+  },
+  "summary": {
+    "total": 14,
+    "passed": 14,
+    "failed": 0,
+    "critical": {
+      "routerV3Present": true,
+      "demoPerpInAllowlist": true,
+      "demoEventInAllowlist": true,
+      "perpUsesType7": true,
+      "eventUsesType8": true,
+      "zeroProofLeaks": true
+    }
+  },
+  "verdict": "GO",
+  "blockers": []
+}

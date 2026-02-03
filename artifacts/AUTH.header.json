@@ -1,0 +1,19 @@
+{
+  "timestamp": "2026-01-30T17:11:00Z",
+  "tests": [
+    {
+      "name": "with_access_code",
+      "header": "X-Access-Code: E7F9-D6D2-F151",
+      "httpStatus": 200,
+      "pass": true
+    },
+    {
+      "name": "without_access_code",
+      "header": "none",
+      "httpStatus": 401,
+      "pass": true,
+      "note": "Correctly rejected"
+    }
+  ],
+  "verdict": "PASS"
+}
