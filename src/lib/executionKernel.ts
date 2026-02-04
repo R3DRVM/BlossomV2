@@ -91,7 +91,7 @@ async function getVenueAvailability(): Promise<{ ok: boolean; venues: Record<str
           swap: data.swapEnabled ?? data.adapterOk ?? false,
           perps: data.perpsEnabled ?? false,
           lending: data.lendingEnabled ?? false,
-          events: data.eventsEnabled ?? true, // Events are proof-only, always available
+          events: data.eventsEnabled ?? false,
         },
         notes: data.notes || [],
       };
@@ -103,10 +103,10 @@ async function getVenueAvailability(): Promise<{ ok: boolean; venues: Record<str
     console.warn('[executionKernel] Preflight check failed:', error);
   }
 
-  // Default to proof-only mode when preflight fails
+  // Default to unavailable when preflight fails
   return {
     ok: false,
-    venues: { swap: false, perps: false, lending: false, events: true },
+    venues: { swap: false, perps: false, lending: false, events: false },
     notes: ['Could not verify execution configuration'],
   };
 }
@@ -124,7 +124,7 @@ function getVenueUnavailableMessage(planType: string): string {
     case 'lend':
       return 'Lending/DeFi execution is not configured for this environment. Your intent has been recorded.';
     case 'event':
-      return 'Event market execution uses proof-only mode. Your prediction has been recorded on-chain.';
+      return 'Event market execution is not configured for this environment. Your intent has been recorded.';
     default:
       return 'This execution venue is not configured for the current environment.';
   }
@@ -161,17 +161,6 @@ export async function executePlan(
   const venueKey = venueTypeMap[params.planType] || 'swap';
   const venueAvailable = venueStatus.venues[venueKey];
 
-  // For event markets, always use proof-only (they work without full execution setup)
-  if (params.planType === 'event') {
-    console.log(`${logPrefix} Event market intent - using proof-only mode`);
-    return {
-      ok: true,
-      mode: 'simulated',
-      receiptStatus: 'confirmed',
-      notes: ['Event market intent recorded (proof-only mode)'],
-    };
-  }
-
   // If venue not available, return graceful error
   if (!venueAvailable && !venueStatus.ok) {
     console.log(`${logPrefix} Venue not available for ${params.planType}:`, venueStatus.notes);
@@ -206,10 +195,6 @@ export async function executePlan(
         if (storedSessionId) {
           sessionId = storedSessionId;
           console.log(`${logPrefix} Using stored sessionId:`, sessionId.substring(0, 16) + '...');
-        } else {
-          // Fallback: Use address (will fail, but provides clear error)
-          console.warn(`${logPrefix} No stored sessionId found, using address as fallback`);
-          sessionId = userAddr.toLowerCase();
         }
       }
 

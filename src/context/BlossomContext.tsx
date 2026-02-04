@@ -1748,7 +1748,11 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
 
     try {
       const { getOpenPositions } = await import('../lib/apiClient');
-      const positions = await getOpenPositions();
+      const userAddress = await getAddressIfExplicit();
+      if (!userAddress) {
+        return;
+      }
+      const positions = await getOpenPositions(userAddress);
 
       if (positions.length === 0) {
         return; // No positions to sync
@@ -2352,4 +2356,3 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
     </BlossomContext.Provider>
   );
 }
-

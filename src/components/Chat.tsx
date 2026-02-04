@@ -1669,13 +1669,22 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
           if (execReq.kind === 'perp') {
             // Create perp draft strategy
             const perpReq = execReq as unknown as { kind: 'perp'; chain: string; market: string; side: 'long' | 'short'; leverage: number; riskPct?: number; marginUsd?: number };
-            const finalMarginUsd = perpReq.marginUsd || (account.accountValue * (perpReq.riskPct || 2) / 100);
-            const finalLeverage = perpReq.leverage || 2;
+            const leverageFromText = userText.match(/(\d+(?:\.\d+)?)\s*x/i);
+            const marginFromText = userText.match(/\$?(\d+(?:\.\d+)?)\s*(?:usd\s*)?(?:margin|stake|size)\b/i);
+            const riskFromText = userText.match(/(\d+(?:\.\d+)?)\s*%\s*risk/i);
+
+            const parsedLeverage = leverageFromText ? Number(leverageFromText[1]) : undefined;
+            const parsedMarginUsd = marginFromText ? Number(marginFromText[1]) : undefined;
+            const parsedRiskPct = riskFromText ? Number(riskFromText[1]) : undefined;
+
+            const finalRiskPct = perpReq.riskPct || parsedRiskPct || 2;
+            const finalMarginUsd = perpReq.marginUsd || parsedMarginUsd || (account.accountValue * finalRiskPct / 100);
+            const finalLeverage = perpReq.leverage || parsedLeverage || 2;
             const finalNotionalUsd = finalMarginUsd * finalLeverage;
             const newDraft = addDraftStrategy({
               side: perpReq.side === 'long' ? 'Long' : 'Short',
               market: perpReq.market || 'BTC-USD',
-              riskPercent: perpReq.riskPct || 2,
+              riskPercent: finalRiskPct,
               leverage: finalLeverage,
               marginUsd: finalMarginUsd,
               notionalUsd: finalNotionalUsd, // Set explicitly for ConfirmTradeCard
@@ -1858,9 +1867,16 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
         const finalDraftId = (response as any).draftId || draftId;
         
         // Task A: Create message with draftId if we have one (for ConfirmTradeCard)
+        const safeAssistantText =
+          typeof response.assistantMessage === 'string'
+            ? response.assistantMessage
+            : response.assistantMessage && typeof response.assistantMessage === 'object'
+              ? JSON.stringify(response.assistantMessage)
+              : String(response.assistantMessage ?? '');
+
         const blossomResponse: ChatMessage = {
           id: `assistant-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-          text: response.assistantMessage,
+          text: safeAssistantText,
           isUser: false,
           timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
           strategy: strategy,
@@ -3770,9 +3786,6 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
         if (isSessionEnabled && !userHasManualSigning) {
           console.log('[handleConfirmTrade] Using session execution path');
 
-          // Session is enabled via oneclick keys - use userAddress as session identifier
-          const sessionId = userAddress.toLowerCase();
-
           // Session exists: use execution kernel (no wallet popups)
           // Find the chat message that contains executionRequest (including events)
           const chatMessage = messages.find((m: ChatMessage) =>
@@ -3849,6 +3862,25 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
           // Update portfolio if available
           if (result.portfolio) {
             updateFromBackendPortfolio(result.portfolio);
+          }
+
+          // Fallback: fetch latest backend portfolio snapshot to reflect balances/positions immediately
+          try {
+            const portfolioResponse = await callAgent(`/api/portfolio/eth_testnet?userAddress=${encodeURIComponent(userAddress)}`, {
+              method: 'GET',
+            });
+            if (portfolioResponse.ok) {
+              const portfolioData = await portfolioResponse.json();
+              if (portfolioData?.portfolio) {
+                updateFromBackendPortfolio(portfolioData.portfolio);
+              } else if (portfolioData) {
+                updateFromBackendPortfolio(portfolioData);
+              }
+            }
+          } catch (portfolioSyncError) {
+            if (import.meta.env.DEV) {
+              console.warn('[handleConfirmTrade] Portfolio sync after execution failed:', portfolioSyncError);
+            }
           }
 
           // Trigger wallet balance refresh after successful execution
@@ -5555,4 +5587,3 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
     console.log('Acceptance tests available: await runAcceptance8() or await runAcceptanceLocal() or await runVerificationTests()');
   }, [resetSim, strategies, account, derivePerpPositionsFromStrategies, setSelectedStrategyId, updatePerpSizeById, processUserMessage, pendingHighRisk, handleProceedHighRisk, setInputValue, textareaRef, chatState, pendingTrade, chatSessions, activeChatId, updateMessageInChat]);
 }
-

@@ -496,7 +496,7 @@ export interface LedgerPosition {
 /**
  * Get open positions from the ledger
  */
-export async function getOpenPositions(): Promise<LedgerPosition[]> {
+export async function getOpenPositions(userAddress?: string): Promise<LedgerPosition[]> {
   const ledgerSecret = import.meta.env.VITE_DEV_LEDGER_SECRET;
 
   if (!ledgerSecret) {
@@ -505,7 +505,8 @@ export async function getOpenPositions(): Promise<LedgerPosition[]> {
   }
 
   try {
-    const response = await callAgent('/api/ledger/positions?status=open', {
+    const query = userAddress ? `?status=open&userAddress=${encodeURIComponent(userAddress)}` : '?status=open';
+    const response = await callAgent(`/api/ledger/positions${query}`, {
       method: 'GET',
       headers: {
         'X-Ledger-Secret': ledgerSecret,

@@ -20,6 +20,7 @@ interface OneClickExecutionProps {
 const getEnabledKey = (address: string) => `blossom_oneclick_${address.toLowerCase()}`;
 const getAuthorizedKey = (address: string) => `blossom_oneclick_auth_${address.toLowerCase()}`;
 const getSessionIdKey = (address: string) => `blossom_oneclick_sessionid_${address.toLowerCase()}`;
+const getLegacySessionIdKey = (address: string) => `blossom_session_${address.toLowerCase()}`;
 
 // Authorization message
 const getAuthMessage = (address: string) =>
@@ -81,6 +82,7 @@ export default function OneClickExecution({
           // Store the generated sessionId for later use
           if (data.session?.sessionId) {
             localStorage.setItem(getSessionIdKey(userAddress), data.session.sessionId);
+            localStorage.setItem(getLegacySessionIdKey(userAddress), data.session.sessionId);
 
             if (import.meta.env.DEV) {
               console.log('[OneClickExecution] Stored sessionId:', data.session.sessionId.substring(0, 16) + '...');
@@ -102,6 +104,7 @@ export default function OneClickExecution({
         // Disabling: clear state
         localStorage.setItem(getEnabledKey(userAddress), 'false');
         localStorage.removeItem(getSessionIdKey(userAddress)); // Clear stored sessionId
+        localStorage.removeItem(getLegacySessionIdKey(userAddress)); // Clear legacy stored sessionId
         setIsEnabled(false);
         onDisabled?.();
 

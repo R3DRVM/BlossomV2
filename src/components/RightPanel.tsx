@@ -283,7 +283,12 @@ export default function RightPanel(_props: RightPanelProps) {
         
         // Check for existing session (only in session mode, non-blocking with debouncing)
         if (isSessionMode) {
-          const storedSessionId = localStorage.getItem(`blossom_session_${address.toLowerCase()}`);
+          const oneClickSessionKey = `blossom_oneclick_sessionid_${address.toLowerCase()}`;
+          const legacySessionKey = `blossom_session_${address.toLowerCase()}`;
+          const storedSessionId = localStorage.getItem(oneClickSessionKey) || localStorage.getItem(legacySessionKey);
+          if (storedSessionId && !localStorage.getItem(oneClickSessionKey)) {
+            localStorage.setItem(oneClickSessionKey, storedSessionId);
+          }
           if (storedSessionId) {
             setSessionId(storedSessionId);
 
@@ -570,7 +575,9 @@ export default function RightPanel(_props: RightPanelProps) {
   
   const handleOneClickEnabled = () => {
     // Refresh session status
-    const storedSessionId = localStorage.getItem(`blossom_session_${walletAddress?.toLowerCase()}`);
+    const storedSessionId =
+      localStorage.getItem(`blossom_oneclick_sessionid_${walletAddress?.toLowerCase()}`) ||
+      localStorage.getItem(`blossom_session_${walletAddress?.toLowerCase()}`);
     if (storedSessionId) {
       setSessionId(storedSessionId);
       setSessionStatus('active');
@@ -1490,4 +1497,3 @@ export default function RightPanel(_props: RightPanelProps) {
     </div>
   );
 }
-
