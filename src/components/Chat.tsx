@@ -3893,7 +3893,6 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
               // Prevent repeated relayed 400 loops for this wallet until re-enabled.
               const backoffMs = 10 * 60 * 1000;
               localStorage.setItem(relayBackoffKey, String(Date.now() + backoffMs));
-              localStorage.setItem(enabledKey, 'false');
               shouldRunManualFallback = true;
             } else {
               const errorMessage: ChatMessage = {

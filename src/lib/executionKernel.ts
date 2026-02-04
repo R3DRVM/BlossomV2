@@ -278,6 +278,39 @@ export async function executePlan(
             if (prepareSessionResponse.ok) {
               const prepareSessionData = await prepareSessionResponse.json();
               const recreatedSessionId = prepareSessionData?.session?.sessionId;
+              const sessionTxTo = prepareSessionData?.session?.to;
+              const sessionTxData = prepareSessionData?.session?.data;
+              const sessionTxValue = prepareSessionData?.session?.value || '0x0';
+
+              // Create session on-chain before retrying relayed execution.
+              if (sessionTxTo && sessionTxData) {
+                try {
+                  const { sendTransaction } = await import('./walletAdapter');
+                  const createSessionTxHash = await sendTransaction({
+                    to: sessionTxTo,
+                    data: sessionTxData,
+                    value: sessionTxValue,
+                  });
+                  if (!createSessionTxHash) {
+                    return {
+                      ok: false,
+                      mode: 'wallet',
+                      error: 'Session setup requires a wallet signature. Please confirm the session transaction and retry.',
+                      errorCode: 'SESSION_SETUP_REQUIRED',
+                    };
+                  }
+                  // Give chain/indexers a moment before relayed retry.
+                  await new Promise((resolve) => setTimeout(resolve, 6000));
+                } catch (createSessionError) {
+                  console.warn(`${logPrefix} Session creation transaction failed:`, createSessionError);
+                  return {
+                    ok: false,
+                    mode: 'wallet',
+                    error: 'Could not create One-Click session on-chain. Please re-enable One-Click and retry.',
+                    errorCode: 'SESSION_SETUP_FAILED',
+                  };
+                }
+              }
               if (typeof window !== 'undefined' && recreatedSessionId) {
                 localStorage.setItem(sessionIdKey, recreatedSessionId);
                 localStorage.setItem(`blossom_session_${userAddr}`, recreatedSessionId);
