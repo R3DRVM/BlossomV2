@@ -3774,8 +3774,12 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
         // Use the correct localStorage keys that OneClickExecution.tsx sets
         const enabledKey = `blossom_oneclick_${userAddress.toLowerCase()}`;
         const authorizedKey = `blossom_oneclick_auth_${userAddress.toLowerCase()}`;
+        const relayBackoffKey = `blossom_oneclick_relay_backoff_${userAddress.toLowerCase()}`;
         const isSessionEnabled = localStorage.getItem(enabledKey) === 'true' &&
                                  localStorage.getItem(authorizedKey) === 'true';
+        const relayBackoffUntilRaw = localStorage.getItem(relayBackoffKey);
+        const relayBackoffUntil = relayBackoffUntilRaw ? Number(relayBackoffUntilRaw) : 0;
+        const relayBackoffActive = Number.isFinite(relayBackoffUntil) && relayBackoffUntil > Date.now();
         let hasActiveSession = isSessionEnabled;
 
         console.log('[handleConfirmTrade] Session check:', {
@@ -3784,6 +3788,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
           enabledValue: localStorage.getItem(enabledKey),
           authorizedValue: localStorage.getItem(authorizedKey),
           isSessionEnabled,
+          relayBackoffActive,
           executionAuthMode,
         });
 
@@ -3798,7 +3803,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
 
         // Session execution path: if user has enabled session mode and is not using manual signing
         // This should trigger regardless of the global executionAuthMode config
-        if (isSessionEnabled && !userHasManualSigning) {
+        if (isSessionEnabled && !userHasManualSigning && !relayBackoffActive) {
           console.log('[handleConfirmTrade] Using session execution path');
           const sessionIdKey = `blossom_oneclick_sessionid_${userAddress.toLowerCase()}`;
           const legacySessionIdKey = `blossom_session_${userAddress.toLowerCase()}`;
@@ -3817,6 +3822,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
                 if (preparedSessionId) {
                   localStorage.setItem(sessionIdKey, preparedSessionId);
                   localStorage.setItem(legacySessionIdKey, preparedSessionId);
+                  localStorage.removeItem(relayBackoffKey);
                   if (import.meta.env.DEV) {
                     console.log('[handleConfirmTrade] Auto-prepared missing sessionId');
                   }
@@ -3884,6 +3890,10 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
                 timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
               };
               appendMessageToChat(targetChatId, fallbackMessage);
+              // Prevent repeated relayed 400 loops for this wallet until re-enabled.
+              const backoffMs = 10 * 60 * 1000;
+              localStorage.setItem(relayBackoffKey, String(Date.now() + backoffMs));
+              localStorage.setItem(enabledKey, 'false');
               shouldRunManualFallback = true;
             } else {
               const errorMessage: ChatMessage = {
@@ -4068,6 +4078,11 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
 
           if (import.meta.env.DEV) {
             console.log('[handleConfirmTrade] Falling back from session relay to manual execution path');
+          }
+        }
+        else if (relayBackoffActive && isSessionEnabled && !userHasManualSigning) {
+          if (import.meta.env.DEV) {
+            console.log('[handleConfirmTrade] Session relay backoff active, skipping relayed execution');
           }
         }
         
