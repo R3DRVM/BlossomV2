@@ -366,6 +366,30 @@ export async function sendTransaction(tx: PreparedTx): Promise<string | null> {
       gas: txParams.gas,
     });
 
+    // Estimate gas and clamp to keep wallet/provider from defaulting to an invalidly high cap.
+    // This prevents failures like "transaction gas limit too high".
+    try {
+      const estimatedGas = await ethereum.request({
+        method: 'eth_estimateGas',
+        params: [txParams],
+      }) as string;
+
+      if (estimatedGas && typeof estimatedGas === 'string' && estimatedGas.startsWith('0x')) {
+        const estimate = BigInt(estimatedGas);
+        const buffered = (estimate * 120n) / 100n; // +20% buffer
+        const minGas = 300000n;
+        const maxGas = 10000000n; // below common Sepolia block caps
+        const clamped = buffered < minGas ? minGas : buffered > maxGas ? maxGas : buffered;
+        txParams.gas = `0x${clamped.toString(16)}`;
+      }
+    } catch (estimateError: any) {
+      // Fallback gas that is generally sufficient for router-based calls while staying safe.
+      txParams.gas = '0x2dc6c0'; // 3,000,000
+      if (import.meta.env.DEV) {
+        console.warn(`${logPrefix} Gas estimation failed, using fallback gas:`, estimateError?.message);
+      }
+    }
+
     // Send the transaction
     const txHash = await ethereum.request({
       method: 'eth_sendTransaction',
