@@ -1190,8 +1190,15 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
       timestamp: new Date().toISOString(),
     });
 
-    // Only route to ledger system for EXPLICIT execution intents
-    if (ledgerSecretConfigured && classification.decision === 'execute') {
+    // Only route to legacy ledger-intent system when explicitly forced via `/execute`.
+    // Default execute intents should go through backend chat planning so all venues
+    // (perps/defi/events) use the same execution path and avoid proof-only regressions.
+    const useLegacyLedgerIntentPath =
+      ledgerSecretConfigured &&
+      classification.decision === 'execute' &&
+      classification.forced === true;
+
+    if (useLegacyLedgerIntentPath) {
       if (import.meta.env.DEV) {
         console.log('[Chat] Routing to ledger intent system:', effectiveText.slice(0, 50));
       }
