@@ -85,8 +85,8 @@ const INFO_PATTERNS = [
 const EXECUTE_PATTERNS = [
   // Swap: "swap 100 REDACTED to ETH" - requires amount
   /^swap\s+\d+(?:\.\d+)?\s*(?:k|m)?\s*\w+\s+(?:to|for|into)\s+\w+/i,
-  // Deposit: "deposit 500 REDACTED into Aave" - requires amount
-  /^deposit\s+\d+(?:\.\d+)?\s*(?:k|m)?\s*\w+\s+(?:into|to|on)\s+\w+/i,
+  // Deposit: supports "$500 into Aave" and "10% of my REDACTED into SSV Network"
+  /^deposit\s+(?:\$?\d+(?:\.\d+)?\s*(?:k|m)?|\d+(?:\.\d+)?%)\s+(?:(?:of\s+my\s+)?\w+\s+)?(?:into|to|on)\s+.+/i,
   // Bridge: "bridge 100 REDACTED from ETH to SOL" - requires amount
   /^bridge\s+\d+(?:\.\d+)?\s*(?:k|m)?\s*\w+\s+(?:from|to)\s+\w+/i,
   // Long/Short with specific risk%: "long ETH with 3% risk" or "long 100 REDACTED on ETH"
@@ -1891,25 +1891,31 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
           } : {}),
           // Include defiProtocolsList from backend if present
           ...((response as any).defiProtocolsList ? {
-            defiProtocolsList: (response as any).defiProtocolsList.map((p: any) => ({
-              id: p.slug || p.name.toLowerCase().replace(/\s+/g, '-'),
-              name: p.name,
-              tvlUsd: p.tvl,
-              chains: p.chains,
-              category: p.category,
-              source: 'defillama',
-              isLive: true,
-            }))
+            defiProtocolsList: (response as any).defiProtocolsList.map((p: any, idx: number) => {
+              const name = typeof p?.name === 'string' ? p.name : String(p?.name ?? `Protocol ${idx + 1}`);
+              const id = typeof p?.slug === 'string' && p.slug.length > 0
+                ? p.slug
+                : name.toLowerCase().replace(/\s+/g, '-');
+              return {
+                id,
+                name,
+                tvlUsd: typeof p?.tvl === 'number' ? p.tvl : Number(p?.tvl ?? 0),
+                chains: Array.isArray(p?.chains) ? p.chains.map((c: any) => String(c)) : [],
+                category: typeof p?.category === 'string' ? p.category : undefined,
+                source: 'defillama',
+                isLive: true,
+              };
+            })
           } : {}),
           // Include eventMarketsList from backend if present
           ...((response as any).eventMarketsList ? {
-            marketsList: (response as any).eventMarketsList.map((m: any) => ({
-              id: m.id,
-              title: m.title,
-              yesPrice: m.yesPrice,
-              noPrice: m.noPrice,
-              volume24hUsd: m.volume24hUsd,
-              source: m.source || 'fallback',
+            marketsList: (response as any).eventMarketsList.map((m: any, idx: number) => ({
+              id: typeof m?.id === 'string' ? m.id : `event-${idx + 1}`,
+              title: typeof m?.title === 'string' ? m.title : String(m?.title ?? `Market ${idx + 1}`),
+              yesPrice: typeof m?.yesPrice === 'number' ? m.yesPrice : Number(m?.yesPrice ?? 0.5),
+              noPrice: typeof m?.noPrice === 'number' ? m.noPrice : Number(m?.noPrice ?? 0.5),
+              volume24hUsd: typeof m?.volume24hUsd === 'number' ? m.volume24hUsd : Number(m?.volume24hUsd ?? 0),
+              source: typeof m?.source === 'string' ? m.source : 'fallback',
               isLive: true,
             }))
           } : {}),
@@ -3818,8 +3824,9 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
 
           // Session exists: use execution kernel (no wallet popups)
           // Find the chat message that contains executionRequest (including events)
-          const chatMessage = messages.find((m: ChatMessage) =>
-            m.executionRequest && (m.executionRequest.kind === 'swap' || m.executionRequest.kind === 'lend' || m.executionRequest.kind === 'lend_supply' || m.executionRequest.kind === 'event')
+          const chatMessage = [...messages].reverse().find((m: ChatMessage) =>
+            ((m as any).draftId === draftId || m.strategyId === draftId || !!m.executionRequest) &&
+            (!!m.executionRequest || m.strategyId === draftId)
           );
           
           // Determine plan type and execution kind
@@ -3854,14 +3861,31 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
           };
 
           if (!result.ok) {
-            const errorMessage: ChatMessage = {
-              id: `error-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-              text: safeErrorText(result.error),
-              isUser: false,
-              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
-            };
-            appendMessageToChat(targetChatId, errorMessage);
-            return; // Don't mark as executed
+            const errorText = String(result.error || '').toLowerCase();
+            const shouldFallbackToManual =
+              result.errorCode === 'NO_SESSION' ||
+              result.errorCode === 'INVALID_SESSION_ID' ||
+              errorText.includes('not_created') ||
+              errorText.includes('session');
+
+            if (shouldFallbackToManual) {
+              const fallbackMessage: ChatMessage = {
+                id: `session-fallback-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                text: 'Session relay unavailable for this trade. Falling back to manual wallet confirmation.',
+                isUser: false,
+                timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+              };
+              appendMessageToChat(targetChatId, fallbackMessage);
+            } else {
+              const errorMessage: ChatMessage = {
+                id: `error-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                text: safeErrorText(result.error),
+                isUser: false,
+                timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+              };
+              appendMessageToChat(targetChatId, errorMessage);
+              return; // Don't mark as executed
+            }
           }
 
           // TRUTHFUL UI: Only proceed if we have a real txHash (relayed or wallet mode)
@@ -4036,8 +4060,9 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
         // Use execution kernel for unified execution
         {
           // Find the chat message that contains executionRequest
-          const chatMessage = messages.find((m: ChatMessage) => 
-            m.executionRequest && (m.executionRequest.kind === 'swap' || m.executionRequest.kind === 'lend' || m.executionRequest.kind === 'lend_supply')
+          const chatMessage = [...messages].reverse().find((m: ChatMessage) =>
+            ((m as any).draftId === draftId || m.strategyId === draftId || !!m.executionRequest) &&
+            (!!m.executionRequest || m.strategyId === draftId)
           );
           
           // Determine plan type

@@ -1689,7 +1689,31 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
 
     const mapped = mapBackendPortfolioToFrontendState(portfolio);
     setAccount(mapped.account);
-    setStrategies(mapped.strategies);
+    setStrategies(prev => {
+      const backendStrategies = mapped.strategies || [];
+      const backendIds = new Set(backendStrategies.map((s: Strategy) => s.id));
+
+      // Keep local in-flight drafts/queued/executing plans if backend snapshot is behind
+      const localInFlight = prev.filter(s =>
+        !backendIds.has(s.id) &&
+        (s.status === 'draft' || s.status === 'queued' || s.status === 'executing')
+      );
+
+      // Keep local executed open positions as temporary fallback when backend returns none for that type
+      const backendHasOpenPerps = backendStrategies.some(isOpenPerp);
+      const backendHasOpenEvents = backendStrategies.some(isOpenEvent);
+      const localOpenFallback = prev.filter(s => {
+        if (backendIds.has(s.id)) return false;
+        if (s.status !== 'executed' || s.isClosed) return false;
+        if (s.instrumentType === 'perp') return !backendHasOpenPerps && isOpenPerp(s);
+        if (s.instrumentType === 'event') return !backendHasOpenEvents && isOpenEvent(s);
+        return false;
+      });
+
+      const merged = [...backendStrategies, ...localInFlight, ...localOpenFallback];
+      const deduped = Array.from(new Map(merged.map((s: Strategy) => [s.id, s])).values());
+      return deduped;
+    });
 
     // Merge: Preserve local 'proposed' DeFi positions that aren't in backend response
     // This fixes the issue where clicking "Allocate $500" creates a local proposal

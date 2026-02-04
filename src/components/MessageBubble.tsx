@@ -355,7 +355,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                   {marketsList.map((market) => {
                     // Null-safe field extraction
                     const marketId = market?.id || `market-${Math.random()}`;
-                    const marketTitle = market?.title || '—';
+                    const marketTitle = typeof market?.title === 'string' ? market.title : String(market?.title ?? '—');
                     const yesPrice = typeof market?.yesPrice === 'number' ? market.yesPrice : 0.5;
                     const noPrice = typeof market?.noPrice === 'number' ? market.noPrice : 0.5;
                     const volume24hUsd = typeof market?.volume24hUsd === 'number' ? market.volume24hUsd : undefined;
@@ -456,7 +456,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                   {defiProtocolsList.map((protocol) => {
                     // Null-safe field extraction
                     const protocolId = protocol?.id || `protocol-${Math.random()}`;
-                    const protocolName = protocol?.name || '—';
+                    const protocolName = typeof protocol?.name === 'string' ? protocol.name : String(protocol?.name ?? '—');
                     const tvlUsd = typeof protocol?.tvlUsd === 'number' ? protocol.tvlUsd : 0;
                     const chains = Array.isArray(protocol?.chains) ? protocol.chains : [];
                     const category = protocol?.category || undefined;
@@ -1361,4 +1361,3 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
     </div>
   );
 }
-
