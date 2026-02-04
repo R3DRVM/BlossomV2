@@ -100,6 +100,11 @@ export async function estimatePlanSpend(plan: {
         } catch {
           determinable = false;
         }
+      } else if (action.actionType === 1) {
+        // WRAP action (ETH -> WETH)
+        // Spend is already represented in plan.value; no additional spend required.
+        instrumentType = instrumentType || 'swap';
+        // Keep determinable true.
       } else if (action.actionType === 3) {
         // LEND_SUPPLY action (Aave supply)
         instrumentType = 'defi';
@@ -135,10 +140,34 @@ export async function estimatePlanSpend(plan: {
         }
       } else if (action.actionType === 6) {
         // PROOF action (perps/events)
-        instrumentType = 'perp'; // Default to perp, could be event
-        // PROOF actions don't spend tokens directly, they're proof-of-execution
-        // For policy, we'll use a conservative estimate
-        totalSpendWei += BigInt(parseUnits('0.1', 18)); // Conservative: 0.1 ETH equivalent
+        // In our MVP, proof/event actions encode (bytes32 marketId, uint8 outcome, uint256 amount)
+        // Treat amount (6-decimal) as spend-equivalent for policy checks.
+        instrumentType = 'event';
+        try {
+          const decoded = decodeAbiParameters(
+            [{ type: 'bytes32' }, { type: 'uint8' }, { type: 'uint256' }],
+            action.data as `0x${string}`
+          );
+          const amount = decoded[2];
+          totalSpendWei += amount * BigInt(1e12); // Convert 6-decimal token to wei-equivalent
+        } catch {
+          // If it isn't event-shaped, fall back conservatively but remain determinable.
+          totalSpendWei += BigInt(parseUnits('0.1', 18));
+        }
+      } else if (action.actionType === 7) {
+        // PERP action: (bytes32 market, bool isLong, uint256 size, uint256 leverage)
+        instrumentType = 'perp';
+        try {
+          const decoded = decodeAbiParameters(
+            [{ type: 'bytes32' }, { type: 'bool' }, { type: 'uint256' }, { type: 'uint256' }],
+            action.data as `0x${string}`
+          );
+          const size = decoded[2];
+          totalSpendWei += size * BigInt(1e12); // size is 6-decimal USD units
+        } catch {
+          // Conservative fallback
+          totalSpendWei += BigInt(parseUnits('0.1', 18));
+        }
       } else {
         // Unknown action type
         determinable = false;
