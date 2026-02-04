@@ -772,11 +772,15 @@ async function applyDeterministicFallback(
     // Support decimal leverage like "5.5x" or "2.5x"
     const leverageMatch = userMessage.match(/(\d+(?:\.\d+)?)x/i);
     const riskMatch = userMessage.match(/(\d+)%\s*risk/i) || userMessage.match(/risk.*?(\d+)%/i);
+    const marginMatch =
+      userMessage.match(/(?:with|using)\s+\$?(\d+(?:,\d{3})*(?:\.\d+)?)\s*(?:usd\s*)?(?:margin|stake|collateral|size)/i) ||
+      userMessage.match(/\$?(\d+(?:,\d{3})*(?:\.\d+)?)\s*(?:usd\s*)?(?:margin|stake|collateral|size)/i);
     const sideMatch = lowerMessage.match(/(long|short)/);
 
     const asset = assetMatch ? assetMatch[1].toUpperCase() : 'ETH';
     let leverage = leverageMatch ? parseFloat(leverageMatch[1]) : 2;
-    const riskPct = riskMatch ? parseFloat(riskMatch[1]) : 2;
+    const requestedMarginUsd = marginMatch ? parseFloat(marginMatch[1].replace(/,/g, '')) : undefined;
+    let riskPct = riskMatch ? parseFloat(riskMatch[1]) : 2;
     const side = sideMatch ? sideMatch[1] : 'long';
 
     // P0 Fix: Check if user is asking for an execution plan (not immediate execution)
@@ -809,7 +813,11 @@ async function applyDeterministicFallback(
 
     // Calculate margin based on risk and account value
     const accountValue = portfolio?.accountValueUsd || 10000;
-    const marginUsd = Math.round((accountValue * riskPct) / 100);
+    const marginUsd = requestedMarginUsd ?? Math.round((accountValue * riskPct) / 100);
+    if (!riskMatch && requestedMarginUsd !== undefined && accountValue > 0) {
+      riskPct = Math.max(0.1, (requestedMarginUsd / accountValue) * 100);
+    }
+    riskPct = Math.round(riskPct * 100) / 100;
 
     // If asking for plan, provide a rich execution plan without auto-executing
     if (isPlanRequest) {
@@ -887,7 +895,7 @@ async function applyDeterministicFallback(
   
   if (isDefiPrompt) {
     // NEW: Check for structured allocation format first (from quick action buttons)
-    const structuredAllocMatch = userMessage.match(/allocate\s+amount(Usd|Pct):"?(\d+\.?\d*)"?\s+to\s+protocol:"?([^"]+?)"?(?:\s+REDACTED|\s+yield|$)/i);
+    const structuredAllocMatch = userMessage.match(/allocate\s+amount(Usd|Pct):"?(\d+\.?\d*)"?\s+to\s+protocol:"?([^"]+?)"?(?:\s+(?:REDACTED|bUSDC|blsmUSDC)|\s+yield|$)/i);
 
     let amount: string;
     let vaultName: string | undefined;
@@ -913,7 +921,7 @@ async function applyDeterministicFallback(
       // Handles: "Deposit 10% of my REDACTED into X", "Deposit $500 REDACTED into X", etc.
 
       // Check for percentage allocation first: "10%" or "10 percent"
-      const percentMatch = userMessage.match(/(\d+\.?\d*)\s*%\s*(?:of\s*(?:my\s*)?(?:usdc|balance|portfolio))?/i) ||
+      const percentMatch = userMessage.match(/(\d+\.?\d*)\s*%\s*(?:of\s*(?:my\s*)?(?:usdc|busdc|blsmusdc|balance|portfolio))?/i) ||
                           userMessage.match(/(\d+\.?\d*)\s*percent/i);
 
       // Check for explicit protocol name in the message
@@ -2245,6 +2253,47 @@ app.post('/api/execute/prepare', maybeCheckAccess, async (req, res) => {
 
     // Include demo token addresses for frontend approval flow
     const { DEMO_REDACTED_ADDRESS, DEMO_WETH_ADDRESS, EXECUTION_ROUTER_ADDRESS } = await import('../config');
+    let callData: string | undefined;
+    try {
+      if ((result as any)?.plan) {
+        const { encodeFunctionData } = await import('viem');
+        const executeBySenderAbi = [
+          {
+            name: 'executeBySender',
+            type: 'function',
+            stateMutability: 'nonpayable',
+            inputs: [
+              {
+                name: 'plan',
+                type: 'tuple',
+                components: [
+                  { name: 'user', type: 'address' },
+                  { name: 'nonce', type: 'uint256' },
+                  { name: 'deadline', type: 'uint256' },
+                  {
+                    name: 'actions',
+                    type: 'tuple[]',
+                    components: [
+                      { name: 'actionType', type: 'uint8' },
+                      { name: 'adapter', type: 'address' },
+                      { name: 'data', type: 'bytes' },
+                    ],
+                  },
+                ],
+              },
+            ],
+            outputs: [],
+          },
+        ] as const;
+        callData = encodeFunctionData({
+          abi: executeBySenderAbi,
+          functionName: 'executeBySender',
+          args: [(result as any).plan],
+        });
+      }
+    } catch (encodeErr: any) {
+      console.warn('[api/execute/prepare] Failed to encode callData:', encodeErr?.message);
+    }
     
     // Telemetry: log prepare success
     const actionTypes = result.plan?.actions?.map((a: any) => a.actionType) || [];
@@ -2272,7 +2321,8 @@ app.post('/api/execute/prepare', maybeCheckAccess, async (req, res) => {
       plan: result.plan,
       planHash: (result as any).planHash, // V1: Include server-computed planHash
       typedData: result.typedData,
-      call: result.call,
+      call: callData || result.call,
+      callData,
       requirements: result.requirements,
       summary: result.summary,
       warnings: result.warnings,

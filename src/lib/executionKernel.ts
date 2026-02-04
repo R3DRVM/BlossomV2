@@ -262,6 +262,57 @@ export async function executePlan(
 
         // Check for specific error codes
         const checkCode = errorCode || (data.error?.code);
+        const isSessionNotCreated =
+          checkCode === 'SESSION_NOT_CREATED' ||
+          checkCode === 'SESSION_NOT_FOUND' ||
+          String(errorMessage || '').toLowerCase().includes('not_created') ||
+          String(errorMessage || '').toLowerCase().includes('session');
+
+        // Auto-heal stale session IDs once: recreate session and retry relayed execution.
+        if (isSessionNotCreated && userAddr) {
+          try {
+            const prepareSessionResponse = await callAgent('/api/session/prepare', {
+              method: 'POST',
+              body: JSON.stringify({ userAddress: params.userAddress }),
+            });
+            if (prepareSessionResponse.ok) {
+              const prepareSessionData = await prepareSessionResponse.json();
+              const recreatedSessionId = prepareSessionData?.session?.sessionId;
+              if (typeof window !== 'undefined' && recreatedSessionId) {
+                localStorage.setItem(sessionIdKey, recreatedSessionId);
+                localStorage.setItem(`blossom_session_${userAddr}`, recreatedSessionId);
+              }
+
+              if (recreatedSessionId && recreatedSessionId.length === 66) {
+                const retryResponse = await callAgent('/api/execute/relayed', {
+                  method: 'POST',
+                  body: JSON.stringify({
+                    draftId: params.draftId,
+                    userAddress: params.userAddress,
+                    sessionId: recreatedSessionId,
+                    plan,
+                  }),
+                });
+                const retryData = await retryResponse.json();
+                if (retryResponse.ok) {
+                  return {
+                    ok: true,
+                    txHash: retryData.txHash,
+                    receiptStatus: retryData.status === 'success' ? 'confirmed' : 'pending',
+                    mode: 'relayed',
+                    explorerUrl: retryData.explorerUrl,
+                    portfolio: retryData.portfolio,
+                    blockNumber: retryData.blockNumber,
+                    notes: retryData.notes,
+                  };
+                }
+              }
+            }
+          } catch (sessionRetryError) {
+            console.warn(`${logPrefix} Session auto-retry failed:`, sessionRetryError);
+          }
+        }
+
         if (checkCode === 'VENUE_NOT_CONFIGURED' || checkCode === 'ADAPTER_NOT_ALLOWED' || checkCode === 'ADAPTER_MISSING') {
           return {
             ok: false,
