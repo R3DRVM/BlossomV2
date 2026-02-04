@@ -140,33 +140,53 @@ export async function estimatePlanSpend(plan: {
         }
       } else if (action.actionType === 6) {
         // PROOF action (perps/events)
-        // In our MVP, proof/event actions encode (bytes32 marketId, uint8 outcome, uint256 amount)
-        // Treat amount (6-decimal) as spend-equivalent for policy checks.
+        // In session mode, proof/event actions may be wrapped as (maxSpendUnits, innerData)
         instrumentType = 'event';
         try {
-          const decoded = decodeAbiParameters(
-            [{ type: 'bytes32' }, { type: 'uint8' }, { type: 'uint256' }],
+          const decodedWrapped = decodeAbiParameters(
+            [{ type: 'uint256' }, { type: 'bytes' }],
             action.data as `0x${string}`
           );
-          const amount = decoded[2];
-          totalSpendWei += amount * BigInt(1e12); // Convert 6-decimal token to wei-equivalent
+          const maxSpendUnits = decodedWrapped[0];
+          totalSpendWei += maxSpendUnits * BigInt(1e12); // Convert 6-decimal token to wei-equivalent
         } catch {
-          // If it isn't event-shaped, fall back conservatively but remain determinable.
-          totalSpendWei += BigInt(parseUnits('0.1', 18));
+          // Raw event format: (bytes32 marketId, uint8 outcome, uint256 amount)
+          try {
+            const decoded = decodeAbiParameters(
+              [{ type: 'bytes32' }, { type: 'uint8' }, { type: 'uint256' }],
+              action.data as `0x${string}`
+            );
+            const amount = decoded[2];
+            totalSpendWei += amount * BigInt(1e12); // Convert 6-decimal token to wei-equivalent
+          } catch {
+            // If it isn't event-shaped, fall back conservatively but remain determinable.
+            totalSpendWei += BigInt(parseUnits('0.1', 18));
+          }
         }
       } else if (action.actionType === 7) {
         // PERP action: (bytes32 market, bool isLong, uint256 size, uint256 leverage)
         instrumentType = 'perp';
         try {
-          const decoded = decodeAbiParameters(
-            [{ type: 'bytes32' }, { type: 'bool' }, { type: 'uint256' }, { type: 'uint256' }],
+          // Session-wrapped format: (maxSpendUnits, innerData)
+          const decodedWrapped = decodeAbiParameters(
+            [{ type: 'uint256' }, { type: 'bytes' }],
             action.data as `0x${string}`
           );
-          const size = decoded[2];
-          totalSpendWei += size * BigInt(1e12); // size is 6-decimal USD units
+          const maxSpendUnits = decodedWrapped[0];
+          totalSpendWei += maxSpendUnits * BigInt(1e12);
         } catch {
-          // Conservative fallback
-          totalSpendWei += BigInt(parseUnits('0.1', 18));
+          try {
+            // Raw perp format (fallback for non-session execution)
+            const decoded = decodeAbiParameters(
+              [{ type: 'bytes32' }, { type: 'bool' }, { type: 'uint256' }, { type: 'uint256' }],
+              action.data as `0x${string}`
+            );
+            const size = decoded[2];
+            totalSpendWei += size * BigInt(1e12); // size is 6-decimal USD units
+          } catch {
+            // Conservative fallback
+            totalSpendWei += BigInt(parseUnits('0.1', 18));
+          }
         }
       } else {
         // Unknown action type
