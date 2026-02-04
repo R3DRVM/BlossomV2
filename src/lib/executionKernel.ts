@@ -299,8 +299,43 @@ export async function executePlan(
                       errorCode: 'SESSION_SETUP_REQUIRED',
                     };
                   }
-                  // Give chain/indexers a moment before relayed retry.
-                  await new Promise((resolve) => setTimeout(resolve, 6000));
+
+                  // Wait for the session creation tx to confirm before retrying relayed execution.
+                  let sessionCreatedConfirmed = false;
+                  for (let i = 0; i < 24; i++) {
+                    await new Promise((resolve) => setTimeout(resolve, 2000));
+                    try {
+                      const statusResponse = await callAgent(`/api/execute/status?txHash=${encodeURIComponent(createSessionTxHash)}`, {
+                        method: 'GET',
+                      });
+                      if (!statusResponse.ok) continue;
+                      const statusData = await statusResponse.json();
+                      const status = String(statusData?.status || '').toLowerCase();
+                      if (status === 'confirmed') {
+                        sessionCreatedConfirmed = true;
+                        break;
+                      }
+                      if (status === 'reverted' || status === 'failed') {
+                        return {
+                          ok: false,
+                          mode: 'wallet',
+                          error: 'Session creation transaction reverted. Please re-enable One-Click and retry.',
+                          errorCode: 'SESSION_SETUP_FAILED',
+                        };
+                      }
+                    } catch {
+                      // keep polling
+                    }
+                  }
+
+                  if (!sessionCreatedConfirmed) {
+                    return {
+                      ok: false,
+                      mode: 'wallet',
+                      error: 'Session creation is still pending. Wait a few seconds and retry.',
+                      errorCode: 'SESSION_SETUP_PENDING',
+                    };
+                  }
                 } catch (createSessionError) {
                   console.warn(`${logPrefix} Session creation transaction failed:`, createSessionError);
                   return {
@@ -314,6 +349,8 @@ export async function executePlan(
               if (typeof window !== 'undefined' && recreatedSessionId) {
                 localStorage.setItem(sessionIdKey, recreatedSessionId);
                 localStorage.setItem(`blossom_session_${userAddr}`, recreatedSessionId);
+                localStorage.setItem(enabledKey, 'true');
+                localStorage.setItem(authorizedKey, 'true');
               }
 
               if (recreatedSessionId && recreatedSessionId.length === 66) {
