@@ -3866,6 +3866,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
             if (err && typeof err === 'object') return JSON.stringify(err);
             return 'Execution failed. Strategy remains pending.';
           };
+          let shouldRunManualFallback = false;
 
           if (!result.ok) {
             const errorText = String(result.error || '').toLowerCase();
@@ -3883,6 +3884,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
                 timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
               };
               appendMessageToChat(targetChatId, fallbackMessage);
+              shouldRunManualFallback = true;
             } else {
               const errorMessage: ChatMessage = {
                 id: `error-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
@@ -3895,87 +3897,88 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
             }
           }
 
-          // TRUTHFUL UI: Only proceed if we have a real txHash (relayed or wallet mode)
-          if (result.mode === 'simulated' || result.mode === 'unsupported') {
-            const simulatedMessage: ChatMessage = {
-              id: `simulated-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-              text: `⚠️ ${result.mode === 'simulated' ? 'Simulated' : 'Not supported'}: ${safeErrorText(result.error)}`,
-              isUser: false,
-              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
-            };
-            appendMessageToChat(targetChatId, simulatedMessage);
-            // Don't mark as executed - keep as draft/pending
-            return;
-          }
+          if (!shouldRunManualFallback) {
+            // TRUTHFUL UI: Only proceed if we have a real txHash (relayed or wallet mode)
+            if (result.mode === 'simulated' || result.mode === 'unsupported') {
+              const simulatedMessage: ChatMessage = {
+                id: `simulated-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                text: `⚠️ ${result.mode === 'simulated' ? 'Simulated' : 'Not supported'}: ${safeErrorText(result.error)}`,
+                isUser: false,
+                timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+              };
+              appendMessageToChat(targetChatId, simulatedMessage);
+              // Don't mark as executed - keep as draft/pending
+              return;
+            }
 
-          // Only continue if we have txHash (relayed or wallet mode with confirmed tx)
-          if (!result.txHash) {
-            const pendingMessage: ChatMessage = {
-              id: `pending-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-              text: 'Execution pending confirmation. Strategy remains pending.',
-              isUser: false,
-              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
-            };
-            appendMessageToChat(targetChatId, pendingMessage);
-            return; // Don't mark as executed
-          }
+            // Only continue if we have txHash (relayed or wallet mode with confirmed tx)
+            if (!result.txHash) {
+              const pendingMessage: ChatMessage = {
+                id: `pending-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                text: 'Execution pending confirmation. Strategy remains pending.',
+                isUser: false,
+                timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+              };
+              appendMessageToChat(targetChatId, pendingMessage);
+              return; // Don't mark as executed
+            }
 
-          // Update portfolio if available
-          if (result.portfolio) {
-            updateFromBackendPortfolio(result.portfolio);
-          }
+            // Update portfolio if available
+            if (result.portfolio) {
+              updateFromBackendPortfolio(result.portfolio);
+            }
 
-          // Fallback: fetch latest backend portfolio snapshot to reflect balances/positions immediately
-          try {
-            const portfolioResponse = await callAgent(`/api/portfolio/eth_testnet?userAddress=${encodeURIComponent(userAddress)}`, {
-              method: 'GET',
-            });
-            if (portfolioResponse.ok) {
-              const portfolioData = await portfolioResponse.json();
-              if (portfolioData?.portfolio) {
-                updateFromBackendPortfolio(portfolioData.portfolio);
-              } else if (portfolioData) {
-                updateFromBackendPortfolio(portfolioData);
+            // Fallback: fetch latest backend portfolio snapshot to reflect balances/positions immediately
+            try {
+              const portfolioResponse = await callAgent(`/api/portfolio/eth_testnet?userAddress=${encodeURIComponent(userAddress)}`, {
+                method: 'GET',
+              });
+              if (portfolioResponse.ok) {
+                const portfolioData = await portfolioResponse.json();
+                if (portfolioData?.portfolio) {
+                  updateFromBackendPortfolio(portfolioData.portfolio);
+                } else if (portfolioData) {
+                  updateFromBackendPortfolio(portfolioData);
+                }
+              }
+            } catch (portfolioSyncError) {
+              if (import.meta.env.DEV) {
+                console.warn('[handleConfirmTrade] Portfolio sync after execution failed:', portfolioSyncError);
               }
             }
-          } catch (portfolioSyncError) {
-            if (import.meta.env.DEV) {
-              console.warn('[handleConfirmTrade] Portfolio sync after execution failed:', portfolioSyncError);
+
+            // Trigger wallet balance refresh after successful execution
+            window.dispatchEvent(new CustomEvent('blossom-wallet-connection-change'));
+
+            // Refresh positions from ledger to show in positions tray (don't await to not block)
+            refreshLedgerPositions();
+
+            // Handle receipt status
+            if (result.receiptStatus === 'failed') {
+              const failedMessage: ChatMessage = {
+                id: `tx-failed-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                text: `Transaction failed on-chain. Check: ${result.explorerUrl || `https://sepolia.etherscan.io/tx/${result.txHash}`}`,
+                isUser: false,
+                timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+              };
+              appendMessageToChat(targetChatId, failedMessage);
+              return; // Don't mark as executed
+            } else if (result.receiptStatus === 'timeout') {
+              const timeoutMessage: ChatMessage = {
+                id: `tx-timeout-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                text: `Transaction pending confirmation. Check status: ${result.explorerUrl || `https://sepolia.etherscan.io/tx/${result.txHash}`}`,
+                isUser: false,
+                timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+              };
+              appendMessageToChat(targetChatId, timeoutMessage);
+              return; // Don't mark as executed
+            } else if (result.receiptStatus !== 'confirmed') {
+              // Receipt still pending
+              if (import.meta.env.DEV) {
+                console.log('[handleConfirmTrade] Receipt still pending, not updating portfolio');
+              }
+              return; // Wait for receipt confirmation
             }
-          }
-
-          // Trigger wallet balance refresh after successful execution
-          window.dispatchEvent(new CustomEvent('blossom-wallet-connection-change'));
-
-          // Refresh positions from ledger to show in positions tray (don't await to not block)
-          refreshLedgerPositions();
-
-          // Handle receipt status
-          if (result.receiptStatus === 'failed') {
-            const failedMessage: ChatMessage = {
-              id: `tx-failed-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-              text: `Transaction failed on-chain. Check: ${result.explorerUrl || `https://sepolia.etherscan.io/tx/${result.txHash}`}`,
-              isUser: false,
-              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
-            };
-            appendMessageToChat(targetChatId, failedMessage);
-            return; // Don't mark as executed
-          } else if (result.receiptStatus === 'timeout') {
-            const timeoutMessage: ChatMessage = {
-              id: `tx-timeout-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-              text: `Transaction pending confirmation. Check status: ${result.explorerUrl || `https://sepolia.etherscan.io/tx/${result.txHash}`}`,
-              isUser: false,
-              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
-            };
-            appendMessageToChat(targetChatId, timeoutMessage);
-            return; // Don't mark as executed
-          } else if (result.receiptStatus !== 'confirmed') {
-            // Receipt still pending
-            if (import.meta.env.DEV) {
-              console.log('[handleConfirmTrade] Receipt still pending, not updating portfolio');
-            }
-            return; // Wait for receipt confirmation
-          }
 
           // TRUTHFUL UI: Only show "Executed" and Etherscan link if txHash exists
           if (result.txHash && result.routing) {
@@ -4043,24 +4046,29 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
             appendMessageToChat(targetChatId, txMessage);
           }
 
-          // Start polling transaction status
-          if (result.txHash) {
-            pollTransactionStatus(result.txHash, targetChatId);
-          }
-          
-          // TRUTHFUL UI: Only mark as executed if we have txHash and receipt is confirmed
-          if (result.txHash && result.receiptStatus === 'confirmed') {
-            // Set state to executing, then mark as executed
-            setChatMode({ mode: 'executing', draftId });
-            updateStrategyStatus(draftId, 'queued');
-            setTimeout(() => {
-              updateStrategyStatus(draftId, 'executing');
+            // Start polling transaction status
+            if (result.txHash) {
+              pollTransactionStatus(result.txHash, targetChatId);
+            }
+            
+            // TRUTHFUL UI: Only mark as executed if we have txHash and receipt is confirmed
+            if (result.txHash && result.receiptStatus === 'confirmed') {
+              // Set state to executing, then mark as executed
+              setChatMode({ mode: 'executing', draftId });
+              updateStrategyStatus(draftId, 'queued');
               setTimeout(() => {
-                updateStrategyStatus(draftId, 'executed');
+                updateStrategyStatus(draftId, 'executing');
+                setTimeout(() => {
+                  updateStrategyStatus(draftId, 'executed');
+                }, 500);
               }, 500);
-            }, 500);
+            }
+            return; // Exit early - execution complete via one-click
           }
-          return; // Exit early - execution complete via one-click
+
+          if (import.meta.env.DEV) {
+            console.log('[handleConfirmTrade] Falling back from session relay to manual execution path');
+          }
         }
         
         // Direct execution path (no one-click or one-click unavailable)
