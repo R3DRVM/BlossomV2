@@ -57,3 +57,5 @@ access-codes-*.txt
 
 # Strict mode: do not track Markdown files
 *.md
+
+.claude 
