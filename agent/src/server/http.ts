@@ -2252,7 +2252,64 @@ app.post('/api/execute/prepare', maybeCheckAccess, async (req, res) => {
     const result = await prepareEthTestnetExecution(req.body);
 
     // Include demo token addresses for frontend approval flow
-    const { DEMO_REDACTED_ADDRESS, DEMO_WETH_ADDRESS, EXECUTION_ROUTER_ADDRESS } = await import('../config');
+    const { DEMO_REDACTED_ADDRESS, DEMO_WETH_ADDRESS, EXECUTION_ROUTER_ADDRESS, ETH_TESTNET_RPC_URL } = await import('../config');
+
+    // Guard: verify all plan adapters are globally allowlisted in the router.
+    // This prevents wallet prompts for transactions that would always revert.
+    if (result?.plan?.actions?.length && EXECUTION_ROUTER_ADDRESS && ETH_TESTNET_RPC_URL) {
+      const { eth_call, decodeBool } = await import('../executors/evmRpc');
+      const { encodeFunctionData } = await import('viem');
+      const isAdapterAllowedAbi = [
+        {
+          name: 'isAdapterAllowed',
+          type: 'function',
+          stateMutability: 'view',
+          inputs: [{ name: '', type: 'address' }],
+          outputs: [{ name: '', type: 'bool' }],
+        },
+      ] as const;
+
+      for (const [index, action] of result.plan.actions.entries()) {
+        const adapter = action?.adapter;
+        if (!adapter || !/^0x[a-fA-F0-9]{40}$/.test(adapter)) {
+          return res.status(400).json({
+            ok: false,
+            error: 'Invalid adapter on prepared plan action',
+            errorCode: 'INVALID_ADAPTER',
+            details: { index, adapter },
+            correlationId,
+          });
+        }
+
+        try {
+          const data = encodeFunctionData({
+            abi: isAdapterAllowedAbi,
+            functionName: 'isAdapterAllowed',
+            args: [adapter as `0x${string}`],
+          });
+          const callResult = await eth_call(ETH_TESTNET_RPC_URL, EXECUTION_ROUTER_ADDRESS, data);
+          const isAllowed = decodeBool(callResult);
+          if (!isAllowed) {
+            return res.status(400).json({
+              ok: false,
+              error: 'Prepared plan uses adapter not allowlisted in router',
+              errorCode: 'ADAPTER_NOT_ALLOWED',
+              details: { index, adapter },
+              correlationId,
+            });
+          }
+        } catch (adapterCheckError: any) {
+          return res.status(400).json({
+            ok: false,
+            error: 'Failed to verify adapter allowlist status',
+            errorCode: 'ADAPTER_CHECK_FAILED',
+            details: { index, adapter, message: adapterCheckError.message },
+            correlationId,
+          });
+        }
+      }
+    }
+
     let callData: string | undefined;
     try {
       if ((result as any)?.plan) {
@@ -3119,6 +3176,8 @@ app.post('/api/session/prepare', async (req, res) => {
       PROOF_ADAPTER_ADDRESS,
       DEMO_LEND_ADAPTER_ADDRESS,
       AAVE_ADAPTER_ADDRESS,
+      DEMO_PERP_ADAPTER_ADDRESS,
+      DEMO_EVENT_ADAPTER_ADDRESS,
       RELAYER_PRIVATE_KEY,
       ETH_TESTNET_RPC_URL,
       requireRelayerConfig,
@@ -3172,33 +3231,66 @@ app.post('/api/session/prepare', async (req, res) => {
     const expiresAt = BigInt(Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60); // 7 days
     const maxSpend = BigInt(parseUnits('10', 18)); // 10 ETH max spend (in wei)
 
-    // Build allowed adapters list (include all configured adapters)
+    // Build allowed adapters list (include all configured adapters that are globally allowlisted in router)
+    const configuredAdapters = [
+      MOCK_SWAP_ADAPTER_ADDRESS,
+      UNISWAP_V3_ADAPTER_ADDRESS,
+      WETH_WRAP_ADAPTER_ADDRESS,
+      ERC20_PULL_ADAPTER_ADDRESS,
+      PROOF_ADAPTER_ADDRESS,
+      DEMO_LEND_ADAPTER_ADDRESS,
+      AAVE_ADAPTER_ADDRESS,
+      DEMO_PERP_ADAPTER_ADDRESS,
+      DEMO_EVENT_ADAPTER_ADDRESS,
+    ]
+      .filter((addr): addr is string => !!addr && /^0x[a-fA-F0-9]{40}$/.test(addr))
+      .map((addr) => addr.toLowerCase() as `0x${string}`);
+
+    const dedupedConfiguredAdapters = Array.from(new Set(configuredAdapters));
+
+    const isAdapterAllowedAbi = [
+      {
+        name: 'isAdapterAllowed',
+        type: 'function',
+        stateMutability: 'view',
+        inputs: [{ name: '', type: 'address' }],
+        outputs: [{ name: '', type: 'bool' }],
+      },
+    ] as const;
+
     const allowedAdapters: `0x${string}`[] = [];
-    if (MOCK_SWAP_ADAPTER_ADDRESS) {
-      allowedAdapters.push(MOCK_SWAP_ADAPTER_ADDRESS.toLowerCase() as `0x${string}`);
-    }
-    if (UNISWAP_V3_ADAPTER_ADDRESS) {
-      allowedAdapters.push(UNISWAP_V3_ADAPTER_ADDRESS.toLowerCase() as `0x${string}`);
-    }
-    if (WETH_WRAP_ADAPTER_ADDRESS) {
-      allowedAdapters.push(WETH_WRAP_ADAPTER_ADDRESS.toLowerCase() as `0x${string}`);
-    }
-    if (ERC20_PULL_ADAPTER_ADDRESS) {
-      allowedAdapters.push(ERC20_PULL_ADAPTER_ADDRESS.toLowerCase() as `0x${string}`);
-    }
-    if (PROOF_ADAPTER_ADDRESS) {
-      allowedAdapters.push(PROOF_ADAPTER_ADDRESS.toLowerCase() as `0x${string}`);
-    }
-    if (DEMO_LEND_ADAPTER_ADDRESS) {
-      allowedAdapters.push(DEMO_LEND_ADAPTER_ADDRESS.toLowerCase() as `0x${string}`);
-    }
-    if (AAVE_ADAPTER_ADDRESS) {
-      allowedAdapters.push(AAVE_ADAPTER_ADDRESS.toLowerCase() as `0x${string}`);
+    const skippedAdapters: string[] = [];
+
+    if (EXECUTION_ROUTER_ADDRESS && ETH_TESTNET_RPC_URL) {
+      const { eth_call, decodeBool } = await import('../executors/evmRpc');
+      const { encodeFunctionData } = await import('viem');
+      for (const adapter of dedupedConfiguredAdapters) {
+        try {
+          const data = encodeFunctionData({
+            abi: isAdapterAllowedAbi,
+            functionName: 'isAdapterAllowed',
+            args: [adapter],
+          });
+          const result = await eth_call(ETH_TESTNET_RPC_URL, EXECUTION_ROUTER_ADDRESS, data);
+          const isAllowed = decodeBool(result);
+          if (isAllowed) {
+            allowedAdapters.push(adapter);
+          } else {
+            skippedAdapters.push(adapter);
+          }
+        } catch (adapterCheckError: any) {
+          skippedAdapters.push(`${adapter} (check_error: ${adapterCheckError.message})`);
+        }
+      }
+    } else {
+      // If we cannot verify on-chain allowlist, keep existing configured adapters (best effort).
+      allowedAdapters.push(...dedupedConfiguredAdapters);
     }
 
     if (allowedAdapters.length === 0) {
       return res.status(400).json({
-        error: 'No adapters configured. At least one adapter must be configured.',
+        error: 'No globally allowlisted adapters are configured for session creation.',
+        notes: skippedAdapters,
       });
     }
 
@@ -3304,6 +3396,7 @@ app.post('/api/session/prepare', async (req, res) => {
         value: '0x0',
         summary: `Create session for ${userAddress.substring(0, 10)}... with executor ${executor.substring(0, 10)}...`,
         capabilitySnapshot, // V1: Include capability snapshot
+        skippedAdapters,
       },
       correlationId, // Include correlationId for client tracing
       cooldownMs: SESSION_COOLDOWN_MS,
