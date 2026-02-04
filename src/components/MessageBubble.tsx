@@ -511,7 +511,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                               // P0 Fix: Use natural language instead of coded string
                               // Old: `Allocate amountPct:"10" to protocol:"${protocolName}" REDACTED yield`
                               // New: Natural language that the LLM/parser can understand
-                              const messageText = `Deposit 10% of my REDACTED into ${protocolName}`;
+                              const messageText = `Deposit 10% of my bUSDC into ${protocolName}`;
 
                               // Prefer auto-send if available, otherwise fall back to insert prompt
                               if (onSendMessage) {
@@ -532,7 +532,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                               // P0 Fix: Use natural language instead of coded string
                               // Old: `Allocate amountUsd:"500" to protocol:"${protocolName}" REDACTED yield`
                               // New: Natural language that the LLM/parser can understand
-                              const messageText = `Deposit $500 REDACTED into ${protocolName}`;
+                              const messageText = `Deposit $500 bUSDC into ${protocolName}`;
 
                               // Prefer auto-send if available, otherwise fall back to insert prompt
                               if (onSendMessage) {
@@ -906,7 +906,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                   {((currentStrategy as any).executionNote || currentStrategy.marginUsd === 0 || 
                     (currentStrategy.marginUsd && currentStrategy.marginUsd < (strategy.riskPercent / 100) * account.accountValue)) && (
                     <span className="block mt-0.5 text-[10px] text-slate-400 italic">
-                      Perps are collateralized by REDACTED only in this demo.
+                      Perps are collateralized by bUSDC only in this demo.
                     </span>
                   )}
                   {(currentStrategy as any).executionNote && (
@@ -945,7 +945,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
             {isBlocked && (
               <div className="pt-1.5 border-t border-blossom-outline/50 space-y-2">
                 <div className="text-[11px] text-amber-700 mb-2 px-1">
-                  {(currentStrategy as any)?.executionNote || 'Insufficient REDACTED collateral to open this position.'}
+                  {(currentStrategy as any)?.executionNote || 'Insufficient bUSDC collateral to open this position.'}
                 </div>
                 <button 
                   onClick={(e) => {
@@ -961,7 +961,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                   }}
                   className="w-full h-10 px-4 text-sm font-medium rounded-xl transition-all bg-amber-500 hover:bg-amber-600 text-white shadow-sm"
                 >
-                  Fund REDACTED
+                  Fund bUSDC
                 </button>
               </div>
             )}
@@ -1284,7 +1284,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
               </div>
             </div>
             <div className="text-[11px] text-blossom-slate mb-2 pt-1.5 border-t border-blossom-outline/50">
-              <div className="mb-1">Choosing the highest APY within your risk band using idle REDACTED.</div>
+              <div className="mb-1">Choosing the highest APY within your risk band using idle bUSDC.</div>
               <div className="text-[10px] text-slate-400">Execution (simulated): Bridge → Swap → Deposit</div>
             </div>
             {defiProposal.status === 'proposed' ? (

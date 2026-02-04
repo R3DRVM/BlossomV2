@@ -1127,6 +1127,10 @@ export interface StatsSummary {
   successRateAdjusted: number; // Success rate excluding RPC/infra failures
   uniqueWallets: number; // Unique wallet addresses
   totalUsdRouted: number;
+  totalFeeBlsmUsdc: number;
+  feeBps: number;
+  feeTokenSymbol: string;
+  feeTreasuryAddress: string | null;
   relayedTxCount: number;
   chainsActive: string[];
   byKind: { kind: string; count: number; usdTotal: number }[];
@@ -1138,6 +1142,14 @@ export interface StatsSummary {
 
 export function getSummaryStats(): StatsSummary {
   const db = getDatabase();
+  const rawFeeBps = parseInt(process.env.BLOSSOM_FEE_BPS || '25', 10);
+  const feeBps = Math.min(50, Math.max(10, isNaN(rawFeeBps) ? 25 : rawFeeBps));
+  const feeTokenSymbol = process.env.BLOSSOM_FEE_TOKEN_SYMBOL || 'bUSDC';
+  const feeTreasuryAddress =
+    process.env.BLOSSOM_TREASURY_ADDRESS ||
+    process.env.RELAYER_ADDRESS ||
+    process.env.RELAYER_WALLET_ADDRESS ||
+    null;
 
   // Basic counts
   const totalExec = (db.prepare('SELECT COUNT(*) as count FROM executions').get() as any).count;
@@ -1151,6 +1163,7 @@ export function getSummaryStats(): StatsSummary {
     WHERE status IN ('confirmed', 'finalized') AND usd_estimate IS NOT NULL
   `).get() as { total: number };
   const totalUsdRouted = usdResult.total;
+  const totalFeeBlsmUsdc = totalUsdRouted * (feeBps / 10000);
 
   // Relayed transactions (have relayer_address set)
   const relayedCount = (db.prepare(`
@@ -1243,6 +1256,10 @@ export function getSummaryStats(): StatsSummary {
     successRateAdjusted,
     uniqueWallets,
     totalUsdRouted,
+    totalFeeBlsmUsdc: Math.round(totalFeeBlsmUsdc * 100) / 100,
+    feeBps,
+    feeTokenSymbol,
+    feeTreasuryAddress,
     relayedTxCount: relayedCount,
     chainsActive,
     byKind,

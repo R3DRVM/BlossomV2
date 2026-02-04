@@ -196,7 +196,7 @@ const showLegacyQuickActions = false;
 // @ts-ignore - intentionally unused, kept for potential re-enablement
 const QUICK_PROMPTS_PERPS = [
   'Long ETH with 3% risk and manage liquidation for me',
-  'Park half my idle REDACTED into the safest yield on Kamino',
+  'Park half my idle bUSDC into the safest yield on Kamino',
   'Market-neutral BTC funding strategy',
   'Hedge my SOL spot with perps',
 ];
@@ -1327,7 +1327,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
             // Show plan for confirmation - use planned status to indicate awaiting confirm
             const planMeta = planResult.metadata;
             const planDesc = planMeta?.parsed
-              ? `${planMeta.parsed.action} ${planMeta.parsed.targetAsset || ''} ${planMeta.parsed.leverage ? `${planMeta.parsed.leverage}x` : ''} with ${planMeta.parsed.amount || 'default'} ${planMeta.parsed.amountUnit || 'REDACTED'}`
+              ? `${planMeta.parsed.action} ${planMeta.parsed.targetAsset || ''} ${planMeta.parsed.leverage ? `${planMeta.parsed.leverage}x` : ''} with ${planMeta.parsed.amount || 'default'} ${planMeta.parsed.amountUnit || 'bUSDC'}`
               : userText;
 
             updateMessageInChat(targetChatId, intentMsgId, {
@@ -2153,7 +2153,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
           const totalPositions = activePerps.length + activeEvents.length + activeDefi.length;
 
           if (totalPositions === 0) {
-            const responseText = "You don't have any open positions right now.\n\nYou can:\n• Start a perp trade: \"Long ETH with 3% risk\"\n• Deposit into DeFi: \"Park 500 REDACTED in Aave\"\n• Trade event markets: Switch to Event Markets and \"Take YES on Fed cuts with 2% risk\"";
+            const responseText = "You don't have any open positions right now.\n\nYou can:\n• Start a perp trade: \"Long ETH with 3% risk\"\n• Deposit into DeFi: \"Park 500 bUSDC in Aave\"\n• Trade event markets: Switch to Event Markets and \"Take YES on Fed cuts with 2% risk\"";
             appendMessageToChat(targetChatId, {
               id: `pos-${Date.now()}`,
               text: responseText,

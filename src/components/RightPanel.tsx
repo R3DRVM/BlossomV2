@@ -9,6 +9,7 @@ import { ChevronDown, Clock, LogOut, RefreshCw, ChevronUp, Loader2 } from 'lucid
 import { executionMode, executionAuthMode, ethTestnetChainId, forceDemoPortfolio } from '../lib/config';
 import { getAddress, getAddressIfExplicit, getChainId, connectWallet as legacyConnectWallet, switchToSepolia, getProvider, disconnectWallet as legacyDisconnectWallet, isExplicitlyConnected } from '../lib/walletAdapter';
 import { isBackendHealthy, onBackendHealthChange, AGENT_API_BASE_URL } from '../lib/apiClient';
+import { formatTokenSymbol } from '../lib/tokenBranding';
 import OneClickExecution from './OneClickExecution';
 import ConnectWalletButton, { useWalletStatus } from './wallet/ConnectWalletButton';
 import { useAccount, useChainId as useWagmiChainId, useSwitchChain } from 'wagmi';
@@ -832,10 +833,10 @@ export default function RightPanel(_props: RightPanelProps) {
 
       // Show success toast
       showToast({
-        title: 'Demo REDACTED minted!',
+        title: 'Demo bUSDC minted!',
         description: result.txHash
-          ? `10,000 demo REDACTED sent to your wallet. TX: ${result.txHash.slice(0, 10)}...`
-          : '10,000 demo REDACTED sent to your wallet.',
+          ? `10,000 demo bUSDC sent to your wallet. TX: ${result.txHash.slice(0, 10)}...`
+          : '10,000 demo bUSDC sent to your wallet.',
         variant: 'success'
       });
 
@@ -1114,7 +1115,7 @@ export default function RightPanel(_props: RightPanelProps) {
 
                 return (
                   <div key={balance.symbol} className="flex items-center gap-1">
-                    <span className="text-[11px] font-medium text-slate-600">{balance.symbol}</span>
+                    <span className="text-[11px] font-medium text-slate-600">{formatTokenSymbol(balance.symbol)}</span>
                     <span className="text-[11px] text-slate-500">${displayValue}</span>
                   </div>
                 );
@@ -1131,7 +1132,7 @@ export default function RightPanel(_props: RightPanelProps) {
             >
               {isEthTestnetMode ? 'ETH Faucet' : 'Fund'}
             </button>
-            {/* Demo REDACTED helper - inline next to ETH Faucet */}
+            {/* Demo bUSDC helper - inline next to ETH Faucet */}
             {isEthTestnetMode && walletState === 'CONNECTED_READY' && (() => {
               const usdcBalance = account.balances.find(b => b.symbol === 'REDACTED')?.balanceUsd || 0;
               const hasLowUsdc = usdcBalance < 50;
@@ -1143,7 +1144,7 @@ export default function RightPanel(_props: RightPanelProps) {
 
               return (
                 <span className="flex items-center gap-1.5 text-[9px] text-slate-500">
-                  <span>Need REDACTED?</span>
+                  <span>Need bUSDC?</span>
                   <button
                     onClick={faucetConfigured ? handleGetDemoTokens : undefined}
                     disabled={isDisabled}

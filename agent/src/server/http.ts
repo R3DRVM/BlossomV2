@@ -8157,7 +8157,11 @@ app.get('/api/stats/public', async (req, res) => {
       exec.status === 'confirmed' && (exec.usd_estimate === null || exec.usd_estimate === undefined)
     ).length;
 
-    const safeExecutions = recentExecutions.map(exec => ({
+    const safeExecutions = recentExecutions.map(exec => {
+      const feeBps = summary.feeBps || 25;
+      const isSuccessful = exec.status === 'confirmed' || exec.status === 'finalized';
+      const feeBlsmUsdc = isSuccessful && exec.usd_estimate ? Number(exec.usd_estimate) * (feeBps / 10000) : 0;
+      return ({
       id: exec.id,
       chain: exec.chain,
       network: exec.network,
@@ -8169,8 +8173,10 @@ app.get('/api/stats/public', async (req, res) => {
       created_at: exec.created_at,
       intent_id: exec.intent_id,
       usd_estimate: exec.usd_estimate || null,
-      amount_display: exec.amount_display || null,
-    }));
+      amount_display: (exec.amount_display || null)?.replace?.(/\bREDACTED\b/g, 'bUSDC') ?? null,
+      fee_blsm_usdc: Math.round(feeBlsmUsdc * 10000) / 10000,
+    });
+    });
 
     res.json({
       ok: true,
@@ -8181,6 +8187,10 @@ app.get('/api/stats/public', async (req, res) => {
         successfulExecutions: summary.successfulExecutions || 0,
         successRate: summary.successRate || 0,
         totalUsdRouted: summary.totalUsdRouted || 0,
+        totalFeeBlsmUsdc: summary.totalFeeBlsmUsdc || 0,
+        feeBps: summary.feeBps || 25,
+        feeTokenSymbol: summary.feeTokenSymbol || 'bUSDC',
+        feeTreasuryAddress: summary.feeTreasuryAddress || null,
         uniqueWallets: summary.uniqueWallets || 0,
         chainsActive: summary.chainsActive || [],
         recentIntents: safeIntents || [],
@@ -8202,6 +8212,10 @@ app.get('/api/stats/public', async (req, res) => {
         successfulExecutions: 0,
         successRate: 0,
         totalUsdRouted: 0,
+        totalFeeBlsmUsdc: 0,
+        feeBps: 25,
+        feeTokenSymbol: 'bUSDC',
+        feeTreasuryAddress: null,
         chainsActive: [],
         recentIntents: [],
         recentExecutions: [],

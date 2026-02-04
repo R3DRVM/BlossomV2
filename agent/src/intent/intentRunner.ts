@@ -155,6 +155,14 @@ const INTENT_PATTERNS = {
   },
 };
 
+function normalizeAssetSymbol(asset: string): string {
+  const upper = asset.toUpperCase();
+  if (upper === 'BUSDC' || upper === 'BLSMUSDC' || upper === 'BLOOMUSDC') {
+    return 'REDACTED';
+  }
+  return upper;
+}
+
 /**
  * Parse a natural language intent into structured format
  */
@@ -224,8 +232,8 @@ export function parseIntent(intentText: string): ParsedIntent {
     const match = text.match(pattern);
     if (match) {
       const amount = match[1]?.replace(/,/g, '') || '1000';
-      const fromAsset = match[2].toUpperCase();
-      const toAsset = match[3].toUpperCase();
+      const fromAsset = normalizeAssetSymbol(match[2]);
+      const toAsset = normalizeAssetSymbol(match[3]);
 
       return {
         kind: 'swap',
@@ -243,7 +251,7 @@ export function parseIntent(intentText: string): ParsedIntent {
     const match = text.match(pattern);
     if (match) {
       const amount = match[1]?.replace(/,/g, '') || '1000';
-      const asset = match[2].toUpperCase();
+      const asset = normalizeAssetSymbol(match[2]);
       const venue = match[3]?.toLowerCase() || 'vault';
 
       return {
@@ -262,7 +270,7 @@ export function parseIntent(intentText: string): ParsedIntent {
     const match = text.match(pattern);
     if (match) {
       const amount = match[1]?.replace(/,/g, '') || '1000';
-      const asset = match[2].toUpperCase();
+      const asset = normalizeAssetSymbol(match[2]);
       const sourceChain = match[3].toLowerCase();
       const destChain = match[4].toLowerCase();
 

@@ -33,6 +33,7 @@ import {
 import { Link } from 'react-router-dom';
 import { executeIntent, getAgentApiBaseUrl, type IntentExecutionResult } from '../lib/apiClient';
 import { formatUsdDashboard, formatNumberDashboard, formatTime, truncateAddress, truncateHash } from '../utils/formatters';
+import { brandStableText, DEMO_STABLE_BRAND_SYMBOL } from '../lib/tokenBranding';
 
 // The secret MUST be configured in env for dev mode
 const LEDGER_SECRET = import.meta.env.VITE_DEV_LEDGER_SECRET || '';
@@ -52,6 +53,10 @@ interface StatsSummary {
   successRateAdjusted?: number; // Success rate excluding RPC/infra failures
   uniqueWallets?: number; // Unique wallet addresses
   totalUsdRouted: number;
+  totalFeeBlsmUsdc?: number;
+  feeBps?: number;
+  feeTokenSymbol?: string;
+  feeTreasuryAddress?: string | null;
   relayedTxCount: number;
   chainsActive: string[];
   byKind: { kind: string; count: number; usdTotal: number }[];
@@ -104,6 +109,7 @@ interface Execution {
   amount_units?: string;
   amount_display?: string;
   usd_estimate?: number;
+  fee_blsm_usdc?: number;
   usd_estimate_is_estimate?: number;
   tx_hash?: string;
   status: string;
@@ -150,7 +156,7 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
   const [apiHealth, setApiHealth] = useState<'healthy' | 'error' | 'unknown'>('unknown');
 
   // Verification panel state
-  const [verifyIntent, setVerifyIntent] = useState('swap 0.001 ETH to REDACTED');
+  const [verifyIntent, setVerifyIntent] = useState(`swap 0.001 ETH to ${DEMO_STABLE_BRAND_SYMBOL}`);
   const [verifyChain, setVerifyChain] = useState<'ethereum' | 'solana'>('ethereum');
   const [verifyRunning, setVerifyRunning] = useState(false);
   const [verifyResult, setVerifyResult] = useState<IntentExecutionResult | null>(null);
@@ -208,6 +214,10 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
             failedExecutions: (publicData.totalExecutions || 0) - (publicData.successfulExecutions || 0),
             successRate: publicData.successRate || 0,
             totalUsdRouted: publicData.totalUsdRouted || 0,
+            totalFeeBlsmUsdc: publicData.totalFeeBlsmUsdc || 0,
+            feeBps: publicData.feeBps || 25,
+            feeTokenSymbol: publicData.feeTokenSymbol || DEMO_STABLE_BRAND_SYMBOL,
+            feeTreasuryAddress: publicData.feeTreasuryAddress || null,
             relayedTxCount: 0, // Not in public stats
             chainsActive: publicData.chainsActive || [],
             byKind: [],
@@ -510,17 +520,31 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
               </div>
             </div>
 
-            {/* USD Routed */}
+            {/* bUSDC Routed */}
             <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
               <div className="flex items-center gap-2 mb-2">
                 <DollarSign className="w-4 h-4 text-green-600" />
-                <span className="text-xs text-gray-500 uppercase tracking-wide">USD Routed</span>
+                <span className="text-xs text-gray-500 uppercase tracking-wide">{DEMO_STABLE_BRAND_SYMBOL} Routed</span>
               </div>
               <div className="text-2xl font-mono font-bold text-green-600">
                 {stats ? formatUsdDashboard(stats.totalUsdRouted) : '-'}
               </div>
               <div className="text-xs text-gray-500 mt-1">
                 estimated value
+              </div>
+            </div>
+
+            {/* Protocol Revenue */}
+            <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
+              <div className="flex items-center gap-2 mb-2">
+                <DollarSign className="w-4 h-4 text-emerald-700" />
+                <span className="text-xs text-gray-500 uppercase tracking-wide">Protocol Revenue</span>
+              </div>
+              <div className="text-2xl font-mono font-bold text-emerald-700">
+                {stats ? formatUsdDashboard(stats.totalFeeBlsmUsdc || 0) : '-'}
+              </div>
+              <div className="text-xs text-gray-500 mt-1">
+                {(stats?.feeBps ?? 25) / 100}% fee in {stats?.feeTokenSymbol || DEMO_STABLE_BRAND_SYMBOL}
               </div>
             </div>
 
@@ -750,6 +774,7 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
                       <th className="px-3 py-2 font-medium">Kind</th>
                       <th className="px-3 py-2 font-medium">Venue</th>
                       <th className="px-3 py-2 font-medium text-right">USD Est.</th>
+                      <th className="px-3 py-2 font-medium text-right">Fee</th>
                       <th className="px-3 py-2 font-medium">Status</th>
                       <th className="px-3 py-2 font-medium">Time</th>
                       <th className="px-3 py-2 font-medium">Relayed</th>
@@ -793,6 +818,17 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
                             {exec.usd_estimate_is_estimate === 1 && (
                               <span className="text-gray-500 text-xs ml-1">~</span>
                             )}
+                          </td>
+                          <td className="px-3 py-2 text-right text-emerald-700">
+                            {(() => {
+                              const computedFee = exec.fee_blsm_usdc ??
+                                ((exec.status === 'confirmed' || exec.status === 'finalized') && exec.usd_estimate
+                                  ? exec.usd_estimate * ((stats?.feeBps ?? 25) / 10000)
+                                  : 0);
+                              return computedFee > 0
+                                ? `${formatUsdDashboard(computedFee)} ${stats?.feeTokenSymbol || DEMO_STABLE_BRAND_SYMBOL}`
+                                : '-';
+                            })()}
                           </td>
                           <td className="px-3 py-2">
                             <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs ${
@@ -862,7 +898,7 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
                         {/* Expanded Row - Execution Steps */}
                         {expandedExecution === exec.id && (
                           <tr key={`${exec.id}-steps`}>
-                            <td colSpan={10} className="bg-gray-100 p-4">
+                            <td colSpan={11} className="bg-gray-100 p-4">
                               <div className="pl-8">
                                 <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
                                   Execution Details
@@ -889,13 +925,19 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
                                   {exec.token && (
                                     <div>
                                       <span className="text-gray-500">Token:</span>
-                                      <span className="text-gray-900 ml-2">{exec.token}</span>
+                                      <span className="text-gray-900 ml-2">{brandStableText(exec.token)}</span>
                                     </div>
                                   )}
                                   {exec.amount_display && (
                                     <div>
                                       <span className="text-gray-500">Amount:</span>
-                                      <span className="text-gray-900 ml-2">{exec.amount_display}</span>
+                                      <span className="text-gray-900 ml-2">{brandStableText(exec.amount_display)}</span>
+                                    </div>
+                                  )}
+                                  {stats?.feeTreasuryAddress && (
+                                    <div className="col-span-2">
+                                      <span className="text-gray-500">Treasury:</span>
+                                      <span className="text-gray-900 ml-2 font-mono">{truncateAddress(stats.feeTreasuryAddress)}</span>
                                     </div>
                                   )}
                                   {exec.latency_ms && (
@@ -1015,7 +1057,7 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
                 type="text"
                 value={verifyIntent}
                 onChange={(e) => setVerifyIntent(e.target.value)}
-                placeholder="e.g., swap 0.001 ETH to REDACTED"
+                placeholder={`e.g., swap 0.001 ETH to ${DEMO_STABLE_BRAND_SYMBOL}`}
                 className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-gray-900 placeholder-[#555] focus:border-[#666] focus:outline-none text-sm"
               />
             </div>
