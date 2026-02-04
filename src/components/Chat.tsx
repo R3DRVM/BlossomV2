@@ -92,7 +92,9 @@ const EXECUTE_PATTERNS = [
   // Long/Short with specific risk%: "long ETH with 3% risk" or "long 100 REDACTED on ETH"
   /^(?:go\s+)?(?:long|short)\s+(?:\d+(?:\.\d+)?\s*(?:k|m)?\s*\w+\s+(?:on|with)|eth|btc|sol)\s+.*(?:\d+%?\s*risk|\d+x)/i,
   // Bet with amount: "bet 50 REDACTED on Trump wins"
-  /^bet\s+\d+(?:\.\d+)?\s*(?:k|m)?\s*\w+\s+(?:on|that)\s+/i,
+  /^bet\s+\$?\d+(?:\.\d+)?\s*(?:k|m)?\s*(?:\w+\s+)?(?:yes|no)?\s*(?:on|that)\s+/i,
+  // Open position phrasing: "open btc 5x long with 50 margin"
+  /^open\s+.+\b(?:long|short)\b.+(?:\d+(?:\.\d+)?x|\d+(?:\.\d+)?\s*(?:usd\s*)?margin|\d+(?:\.\d+)?\s*%\s*risk)/i,
   // Execute/confirm explicit: "execute", "confirm", "do it", "yes execute"
   /^(?:execute|confirm|do\s+it|yes\s+execute|approve|submit)\s*$/i,
 ];
@@ -1677,9 +1679,9 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
             const parsedMarginUsd = marginFromText ? Number(marginFromText[1]) : undefined;
             const parsedRiskPct = riskFromText ? Number(riskFromText[1]) : undefined;
 
-            const finalRiskPct = perpReq.riskPct || parsedRiskPct || 2;
-            const finalMarginUsd = perpReq.marginUsd || parsedMarginUsd || (account.accountValue * finalRiskPct / 100);
-            const finalLeverage = perpReq.leverage || parsedLeverage || 2;
+            const finalLeverage = parsedLeverage || perpReq.leverage || 2;
+            const finalRiskPct = parsedRiskPct || perpReq.riskPct || 2;
+            const finalMarginUsd = parsedMarginUsd || perpReq.marginUsd || (account.accountValue * finalRiskPct / 100);
             const finalNotionalUsd = finalMarginUsd * finalLeverage;
             const newDraft = addDraftStrategy({
               side: perpReq.side === 'long' ? 'Long' : 'Short',
@@ -1696,7 +1698,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
             strategy = {
               market: perpReq.market || 'BTC-USD',
               side: perpReq.side === 'long' ? 'Long' : 'Short',
-              riskPercent: perpReq.riskPct || 2,
+              riskPercent: finalRiskPct,
               entryPrice: 0,
               takeProfit: 0,
               stopLoss: 0,
@@ -3785,6 +3787,34 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
         // This should trigger regardless of the global executionAuthMode config
         if (isSessionEnabled && !userHasManualSigning) {
           console.log('[handleConfirmTrade] Using session execution path');
+          const sessionIdKey = `blossom_oneclick_sessionid_${userAddress.toLowerCase()}`;
+          const legacySessionIdKey = `blossom_session_${userAddress.toLowerCase()}`;
+          const hasStoredSessionId = Boolean(localStorage.getItem(sessionIdKey) || localStorage.getItem(legacySessionIdKey));
+
+          // Auto-heal: if one-click is enabled but no sessionId is stored, prepare a fresh session
+          if (!hasStoredSessionId) {
+            try {
+              const prepareResponse = await callAgent('/api/session/prepare', {
+                method: 'POST',
+                body: JSON.stringify({ userAddress }),
+              });
+              if (prepareResponse.ok) {
+                const prepareData = await prepareResponse.json();
+                const preparedSessionId = prepareData?.session?.sessionId;
+                if (preparedSessionId) {
+                  localStorage.setItem(sessionIdKey, preparedSessionId);
+                  localStorage.setItem(legacySessionIdKey, preparedSessionId);
+                  if (import.meta.env.DEV) {
+                    console.log('[handleConfirmTrade] Auto-prepared missing sessionId');
+                  }
+                }
+              }
+            } catch (sessionPrepareError) {
+              if (import.meta.env.DEV) {
+                console.warn('[handleConfirmTrade] Failed to auto-prepare missing sessionId:', sessionPrepareError);
+              }
+            }
+          }
 
           // Session exists: use execution kernel (no wallet popups)
           // Find the chat message that contains executionRequest (including events)

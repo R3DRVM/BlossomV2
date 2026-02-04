@@ -11,6 +11,7 @@ import WalletProviders from './components/wallet/WalletProviders'
 import WalletStateBridge from './components/wallet/WalletStateBridge'
 import AppRouter from './routes/AppRouter.tsx'
 import WebsiteLock from './components/WebsiteLock.tsx'
+import AppErrorBoundary from './components/AppErrorBoundary'
 import { installConsoleNoiseFilter } from './lib/consoleNoiseFilter'
 import { initGlobalErrorHandlers } from './utils/globalErrorHandlers'
 import './index.css'
@@ -46,7 +47,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           <ActivityFeedProvider>
             <ExecutionProvider>
               <BrowserRouter>
-                <AppRouter />
+                <AppErrorBoundary>
+                  <AppRouter />
+                </AppErrorBoundary>
               </BrowserRouter>
             </ExecutionProvider>
           </ActivityFeedProvider>
@@ -55,4 +58,3 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     </WalletProviders>
   </React.StrictMode>,
 )
-

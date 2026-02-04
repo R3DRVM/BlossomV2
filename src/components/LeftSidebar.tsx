@@ -4,6 +4,7 @@ import { useBlossomContext } from '../context/BlossomContext';
 import { useToast } from './toast/useToast';
 import { useAccount } from 'wagmi';
 import { isSessionEnabled, isManualSigningEnabled } from './SessionEnforcementModal';
+import OneClickExecution from './OneClickExecution';
 
 // Helper to generate relative timestamp
 function getRelativeTimestamp(timestamp: number): string {
@@ -148,6 +149,11 @@ export default function LeftSidebar() {
             }`}>
               {signingMode}
             </div>
+            {isConnected && address && (
+              <div className="pt-1">
+                <OneClickExecution userAddress={address} />
+              </div>
+            )}
           </div>
 
           {/* Email (optional) */}
@@ -284,4 +290,3 @@ export default function LeftSidebar() {
     </div>
   );
 }
-
