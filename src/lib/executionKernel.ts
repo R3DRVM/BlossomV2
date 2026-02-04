@@ -262,6 +262,127 @@ export async function executePlan(
 
         // Check for specific error codes
         const checkCode = errorCode || (data.error?.code);
+        const isSessionNotCreated =
+          checkCode === 'SESSION_NOT_CREATED' ||
+          checkCode === 'SESSION_NOT_FOUND' ||
+          String(errorMessage || '').toLowerCase().includes('not_created') ||
+          String(errorMessage || '').toLowerCase().includes('session');
+
+        // Auto-heal stale session IDs once: recreate session and retry relayed execution.
+        if (isSessionNotCreated && userAddr) {
+          try {
+            const prepareSessionResponse = await callAgent('/api/session/prepare', {
+              method: 'POST',
+              body: JSON.stringify({ userAddress: params.userAddress }),
+            });
+            if (prepareSessionResponse.ok) {
+              const prepareSessionData = await prepareSessionResponse.json();
+              const recreatedSessionId = prepareSessionData?.session?.sessionId;
+              const sessionTxTo = prepareSessionData?.session?.to;
+              const sessionTxData = prepareSessionData?.session?.data;
+              const sessionTxValue = prepareSessionData?.session?.value || '0x0';
+
+              // Create session on-chain before retrying relayed execution.
+              if (sessionTxTo && sessionTxData) {
+                try {
+                  const { sendTransaction } = await import('./walletAdapter');
+                  const createSessionTxHash = await sendTransaction({
+                    to: sessionTxTo,
+                    data: sessionTxData,
+                    value: sessionTxValue,
+                  });
+                  if (!createSessionTxHash) {
+                    return {
+                      ok: false,
+                      mode: 'wallet',
+                      error: 'Session setup requires a wallet signature. Please confirm the session transaction and retry.',
+                      errorCode: 'SESSION_SETUP_REQUIRED',
+                    };
+                  }
+
+                  // Wait for the session creation tx to confirm before retrying relayed execution.
+                  let sessionCreatedConfirmed = false;
+                  for (let i = 0; i < 24; i++) {
+                    await new Promise((resolve) => setTimeout(resolve, 2000));
+                    try {
+                      const statusResponse = await callAgent(`/api/execute/status?txHash=${encodeURIComponent(createSessionTxHash)}`, {
+                        method: 'GET',
+                      });
+                      if (!statusResponse.ok) continue;
+                      const statusData = await statusResponse.json();
+                      const status = String(statusData?.status || '').toLowerCase();
+                      if (status === 'confirmed') {
+                        sessionCreatedConfirmed = true;
+                        break;
+                      }
+                      if (status === 'reverted' || status === 'failed') {
+                        return {
+                          ok: false,
+                          mode: 'wallet',
+                          error: 'Session creation transaction reverted. Please re-enable One-Click and retry.',
+                          errorCode: 'SESSION_SETUP_FAILED',
+                        };
+                      }
+                    } catch {
+                      // keep polling
+                    }
+                  }
+
+                  if (!sessionCreatedConfirmed) {
+                    return {
+                      ok: false,
+                      mode: 'wallet',
+                      error: 'Session creation is still pending. Wait a few seconds and retry.',
+                      errorCode: 'SESSION_SETUP_PENDING',
+                    };
+                  }
+                } catch (createSessionError) {
+                  console.warn(`${logPrefix} Session creation transaction failed:`, createSessionError);
+                  return {
+                    ok: false,
+                    mode: 'wallet',
+                    error: 'Could not create One-Click session on-chain. Please re-enable One-Click and retry.',
+                    errorCode: 'SESSION_SETUP_FAILED',
+                  };
+                }
+              }
+              if (typeof window !== 'undefined' && recreatedSessionId) {
+                localStorage.setItem(sessionIdKey, recreatedSessionId);
+                localStorage.setItem(`blossom_session_${userAddr}`, recreatedSessionId);
+                localStorage.setItem(enabledKey, 'true');
+                localStorage.setItem(authorizedKey, 'true');
+              }
+
+              if (recreatedSessionId && recreatedSessionId.length === 66) {
+                const retryResponse = await callAgent('/api/execute/relayed', {
+                  method: 'POST',
+                  body: JSON.stringify({
+                    draftId: params.draftId,
+                    userAddress: params.userAddress,
+                    sessionId: recreatedSessionId,
+                    plan,
+                  }),
+                });
+                const retryData = await retryResponse.json();
+                if (retryResponse.ok) {
+                  return {
+                    ok: true,
+                    txHash: retryData.txHash,
+                    receiptStatus: retryData.status === 'success' ? 'confirmed' : 'pending',
+                    mode: 'relayed',
+                    explorerUrl: retryData.explorerUrl,
+                    portfolio: retryData.portfolio,
+                    blockNumber: retryData.blockNumber,
+                    notes: retryData.notes,
+                  };
+                }
+              }
+            }
+          } catch (sessionRetryError) {
+            console.warn(`${logPrefix} Session auto-retry failed:`, sessionRetryError);
+          }
+        }
+
         if (checkCode === 'VENUE_NOT_CONFIGURED' || checkCode === 'ADAPTER_NOT_ALLOWED' || checkCode === 'ADAPTER_MISSING') {
           return {
             ok: false,

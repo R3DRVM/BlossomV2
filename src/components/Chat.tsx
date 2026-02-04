@@ -4070,7 +4070,6 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
             console.log('[handleConfirmTrade] Falling back from session relay to manual execution path');
           }
         }
-        
         // Direct execution path (no one-click or one-click unavailable)
         // Use execution kernel for unified execution
         {
@@ -4371,7 +4370,14 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
           }
 
           // Check we have transaction data
-          const hasValidTx = prepareResult.to && (prepareResult.call || prepareResult.plan?.calldata);
+          const hasValidTx =
+            prepareResult.to &&
+            (
+              (typeof prepareResult.call === 'string' && prepareResult.call !== '0x') ||
+              (typeof prepareResult.callData === 'string' && prepareResult.callData !== '0x') ||
+              (typeof prepareResult.calldata === 'string' && prepareResult.calldata !== '0x') ||
+              prepareResult.plan
+            );
           if (!hasValidTx) {
             updateMessageInChat(targetChatId, sigStatusMsgId, {
               text: '❌ No transaction to execute. The backend did not return valid execution data.',
@@ -4383,15 +4389,66 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
             text: '⏳ Waiting for wallet signature... Please confirm in your wallet.',
           });
 
-          // Get the transaction to sign from backend response format
-          // Backend returns: to (address), call (calldata), value (hex)
+          // Get the transaction to sign from backend response format.
+          // Some backend responses return `call` as an object; if calldata isn't provided,
+          // encode executeBySender(plan) locally as a safe fallback.
+          let encodedPlanCallData: string | undefined;
+          if (prepareResult?.plan && !prepareResult?.callData && typeof prepareResult?.call !== 'string') {
+            try {
+              const { encodeFunctionData } = await import('viem');
+              const executeBySenderAbi = [
+                {
+                  name: 'executeBySender',
+                  type: 'function',
+                  stateMutability: 'nonpayable',
+                  inputs: [
+                    {
+                      name: 'plan',
+                      type: 'tuple',
+                      components: [
+                        { name: 'user', type: 'address' },
+                        { name: 'nonce', type: 'uint256' },
+                        { name: 'deadline', type: 'uint256' },
+                        {
+                          name: 'actions',
+                          type: 'tuple[]',
+                          components: [
+                            { name: 'actionType', type: 'uint8' },
+                            { name: 'adapter', type: 'address' },
+                            { name: 'data', type: 'bytes' },
+                          ],
+                        },
+                      ],
+                    },
+                  ],
+                  outputs: [],
+                },
+              ] as const;
+
+              encodedPlanCallData = encodeFunctionData({
+                abi: executeBySenderAbi,
+                functionName: 'executeBySender',
+                args: [prepareResult.plan],
+              });
+            } catch (encodeError) {
+              if (import.meta.env.DEV) {
+                console.warn('[handleConfirmTrade] Failed to encode plan calldata fallback:', encodeError);
+              }
+            }
+          }
+
           const txToSign = {
             to: prepareResult.to,
-            data: prepareResult.call || prepareResult.plan?.calldata,
+            data:
+              (typeof prepareResult.call === 'string' ? prepareResult.call : undefined) ||
+              prepareResult.callData ||
+              prepareResult.calldata ||
+              prepareResult.plan?.calldata ||
+              encodedPlanCallData,
             value: prepareResult.value || '0x0',
           };
 
-          if (!txToSign.to || !txToSign.data) {
+          if (!txToSign.to || !txToSign.data || txToSign.data === '0x') {
             updateMessageInChat(targetChatId, sigStatusMsgId, {
               text: '❌ Invalid transaction data from backend. Strategy remains pending.',
             });

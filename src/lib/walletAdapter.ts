@@ -59,6 +59,35 @@ function toHexString(value: string | number | undefined | null, defaultValue: st
 }
 
 /**
+ * Parse a gas value from provider responses.
+ * Supports hex strings ("0x..."), decimal strings, numbers, and bigint.
+ */
+function parseGasValue(value: unknown): bigint | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value === 'bigint') return value;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || value <= 0) return null;
+    return BigInt(Math.floor(value));
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    try {
+      if (/^0x[0-9a-fA-F]+$/.test(trimmed)) {
+        return BigInt(trimmed);
+      }
+      if (/^\d+$/.test(trimmed)) {
+        return BigInt(trimmed);
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/**
  * Validate and normalize an Ethereum address
  * Returns lowercase hex address or throws if invalid
  */
@@ -365,6 +394,45 @@ export async function sendTransaction(tx: PreparedTx): Promise<string | null> {
       dataLength: txParams.data?.length,
       gas: txParams.gas,
     });
+
+    // If upstream provided gas, clamp it to a safe ceiling before estimate/send.
+    if (txParams.gas) {
+      const providedGas = parseGasValue(txParams.gas);
+      if (providedGas && providedGas > 0n) {
+        const maxProvidedGas = 8000000n;
+        if (providedGas > maxProvidedGas) {
+          txParams.gas = `0x${maxProvidedGas.toString(16)}`;
+        }
+      } else {
+        delete txParams.gas;
+      }
+    }
+
+    // Estimate gas and clamp to keep wallet/provider from defaulting to an invalidly high cap.
+    // This prevents failures like "transaction gas limit too high".
+    try {
+      const estimatedGas = await ethereum.request({
+        method: 'eth_estimateGas',
+        params: [txParams],
+      }) as unknown;
+
+      const parsedEstimate = parseGasValue(estimatedGas);
+      if (parsedEstimate && parsedEstimate > 0n) {
+        const buffered = (parsedEstimate * 120n) / 100n; // +20% buffer
+        const minGas = 300000n;
+        const maxGas = 8000000n; // keep below provider caps seen in production
+        const clamped = buffered < minGas ? minGas : buffered > maxGas ? maxGas : buffered;
+        txParams.gas = `0x${clamped.toString(16)}`;
+      } else {
+        txParams.gas = '0x2dc6c0'; // 3,000,000 fallback
+      }
+    } catch (estimateError: any) {
+      // Fallback gas that is generally sufficient for router-based calls while staying safe.
+      txParams.gas = '0x2dc6c0'; // 3,000,000
+      if (import.meta.env.DEV) {
+        console.warn(`${logPrefix} Gas estimation failed, using fallback gas:`, estimateError?.message);
+      }
+    }
 
     // Send the transaction
     const txHash = await ethereum.request({
