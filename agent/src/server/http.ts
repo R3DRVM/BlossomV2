@@ -4595,7 +4595,7 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
     }
 
     // V1: Wait for receipt confirmation (receipt.status === 1)
-    const { ETH_TESTNET_RPC_URL } = await import('../config');
+    // ETH_TESTNET_RPC_URL already imported at line 3932 via guardConfig
     let receiptStatus: 'confirmed' | 'failed' | 'timeout' | 'pending' = 'pending';
     let blockNumber: number | undefined;
     let receiptError: string | undefined;

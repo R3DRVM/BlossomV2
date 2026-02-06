@@ -3,9 +3,9 @@ import { test, expect, chromium } from '@playwright/test';
 const SHOULD_RUN = process.env.E2E_UI === 'true';
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
 
-test.describe.skip(!SHOULD_RUN, 'UI Flow Tests (requires FRONTEND_URL and wallet extensions)');
-
 test.describe('Blossom Frontend UI Flows', () => {
+  test.skip(!SHOULD_RUN, 'Set E2E_UI=true to enable UI tests');
+
   test('Page loads and displays demo banner', async ({ page }) => {
     await page.goto(FRONTEND_URL);
 
