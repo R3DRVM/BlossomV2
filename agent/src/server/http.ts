@@ -886,15 +886,51 @@ async function applyDeterministicFallback(
 
   if (isEventPrompt) {
     // Extract event details
-    const stakeMatch = userMessage.match(/\$(\d+)/) || userMessage.match(/(\d+)\s*(usd|dollar)/i);
+    const stakeMatch = userMessage.match(/\$(\d+)/) || userMessage.match(/(\d+)\s*(usd|usdc|dollar)/i);
     const stakeUsd = stakeMatch ? parseFloat(stakeMatch[1]) : 5;
+
+    // Check for price level betting: "BTC above 70k" or "ETH below 2000"
+    const priceLevelMatch = lowerMessage.match(/(btc|bitcoin|eth|ethereum|sol|solana)\s*(?:will\s+be\s*)?(?:above|below|over|under|at)\s*\$?(\d+(?:\.\d+)?)\s*(k|m)?/i);
+
+    if (priceLevelMatch) {
+      // Price level betting
+      const asset = priceLevelMatch[1].toUpperCase().replace(/BITCOIN/i, 'BTC').replace(/ETHEREUM/i, 'ETH').replace(/SOLANA/i, 'SOL');
+      const direction = lowerMessage.includes('above') || lowerMessage.includes('over') ? 'above' : 'below';
+      let priceLevel = parseFloat(priceLevelMatch[2]);
+      const multiplier = priceLevelMatch[3]?.toLowerCase();
+      if (multiplier === 'k') priceLevel *= 1000;
+      if (multiplier === 'm') priceLevel *= 1000000;
+
+      const marketTitle = `${asset} ${direction} $${priceLevel.toLocaleString()}`;
+
+      return {
+        assistantMessage: `I'll place a $${stakeUsd} bet that ${asset} will be ${direction} $${priceLevel.toLocaleString()}. This is a prediction market bet.`,
+        actions: [],
+        executionRequest: {
+          kind: 'event',
+          chain: targetChain,
+          marketId: `${asset}_PRICE_${direction.toUpperCase()}_${priceLevel}`,
+          outcome: 'YES' as 'YES' | 'NO',
+          stakeUsd,
+          price: 0.50, // Default 50/50 for price prediction
+          metadata: {
+            type: 'price_level',
+            asset,
+            direction,
+            priceLevel,
+          },
+        },
+      };
+    }
+
+    // Standard yes/no event betting (Fed rate cut, etc.)
     const outcome = lowerMessage.includes('yes') ? 'YES' : 'NO';
-    
+
     // Find matching market
     const { findEventMarketByKeyword } = await import('../quotes/eventMarkets');
     const keyword = lowerMessage.includes('fed') ? 'fed' : lowerMessage.includes('rate cut') ? 'rate cut' : 'fed';
     const market = await findEventMarketByKeyword(keyword);
-    
+
     return {
       assistantMessage: `I'll bet ${outcome} on "${market?.title || 'Fed Rate Cut'}" with $${stakeUsd}.`,
       actions: [],
@@ -1723,12 +1759,14 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
        normalizedUserMessage.toLowerCase().includes('3x') ||
        normalizedUserMessage.toLowerCase().includes('leverage'));
     
-    // Detect if this is an event prompt
-    const isEventPrompt = /bet|wager|risk.*on|event/i.test(normalizedUserMessage) && 
-      (normalizedUserMessage.toLowerCase().includes('yes') || 
-       normalizedUserMessage.toLowerCase().includes('no') || 
+    // Detect if this is an event prompt - match patterns like "bet X on Y above/below Z"
+    const isEventPrompt = /bet|wager|risk.*on|event|prediction\s*market/i.test(normalizedUserMessage) &&
+      (normalizedUserMessage.toLowerCase().includes('yes') ||
+       normalizedUserMessage.toLowerCase().includes('no') ||
        normalizedUserMessage.toLowerCase().includes('fed') ||
-       normalizedUserMessage.toLowerCase().includes('rate cut'));
+       normalizedUserMessage.toLowerCase().includes('rate cut') ||
+       /(?:above|below|over|under|at)\s*\$?\d+/i.test(normalizedUserMessage) ||
+       /btc|bitcoin|eth|ethereum|sol|solana/i.test(normalizedUserMessage));
 
     // Check if we're in stub mode and this is a prediction market query
     const hasOpenAIKey = !!process.env.BLOSSOM_OPENAI_API_KEY;
@@ -1805,11 +1843,13 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
          normalizedUserMessage.toLowerCase().includes('2x') ||
          normalizedUserMessage.toLowerCase().includes('3x') ||
          normalizedUserMessage.toLowerCase().includes('leverage'));
-      const normalizedIsEventPrompt = /bet|wager|risk.*on|event/i.test(normalizedUserMessage) && 
-        (normalizedUserMessage.toLowerCase().includes('yes') || 
-         normalizedUserMessage.toLowerCase().includes('no') || 
+      const normalizedIsEventPrompt = /bet|wager|risk.*on|event|prediction\s*market/i.test(normalizedUserMessage) &&
+        (normalizedUserMessage.toLowerCase().includes('yes') ||
+         normalizedUserMessage.toLowerCase().includes('no') ||
          normalizedUserMessage.toLowerCase().includes('fed') ||
-         normalizedUserMessage.toLowerCase().includes('rate cut'));
+         normalizedUserMessage.toLowerCase().includes('rate cut') ||
+         /(?:above|below|over|under|at)\s*\$?\d+/i.test(normalizedUserMessage) ||
+         /btc|bitcoin|eth|ethereum|sol|solana/i.test(normalizedUserMessage));
       
       try {
         // Call LLM with normalized prompt
