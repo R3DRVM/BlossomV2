@@ -167,15 +167,24 @@ const FRACTION_TO_PERCENT: Record<string, number> = {
 };
 
 /**
- * Parse a number from string, handling commas and k/m suffixes
+ * Parse a number from string, handling commas, k/m/b suffixes, and currency symbols
  */
 function parseAmount(str: string): number {
   if (!str) return 0;
 
-  // Remove commas
-  let cleaned = str.replace(/,/g, '');
+  // Remove currency symbols and commas
+  let cleaned = str.replace(/[$£€¥,]/g, '').trim();
 
-  // Handle k/m suffixes
+  // Handle k/m/b suffixes (case insensitive)
+  const suffixMatch = cleaned.match(/^([\d.]+)\s*([kmb])$/i);
+  if (suffixMatch) {
+    const base = parseFloat(suffixMatch[1]);
+    const suffix = suffixMatch[2].toLowerCase();
+    const multipliers: Record<string, number> = { k: 1000, m: 1000000, b: 1000000000 };
+    return base * (multipliers[suffix] || 1);
+  }
+
+  // Handle legacy suffix format
   const lowerCleaned = cleaned.toLowerCase();
   if (lowerCleaned.endsWith('k')) {
     return parseFloat(cleaned.slice(0, -1)) * 1000;
@@ -184,26 +193,62 @@ function parseAmount(str: string): number {
     return parseFloat(cleaned.slice(0, -1)) * 1000000;
   }
 
-  return parseFloat(cleaned);
+  return parseFloat(cleaned) || 0;
 }
 
 /**
- * Normalize asset symbol
+ * Comprehensive asset alias map for typo correction and normalization
+ */
+const ASSET_ALIASES: Record<string, string> = {
+  // USDC variations
+  'BUSDC': 'USDC',
+  'BLSMUSDC': 'USDC',
+  'BLOOMUSDC': 'USDC',
+  'USDC.E': 'USDC',
+  'USDCE': 'USDC',
+  'USDCC': 'USDC',
+  'USCD': 'USDC',
+
+  // ETH variations
+  'ETHEREUM': 'ETH',
+  'ETHER': 'ETH',
+  'WETH': 'ETH',
+  'ETHERIUM': 'ETH',
+  'ETHEREM': 'ETH',
+  'ETTH': 'ETH',
+
+  // BTC variations
+  'BITCOIN': 'BTC',
+  'WBTC': 'BTC',
+  'XBT': 'BTC',
+  'BTCC': 'BTC',
+  'BITCOIIN': 'BTC',
+
+  // SOL variations
+  'SOLANA': 'SOL',
+  'WSOL': 'SOL',
+  'SOLANAA': 'SOL',
+  'SOLLANA': 'SOL',
+
+  // Other stablecoins
+  'TETHER': 'USDT',
+  'BUSD': 'USDC',
+};
+
+/**
+ * Normalize asset symbol with typo correction
  */
 function normalizeAsset(asset: string): string {
-  const upper = asset.toUpperCase();
+  if (!asset) return 'USDC';
 
-  // Handle common aliases
-  const aliases: Record<string, string> = {
-    'BUSDC': 'USDC',
-    'BLSMUSDC': 'USDC',
-    'BLOOMUSDC': 'USDC',
-    'BITCOIN': 'BTC',
-    'ETHEREUM': 'ETH',
-    'SOLANA': 'SOL',
-  };
+  const upper = asset.toUpperCase().trim().replace(/[^A-Z0-9]/g, '');
 
-  return aliases[upper] || upper;
+  // Check alias map
+  if (ASSET_ALIASES[upper]) {
+    return ASSET_ALIASES[upper];
+  }
+
+  return upper;
 }
 
 /**

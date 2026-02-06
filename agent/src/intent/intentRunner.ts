@@ -149,27 +149,40 @@ const IMPLEMENTED_VENUES: Record<string, Record<string, string[]>> = {
 // Extended IntentKind to include new types
 type ExtendedIntentKind = IntentKind | 'prediction' | 'hedge' | 'vault_discovery';
 
-// Intent patterns for parsing
+// Intent patterns for parsing - enhanced with more variations
 const INTENT_PATTERNS = {
   perp: {
-    long: /(?:^|\s)(?:go\s+)?long\s+(\w+)(?:\s+(\d+)x)?/i,
-    short: /(?:^|\s)(?:go\s+)?short\s+(\w+)(?:\s+(\d+)x)?/i,
-    leverage: /(\d+)\s*x\s*(?:leverage|lev)?/i,
-    withAmount: /with\s+(\d+(?:,?\d+)*(?:\.\d+)?)/i,
+    // Enhanced long pattern: "long btc", "go long BTC 10x", "long BTC at 10x"
+    long: /(?:^|\s)(?:go\s+)?long\s+(\w+)(?:\s+(?:at\s+)?(\d+)\s*x)?/i,
+    // Enhanced short pattern
+    short: /(?:^|\s)(?:go\s+)?short\s+(\w+)(?:\s+(?:at\s+)?(\d+)\s*x)?/i,
+    // Leverage pattern: "10x", "10 x", "10x leverage", "at 10x"
+    leverage: /(?:at\s+)?(\d+)\s*x\s*(?:leverage|lev)?/i,
+    // Amount pattern: "with $1000", "with 1k", "with 500 USDC"
+    withAmount: /with\s+\$?([\d,]+(?:\.\d+)?)\s*([km])?/i,
   },
   swap: {
-    basic: /swap\s+(?:(\d+(?:,?\d+)*(?:\.\d+)?)\s*)?(\w+)\s+(?:to|for|->)\s+(\w+)/i,
-    convert: /convert\s+(?:(\d+(?:,?\d+)*(?:\.\d+)?)\s*)?(\w+)\s+to\s+(\w+)/i,
-    trade: /trade\s+(?:(\d+(?:,?\d+)*(?:\.\d+)?)\s*)?(\w+)\s+(?:for|to)\s+(\w+)/i,
+    // Enhanced to handle $ amounts and k/m suffixes
+    basic: /swap\s+(?:\$?([\d,]+(?:\.\d+)?)\s*([km])?\s*)?(\w+)\s+(?:to|for|->)\s+(\w+)/i,
+    convert: /convert\s+(?:\$?([\d,]+(?:\.\d+)?)\s*([km])?\s*)?(\w+)\s+(?:to|for)\s+(\w+)/i,
+    trade: /trade\s+(?:\$?([\d,]+(?:\.\d+)?)\s*([km])?\s*)?(\w+)\s+(?:for|to)\s+(\w+)/i,
+    // New: exchange pattern
+    exchange: /exchange\s+(?:\$?([\d,]+(?:\.\d+)?)\s*([km])?\s*)?(\w+)\s+(?:for|to)\s+(\w+)/i,
   },
   deposit: {
-    basic: /deposit\s+(?:(\d+(?:,?\d+)*(?:\.\d+)?)\s*)?(\w+)\s+(?:to|into|in)\s+(\w+)/i,
-    supply: /supply\s+(?:(\d+(?:,?\d+)*(?:\.\d+)?)\s*)?(\w+)\s+(?:to|into)\s+(\w+)/i,
-    lend: /lend\s+(?:(\d+(?:,?\d+)*(?:\.\d+)?)\s*)?(\w+)/i,
+    // Enhanced patterns
+    basic: /deposit\s+(?:\$?([\d,]+(?:\.\d+)?)\s*([km])?\s*)?(\w+)\s+(?:to|into|in)\s+(\w+)/i,
+    supply: /supply\s+(?:\$?([\d,]+(?:\.\d+)?)\s*([km])?\s*)?(\w+)\s+(?:to|into)\s+(\w+)/i,
+    lend: /lend\s+(?:\$?([\d,]+(?:\.\d+)?)\s*([km])?\s*)?(\w+)/i,
+    // New: stake pattern
+    stake: /stake\s+(?:\$?([\d,]+(?:\.\d+)?)\s*([km])?\s*)?(\w+)\s+(?:on|to|into)\s+(\w+)/i,
   },
   bridge: {
-    basic: /bridge\s+(?:(\d+(?:,?\d+)*(?:\.\d+)?)\s*)?(\w+)\s+(?:from\s+)?(\w+)\s+to\s+(\w+)/i,
-    transfer: /transfer\s+(?:(\d+(?:,?\d+)*(?:\.\d+)?)\s*)?(\w+)\s+from\s+(\w+)\s+to\s+(\w+)/i,
+    // Enhanced patterns with chain aliases
+    basic: /bridge\s+(?:\$?([\d,]+(?:\.\d+)?)\s*([km])?\s*)?(\w+)\s+(?:from\s+)?(\w+)\s+to\s+(\w+)/i,
+    transfer: /transfer\s+(?:\$?([\d,]+(?:\.\d+)?)\s*([km])?\s*)?(\w+)\s+from\s+(\w+)\s+to\s+(\w+)/i,
+    // New: move/send patterns
+    move: /move\s+(?:\$?([\d,]+(?:\.\d+)?)\s*([km])?\s*)?(\w+)\s+(?:from\s+)?(\w+)\s+to\s+(\w+)/i,
   },
   // New patterns for Product Thesis scenarios
   prediction: {
@@ -194,12 +207,184 @@ const INTENT_PATTERNS = {
   },
 };
 
+/**
+ * Asset symbol aliases for common variations and typos
+ */
+const ASSET_ALIASES: Record<string, string> = {
+  // USDC variations
+  'BUSDC': 'USDC',
+  'BLSMUSDC': 'USDC',
+  'BLOOMUSDC': 'USDC',
+  'USDC.E': 'USDC',
+  'USDCE': 'USDC',
+
+  // ETH variations
+  'ETHER': 'ETH',
+  'ETHEREUM': 'ETH',
+  'WETH': 'ETH',
+  'WRAPPED ETH': 'ETH',
+  'WRAPPEDETH': 'ETH',
+
+  // BTC variations
+  'BITCOIN': 'BTC',
+  'WBTC': 'BTC',
+  'WRAPPED BTC': 'BTC',
+  'WRAPPEDBTC': 'BTC',
+  'XBT': 'BTC',
+
+  // SOL variations
+  'SOLANA': 'SOL',
+  'WSOL': 'SOL',
+
+  // Stablecoin variations
+  'TETHER': 'USDT',
+  'USDTETHER': 'USDT',
+  'BUSD': 'USDC',
+  'DAI': 'DAI',
+  'FRAX': 'FRAX',
+
+  // Common typos
+  'ETTH': 'ETH',
+  'ETHE': 'ETH',
+  'ETHERIUM': 'ETH',
+  'ETHEREM': 'ETH',
+  'BTCC': 'BTC',
+  'BITCOIIN': 'BTC',
+  'USDCC': 'USDC',
+  'USCD': 'USDC',
+  'SOLANAA': 'SOL',
+  'SOLLANA': 'SOL',
+};
+
+/**
+ * Normalize asset symbol with typo correction
+ */
 function normalizeAssetSymbol(asset: string): string {
-  const upper = asset.toUpperCase();
-  if (upper === 'BUSDC' || upper === 'BLSMUSDC' || upper === 'BLOOMUSDC') {
-    return 'REDACTED';
+  if (!asset) return 'USDC'; // Default fallback
+
+  // Clean up the input
+  const cleaned = asset.toUpperCase().trim().replace(/[^A-Z0-9]/g, '');
+
+  // Check for exact alias match
+  if (ASSET_ALIASES[cleaned]) {
+    return ASSET_ALIASES[cleaned];
   }
-  return upper;
+
+  // Legacy handling for BUSDC variants
+  if (cleaned === 'BUSDC' || cleaned === 'BLSMUSDC' || cleaned === 'BLOOMUSDC') {
+    return 'USDC';
+  }
+
+  // Check for fuzzy match using Levenshtein-like approach for common tokens
+  const COMMON_TOKENS = ['ETH', 'BTC', 'SOL', 'USDC', 'USDT', 'DAI', 'WETH', 'WBTC'];
+  for (const token of COMMON_TOKENS) {
+    if (fuzzyMatch(cleaned, token, 1)) {
+      return token;
+    }
+  }
+
+  return cleaned;
+}
+
+/**
+ * Simple fuzzy matching - returns true if strings differ by at most maxDist characters
+ */
+function fuzzyMatch(str1: string, str2: string, maxDist: number): boolean {
+  if (Math.abs(str1.length - str2.length) > maxDist) return false;
+  if (str1 === str2) return true;
+
+  // Simple character difference count
+  let diff = 0;
+  const longer = str1.length >= str2.length ? str1 : str2;
+  const shorter = str1.length < str2.length ? str1 : str2;
+
+  for (let i = 0; i < longer.length; i++) {
+    if (shorter[i] !== longer[i]) diff++;
+    if (diff > maxDist) return false;
+  }
+
+  return diff <= maxDist;
+}
+
+/**
+ * Parse amount from various formats:
+ * - "1000", "1,000", "1000.50"
+ * - "$1000", "$1,000.50"
+ * - "1k", "1K", "10k"
+ * - "1m", "1M"
+ * - "1.5k", "2.5m"
+ * - Written numbers: "one hundred", "five thousand"
+ */
+function parseAmount(amountStr: string | undefined): string {
+  if (!amountStr) return '1000'; // Default amount
+
+  let cleaned = amountStr.trim().toLowerCase();
+
+  // Remove currency symbols
+  cleaned = cleaned.replace(/[$£€¥]/g, '');
+
+  // Remove commas
+  cleaned = cleaned.replace(/,/g, '');
+
+  // Handle written numbers
+  const WRITTEN_NUMBERS: Record<string, number> = {
+    'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5,
+    'six': 6, 'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10,
+    'twenty': 20, 'thirty': 30, 'forty': 40, 'fifty': 50,
+    'hundred': 100, 'thousand': 1000, 'million': 1000000,
+    'k': 1000, 'm': 1000000, 'b': 1000000000,
+  };
+
+  // Check for k/m/b suffix
+  const suffixMatch = cleaned.match(/^([\d.]+)\s*([kmb])$/);
+  if (suffixMatch) {
+    const base = parseFloat(suffixMatch[1]);
+    const multiplier = WRITTEN_NUMBERS[suffixMatch[2]] || 1;
+    return (base * multiplier).toString();
+  }
+
+  // Check for written multipliers like "five thousand"
+  for (const [word, value] of Object.entries(WRITTEN_NUMBERS)) {
+    if (cleaned.includes(word)) {
+      // Simple case: "5 thousand" or "five thousand"
+      const numMatch = cleaned.match(/([\d.]+)\s*thousand/);
+      if (numMatch) {
+        return (parseFloat(numMatch[1]) * 1000).toString();
+      }
+      const numMatch2 = cleaned.match(/([\d.]+)\s*million/);
+      if (numMatch2) {
+        return (parseFloat(numMatch2[1]) * 1000000).toString();
+      }
+    }
+  }
+
+  // Standard number parsing
+  const parsed = parseFloat(cleaned);
+  if (!isNaN(parsed) && parsed > 0) {
+    return parsed.toString();
+  }
+
+  return '1000'; // Default fallback
+}
+
+/**
+ * Normalize and clean intent text for better matching
+ */
+function normalizeIntentText(text: string): string {
+  return text
+    .toLowerCase()
+    .trim()
+    // Normalize multiple spaces to single
+    .replace(/\s+/g, ' ')
+    // Remove punctuation except for necessary ones
+    .replace(/[!?.,;:'"]+$/g, '')
+    // Normalize arrow symbols
+    .replace(/[→⟶⇒]/g, '->')
+    .replace(/-->/g, '->')
+    // Remove common filler words at start
+    .replace(/^(i want to|please|can you|could you|help me|i need to|i'd like to)\s+/i, '')
+    // Remove trailing filler
+    .replace(/\s+(please|for me|now|asap)$/i, '');
 }
 
 /**
@@ -210,9 +395,16 @@ function normalizeAssetSymbol(asset: string): string {
  * - Leverage positions: "Open 10x long on BTC with $500"
  * - Yield optimization: "Find best yield for $10k USDC"
  * - Multi-step strategies: "Swap half to ETH, deposit rest to Aave"
+ *
+ * Enhanced with:
+ * - Typo correction for asset names
+ * - Multiple number formats ($1k, 1,000, etc.)
+ * - Natural language variations
+ * - Graceful fallback for ambiguous intents
  */
 export function parseIntent(intentText: string): ParsedIntent {
-  const text = intentText.toLowerCase().trim();
+  // Normalize the input text
+  const text = normalizeIntentText(intentText);
   const rawParams: Record<string, any> = { original: intentText };
 
   // Task 3: Try advanced parsing first for complex operations
@@ -259,37 +451,184 @@ export function parseIntent(intentText: string): ParsedIntent {
     };
   }
 
-  // Try perp patterns
+  // Enhanced perp patterns with better matching
+  const perpResult = tryParsePerp(text, rawParams);
+  if (perpResult) return perpResult;
+
+  // Enhanced swap patterns with better matching
+  const swapResult = tryParseSwap(text, rawParams);
+  if (swapResult) return swapResult;
+
+  // Enhanced deposit patterns
+  const depositResult = tryParseDeposit(text, rawParams);
+  if (depositResult) return depositResult;
+
+  // Enhanced bridge patterns
+  const bridgeResult = tryParseBridge(text, rawParams);
+  if (bridgeResult) return bridgeResult;
+
+  // Check for analytics intents
+  const analyticsResult = tryParseAnalytics(text, rawParams);
+  if (analyticsResult) return analyticsResult;
+
+  // Fallback: Try to infer intent from keywords
+  const inferredResult = tryInferIntent(text, rawParams);
+  if (inferredResult) return inferredResult;
+
+  // Unknown intent
+  return {
+    kind: 'unknown',
+    action: 'proof',
+    rawParams,
+  };
+}
+
+/**
+ * Try to parse perp intent with enhanced patterns
+ */
+function tryParsePerp(text: string, rawParams: Record<string, any>): ParsedIntent | null {
+  // Check for "open long/short" pattern FIRST (before standard patterns)
+  // This prevents "long on SOL" from matching as "long ON"
+  const openMatch = text.match(/open\s+(long|short)\s+(?:on\s+)?(\w+)/i);
+  if (openMatch) {
+    const side = openMatch[1].toLowerCase() as 'long' | 'short';
+    const asset = normalizeAssetSymbol(openMatch[2]);
+
+    return {
+      kind: 'perp',
+      action: side,
+      amountUnit: 'USDC',
+      targetAsset: asset,
+      leverage: 10,
+      rawParams: { ...rawParams, side, asset, leverage: 10 },
+    };
+  }
+
+  // Standard long/short patterns - but skip if "on" is matched as asset
   const longMatch = text.match(INTENT_PATTERNS.perp.long);
   const shortMatch = text.match(INTENT_PATTERNS.perp.short);
 
   if (longMatch || shortMatch) {
     const match = longMatch || shortMatch;
     const side = longMatch ? 'long' : 'short';
-    const asset = match![1].toUpperCase();
-    const leverageMatch = text.match(INTENT_PATTERNS.perp.leverage);
-    const leverage = leverageMatch ? parseInt(leverageMatch[1]) : 10;
+    const potentialAsset = match![1];
 
-    // Check for "with X" amount pattern
-    const amountMatch = text.match(INTENT_PATTERNS.perp.withAmount);
-    const amount = amountMatch ? amountMatch[1].replace(/,/g, '') : undefined;
+    // Skip if matched word is a preposition (on, at, for, etc.)
+    if (/^(on|at|for|to|in|with)$/i.test(potentialAsset)) {
+      // Look for the actual asset after the preposition
+      const afterPrep = text.match(new RegExp(`${potentialAsset}\\s+(\\w+)`, 'i'));
+      if (afterPrep) {
+        const asset = normalizeAssetSymbol(afterPrep[1]);
+        const leverageMatch = text.match(INTENT_PATTERNS.perp.leverage);
+        const leverage = leverageMatch ? parseInt(leverageMatch[1]) : 10;
+
+        return {
+          kind: 'perp',
+          action: side,
+          amountUnit: 'USDC',
+          targetAsset: asset,
+          leverage,
+          rawParams: { ...rawParams, side, asset, leverage },
+        };
+      }
+    } else {
+      const asset = normalizeAssetSymbol(potentialAsset);
+      const leverageMatch = text.match(INTENT_PATTERNS.perp.leverage);
+      const leverage = leverageMatch ? parseInt(leverageMatch[1]) : 10;
+
+      // Check for "with X" amount pattern - enhanced to handle $1k, etc.
+      const amountMatch = text.match(/with\s+\$?([\d,]+(?:\.\d+)?)\s*([km])?/i);
+      let amount: string | undefined;
+      if (amountMatch) {
+        const baseAmount = amountMatch[1].replace(/,/g, '');
+        const suffix = amountMatch[2]?.toLowerCase();
+        if (suffix === 'k') {
+          amount = (parseFloat(baseAmount) * 1000).toString();
+        } else if (suffix === 'm') {
+          amount = (parseFloat(baseAmount) * 1000000).toString();
+        } else {
+          amount = baseAmount;
+        }
+      }
+
+      return {
+        kind: 'perp',
+        action: side,
+        amount,
+        amountUnit: 'USDC',
+        targetAsset: asset,
+        leverage,
+        rawParams: { ...rawParams, side, asset, leverage, amount },
+      };
+    }
+  }
+
+  // Additional perp patterns: "10x BTC long", "BTC 10x"
+  // Try patterns in specific order with named logic
+
+  // Pattern: "10x BTC" or "10x BTC long"
+  let altPerpMatch = text.match(/(\d+)\s*x\s+(\w+)(?:\s+(long|short))?/i);
+  if (altPerpMatch) {
+    const leverage = parseInt(altPerpMatch[1]);
+    const asset = normalizeAssetSymbol(altPerpMatch[2]);
+    const side = (altPerpMatch[3]?.toLowerCase() as 'long' | 'short') || 'long';
 
     return {
       kind: 'perp',
       action: side,
-      amount,
-      amountUnit: 'REDACTED', // Assume REDACTED for perp margin
+      amountUnit: 'USDC',
       targetAsset: asset,
       leverage,
-      rawParams: { ...rawParams, side, asset, leverage, amount },
+      rawParams: { ...rawParams, side, asset, leverage },
     };
   }
 
-  // Try swap patterns
+  // Pattern 2: "10x BTC" or "10x BTC long"
+  altPerpMatch = text.match(/(\d+)\s*x\s+(\w+)(?:\s+(long|short))?/i);
+  if (altPerpMatch) {
+    const leverage = parseInt(altPerpMatch[1]);
+    const asset = normalizeAssetSymbol(altPerpMatch[2]);
+    const side = (altPerpMatch[3]?.toLowerCase() as 'long' | 'short') || 'long';
+
+    return {
+      kind: 'perp',
+      action: side,
+      amountUnit: 'USDC',
+      targetAsset: asset,
+      leverage,
+      rawParams: { ...rawParams, side, asset, leverage },
+    };
+  }
+
+  // Pattern 3: "BTC 10x" or "BTC 10x long"
+  altPerpMatch = text.match(/(\w+)\s+(\d+)\s*x(?:\s+(long|short))?/i);
+  if (altPerpMatch) {
+    const asset = normalizeAssetSymbol(altPerpMatch[1]);
+    const leverage = parseInt(altPerpMatch[2]);
+    const side = (altPerpMatch[3]?.toLowerCase() as 'long' | 'short') || 'long';
+
+    return {
+      kind: 'perp',
+      action: side,
+      amountUnit: 'USDC',
+      targetAsset: asset,
+      leverage,
+      rawParams: { ...rawParams, side, asset, leverage },
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Try to parse swap intent with enhanced patterns
+ */
+function tryParseSwap(text: string, rawParams: Record<string, any>): ParsedIntent | null {
+  // Standard swap patterns
   for (const [name, pattern] of Object.entries(INTENT_PATTERNS.swap)) {
     const match = text.match(pattern);
     if (match) {
-      const amount = match[1]?.replace(/,/g, '') || '1000';
+      const amount = parseAmount(match[1]);
       const fromAsset = normalizeAssetSymbol(match[2]);
       const toAsset = normalizeAssetSymbol(match[3]);
 
@@ -304,11 +643,106 @@ export function parseIntent(intentText: string): ParsedIntent {
     }
   }
 
-  // Try deposit patterns
+  // Enhanced swap patterns with $ amounts: "swap $100 USDC for ETH"
+  const dollarSwapMatch = text.match(/(?:swap|convert|trade|exchange)\s+\$?([\d,]+(?:\.\d+)?)\s*([km])?\s*(\w+)\s+(?:to|for|into|->)\s+(\w+)/i);
+  if (dollarSwapMatch) {
+    let amount = dollarSwapMatch[1].replace(/,/g, '');
+    const suffix = dollarSwapMatch[2]?.toLowerCase();
+    if (suffix === 'k') amount = (parseFloat(amount) * 1000).toString();
+    else if (suffix === 'm') amount = (parseFloat(amount) * 1000000).toString();
+
+    const fromAsset = normalizeAssetSymbol(dollarSwapMatch[3]);
+    const toAsset = normalizeAssetSymbol(dollarSwapMatch[4]);
+
+    return {
+      kind: 'swap',
+      action: 'swap',
+      amount,
+      amountUnit: fromAsset,
+      targetAsset: toAsset,
+      rawParams: { ...rawParams, amount, fromAsset, toAsset },
+    };
+  }
+
+  // "Buy X ETH" or "Sell X BTC" patterns
+  const buyMatch = text.match(/buy\s+\$?([\d,]+(?:\.\d+)?)\s*([km])?\s*(?:of\s+)?(\w+)(?:\s+(?:with|using)\s+(\w+))?/i);
+  if (buyMatch) {
+    let amount = buyMatch[1].replace(/,/g, '');
+    const suffix = buyMatch[2]?.toLowerCase();
+    if (suffix === 'k') amount = (parseFloat(amount) * 1000).toString();
+    else if (suffix === 'm') amount = (parseFloat(amount) * 1000000).toString();
+
+    const targetAsset = normalizeAssetSymbol(buyMatch[3]);
+    const fromAsset = buyMatch[4] ? normalizeAssetSymbol(buyMatch[4]) : 'USDC';
+
+    return {
+      kind: 'swap',
+      action: 'swap',
+      amount,
+      amountUnit: fromAsset,
+      targetAsset,
+      rawParams: { ...rawParams, amount, fromAsset, targetAsset },
+    };
+  }
+
+  // "Sell X ETH" patterns
+  const sellMatch = text.match(/sell\s+\$?([\d,]+(?:\.\d+)?)\s*([km])?\s*(?:of\s+)?(\w+)(?:\s+(?:for|to)\s+(\w+))?/i);
+  if (sellMatch) {
+    let amount = sellMatch[1].replace(/,/g, '');
+    const suffix = sellMatch[2]?.toLowerCase();
+    if (suffix === 'k') amount = (parseFloat(amount) * 1000).toString();
+    else if (suffix === 'm') amount = (parseFloat(amount) * 1000000).toString();
+
+    const fromAsset = normalizeAssetSymbol(sellMatch[3]);
+    const toAsset = sellMatch[4] ? normalizeAssetSymbol(sellMatch[4]) : 'USDC';
+
+    return {
+      kind: 'swap',
+      action: 'swap',
+      amount,
+      amountUnit: fromAsset,
+      targetAsset: toAsset,
+      rawParams: { ...rawParams, amount, fromAsset, toAsset },
+    };
+  }
+
+  // "Get some ETH" or "Get ETH" patterns
+  const getMatch = text.match(/(?:get|acquire|obtain)\s+(?:some\s+)?(?:\$?([\d,]+(?:\.\d+)?)\s*([km])?\s*(?:of\s+)?)?(\w+)/i);
+  if (getMatch) {
+    let amount = '1000'; // Default
+    if (getMatch[1]) {
+      amount = getMatch[1].replace(/,/g, '');
+      const suffix = getMatch[2]?.toLowerCase();
+      if (suffix === 'k') amount = (parseFloat(amount) * 1000).toString();
+      else if (suffix === 'm') amount = (parseFloat(amount) * 1000000).toString();
+    }
+
+    const targetAsset = normalizeAssetSymbol(getMatch[3]);
+    // Don't treat "get" as swap if target is a venue like "vault" or "aave"
+    if (!['VAULT', 'AAVE', 'COMPOUND', 'UNISWAP'].includes(targetAsset)) {
+      return {
+        kind: 'swap',
+        action: 'swap',
+        amount,
+        amountUnit: 'USDC',
+        targetAsset,
+        rawParams: { ...rawParams, amount, fromAsset: 'USDC', targetAsset },
+      };
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Try to parse deposit intent with enhanced patterns
+ */
+function tryParseDeposit(text: string, rawParams: Record<string, any>): ParsedIntent | null {
+  // Standard deposit patterns
   for (const [name, pattern] of Object.entries(INTENT_PATTERNS.deposit)) {
     const match = text.match(pattern);
     if (match) {
-      const amount = match[1]?.replace(/,/g, '') || '1000';
+      const amount = parseAmount(match[1]);
       const asset = normalizeAssetSymbol(match[2]);
       const venue = match[3]?.toLowerCase() || 'vault';
 
@@ -323,27 +757,120 @@ export function parseIntent(intentText: string): ParsedIntent {
     }
   }
 
-  // Try bridge patterns
+  // Enhanced patterns: "put $1000 in aave", "stake 500 USDC"
+  const putMatch = text.match(/(?:put|place|stake|add)\s+\$?([\d,]+(?:\.\d+)?)\s*([km])?\s*(\w+)?\s+(?:in|into|to|on)\s+(\w+)/i);
+  if (putMatch) {
+    let amount = putMatch[1].replace(/,/g, '');
+    const suffix = putMatch[2]?.toLowerCase();
+    if (suffix === 'k') amount = (parseFloat(amount) * 1000).toString();
+    else if (suffix === 'm') amount = (parseFloat(amount) * 1000000).toString();
+
+    const asset = putMatch[3] ? normalizeAssetSymbol(putMatch[3]) : 'USDC';
+    const venue = putMatch[4].toLowerCase();
+
+    return {
+      kind: 'deposit',
+      action: 'deposit',
+      amount,
+      amountUnit: asset,
+      venue,
+      rawParams: { ...rawParams, amount, asset, venue },
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Try to parse bridge intent with enhanced patterns
+ */
+function tryParseBridge(text: string, rawParams: Record<string, any>): ParsedIntent | null {
+  // Standard bridge patterns
   for (const [name, pattern] of Object.entries(INTENT_PATTERNS.bridge)) {
     const match = text.match(pattern);
     if (match) {
-      const amount = match[1]?.replace(/,/g, '') || '1000';
+      const amount = parseAmount(match[1]);
       const asset = normalizeAssetSymbol(match[2]);
-      const sourceChain = match[3].toLowerCase();
-      const destChain = match[4].toLowerCase();
+      const sourceChain = normalizeChainName(match[3]);
+      const destChain = normalizeChainName(match[4]);
 
       return {
         kind: 'bridge',
         action: 'bridge',
         amount,
         amountUnit: asset,
-        sourceChain: sourceChain === 'eth' ? 'ethereum' : sourceChain,
-        destChain: destChain === 'sol' ? 'solana' : destChain,
+        sourceChain,
+        destChain,
         rawParams: { ...rawParams, amount, asset, sourceChain, destChain },
       };
     }
   }
 
+  // Enhanced patterns: "move USDC to solana", "send ETH from ethereum to arbitrum"
+  const moveMatch = text.match(/(?:move|send|port)\s+\$?([\d,]+(?:\.\d+)?)\s*([km])?\s*(\w+)\s+(?:from\s+)?(\w+)?\s*to\s+(\w+)/i);
+  if (moveMatch && (moveMatch[4] || isChainName(moveMatch[5]))) {
+    let amount = moveMatch[1] ? moveMatch[1].replace(/,/g, '') : '1000';
+    const suffix = moveMatch[2]?.toLowerCase();
+    if (suffix === 'k') amount = (parseFloat(amount) * 1000).toString();
+    else if (suffix === 'm') amount = (parseFloat(amount) * 1000000).toString();
+
+    const asset = normalizeAssetSymbol(moveMatch[3]);
+    const sourceChain = moveMatch[4] ? normalizeChainName(moveMatch[4]) : 'ethereum';
+    const destChain = normalizeChainName(moveMatch[5]);
+
+    if (isChainName(destChain)) {
+      return {
+        kind: 'bridge',
+        action: 'bridge',
+        amount,
+        amountUnit: asset,
+        sourceChain,
+        destChain,
+        rawParams: { ...rawParams, amount, asset, sourceChain, destChain },
+      };
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Normalize chain name with common variations
+ */
+function normalizeChainName(chain: string): string {
+  const normalized = chain.toLowerCase().trim();
+
+  const CHAIN_ALIASES: Record<string, string> = {
+    'eth': 'ethereum',
+    'ether': 'ethereum',
+    'mainnet': 'ethereum',
+    'sol': 'solana',
+    'arb': 'arbitrum',
+    'op': 'optimism',
+    'base': 'base',
+    'bnb': 'bsc',
+    'binance': 'bsc',
+    'matic': 'polygon',
+    'poly': 'polygon',
+    'avax': 'avalanche',
+  };
+
+  return CHAIN_ALIASES[normalized] || normalized;
+}
+
+/**
+ * Check if a string is a known chain name
+ */
+function isChainName(str: string): boolean {
+  const chains = ['ethereum', 'eth', 'solana', 'sol', 'arbitrum', 'arb', 'optimism', 'op',
+                  'base', 'polygon', 'matic', 'avalanche', 'avax', 'bsc', 'bnb'];
+  return chains.includes(str.toLowerCase());
+}
+
+/**
+ * Try to parse analytics intents
+ */
+function tryParseAnalytics(text: string, rawParams: Record<string, any>): ParsedIntent | null {
   // Check for analytics intents (exposure, risk, top protocols, etc.)
   if (INTENT_PATTERNS.analytics.exposure.test(text) ||
       INTENT_PATTERNS.analytics.risk.test(text)) {
@@ -370,12 +897,117 @@ export function parseIntent(intentText: string): ParsedIntent {
     };
   }
 
-  // Unknown intent
-  return {
-    kind: 'unknown',
-    action: 'proof',
-    rawParams,
-  };
+  return null;
+}
+
+/**
+ * Try to infer intent from keywords when standard patterns fail
+ * This provides graceful fallbacks for ambiguous intents
+ */
+function tryInferIntent(text: string, rawParams: Record<string, any>): ParsedIntent | null {
+  // Extract any amount mentioned
+  const amountMatch = text.match(/\$?([\d,]+(?:\.\d+)?)\s*([km])?/i);
+  let amount = '1000';
+  if (amountMatch) {
+    amount = amountMatch[1].replace(/,/g, '');
+    const suffix = amountMatch[2]?.toLowerCase();
+    if (suffix === 'k') amount = (parseFloat(amount) * 1000).toString();
+    else if (suffix === 'm') amount = (parseFloat(amount) * 1000000).toString();
+  }
+
+  // Extract any asset mentioned
+  const words = text.split(/\s+/);
+  let detectedAsset: string | null = null;
+  const COMMON_ASSETS = ['eth', 'btc', 'sol', 'usdc', 'usdt', 'weth', 'wbtc', 'dai', 'link', 'uni', 'aave'];
+
+  for (const word of words) {
+    const cleaned = word.toLowerCase().replace(/[^a-z]/g, '');
+    if (COMMON_ASSETS.includes(cleaned) || ASSET_ALIASES[cleaned.toUpperCase()]) {
+      detectedAsset = normalizeAssetSymbol(cleaned);
+      break;
+    }
+  }
+
+  // Infer intent based on keywords
+  const hasLongShort = /\b(long|short)\b/i.test(text);
+  const hasSwapWords = /\b(swap|convert|trade|exchange|buy|sell|get)\b/i.test(text);
+  const hasDepositWords = /\b(deposit|supply|lend|stake|put|add)\b/i.test(text);
+  const hasBridgeWords = /\b(bridge|move|port|cross-chain|crosschain)\b/i.test(text);
+  const hasLeverageWords = /\b(\d+\s*x|leverage|leveraged|margin)\b/i.test(text);
+
+  // Perp intent: has long/short or leverage keywords with an asset
+  if ((hasLongShort || hasLeverageWords) && detectedAsset) {
+    const side = /\bshort\b/i.test(text) ? 'short' : 'long';
+    const leverageMatch = text.match(/(\d+)\s*x/i);
+    const leverage = leverageMatch ? parseInt(leverageMatch[1]) : 10;
+
+    return {
+      kind: 'perp',
+      action: side,
+      amount,
+      amountUnit: 'USDC',
+      targetAsset: detectedAsset,
+      leverage,
+      rawParams: { ...rawParams, inferred: true, side, asset: detectedAsset, leverage },
+    };
+  }
+
+  // Swap intent: has swap-like words with an asset
+  if (hasSwapWords && detectedAsset) {
+    // Determine if buying or selling
+    const isSelling = /\bsell\b/i.test(text);
+    const fromAsset = isSelling ? detectedAsset : 'USDC';
+    const toAsset = isSelling ? 'USDC' : detectedAsset;
+
+    return {
+      kind: 'swap',
+      action: 'swap',
+      amount,
+      amountUnit: fromAsset,
+      targetAsset: toAsset,
+      rawParams: { ...rawParams, inferred: true, fromAsset, toAsset },
+    };
+  }
+
+  // Deposit intent: has deposit-like words
+  if (hasDepositWords) {
+    const asset = detectedAsset || 'USDC';
+
+    // Try to find venue
+    let venue = 'vault';
+    const venueMatch = text.match(/(?:to|into|in|on)\s+(\w+)/i);
+    if (venueMatch) {
+      const potentialVenue = venueMatch[1].toLowerCase();
+      if (['vault', 'aave', 'compound', 'kamino', 'drift'].includes(potentialVenue)) {
+        venue = potentialVenue;
+      }
+    }
+
+    return {
+      kind: 'deposit',
+      action: 'deposit',
+      amount,
+      amountUnit: asset,
+      venue,
+      rawParams: { ...rawParams, inferred: true, asset, venue },
+    };
+  }
+
+  // Bridge intent: has bridge-like words
+  if (hasBridgeWords && detectedAsset) {
+    return {
+      kind: 'bridge',
+      action: 'bridge',
+      amount,
+      amountUnit: detectedAsset,
+      sourceChain: 'ethereum',
+      destChain: 'solana',
+      rawParams: { ...rawParams, inferred: true, asset: detectedAsset },
+    };
+  }
+
+  // No inference possible
+  return null;
 }
 
 /**

@@ -12,7 +12,9 @@
     "dev:all": "concurrently --kill-others-on-fail --names \"frontend,agent\" --prefix-colors \"cyan,green\" --prefix \"[{name}]\" \"npm run dev\" \"npm run dev:agent\"",
     "dev:demo": "npx concurrently --kill-others-on-fail --names \"frontend,backend\" --prefix-colors \"blue,green\" \"npm run dev\" \"cd agent && PORT=3001 npm run dev\"",
     "install:all": "npm install && cd agent && npm install",
-    "postinstall": "cd agent && npm install"
+    "postinstall": "cd agent && npm install",
+    "stress-test": "npx tsx scripts/stress-test.ts",
+    "stress-test:heavy": "STRESS_CONCURRENCY=10 STRESS_TOTAL_REQUESTS=100 npx tsx scripts/stress-test.ts"
   },
   "dependencies": {
     "@jridgewell/gen-mapping": "^0.3.13",

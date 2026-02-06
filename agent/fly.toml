@@ -8,8 +8,9 @@ primary_region = 'lax'
   NODE_ENV = "production"
   PORT = "3001"
   TELEMETRY_DB_PATH = "/data/telemetry.sqlite"
-  # SECURITY: Block execution endpoints on public deployment
-  TELEMETRY_ONLY = "true"
+  # SECURITY: Set to "true" to block execution endpoints on public deployment
+  # For beta testing, this is disabled to allow full functionality
+  TELEMETRY_ONLY = "false"
 
 [http_service]
   internal_port = 3001

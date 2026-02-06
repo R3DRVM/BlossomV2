@@ -8,7 +8,7 @@
     "dev": "tsx watch src/server/http.ts",
     "dev:agent": "tsx watch src/server/http.ts",
     "build": "tsc",
-    "start": "node dist/server/http.js",
+    "start": "node dist/src/server/http.js",
     "type-check": "tsc --noEmit",
     "e2e:mvp-full-flow": "tsx scripts/e2e-mvp-full-flow.ts",
     "prove:session-authority": "tsx scripts/prove-session-authority.ts",

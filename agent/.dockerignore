@@ -1,0 +1,14 @@
+node_modules
+src
+.env
+.env.local
+.env.local.example
+.env.example
+*.log
+logs
+.DS_Store
+.vercel
+scripts
+*.md
+fly.telemetry.toml
+tsconfig.json
