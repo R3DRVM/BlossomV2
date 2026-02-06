@@ -77,8 +77,13 @@ const ALLOWED_ORIGINS = [
   'http://127.0.0.1:5173',
   'https://blossom.onl',
   'https://www.blossom.onl',
+  'https://app.blossom.onl',
+  'https://api.blossom.onl',
   // Preview/staging subdomains
   /^https:\/\/.*\.blossom\.onl$/,
+  // Vercel preview deployments
+  /^https:\/\/blossom-v2.*\.vercel\.app$/,
+  /^https:\/\/.*-redrums-projects.*\.vercel\.app$/,
 ];
 import * as eventSim from '../plugins/event-sim';
 import { resetAllSims, getPortfolioSnapshot } from '../services/state';
