@@ -212,7 +212,7 @@ export function detectChain(metadata?: Record<string, unknown>): Chain {
 }
 
 /**
- * Record a failure
+ * Record a failure with enhanced root cause logging
  */
 export function recordFailure(params: {
   errorMessage: string;
@@ -223,8 +223,27 @@ export function recordFailure(params: {
   chain?: Chain;
   intentType?: IntentType;
   metadata?: Record<string, unknown>;
+  stack?: string; // Optional stack trace for debugging
 }): FailureRecord {
   const { category, code } = categorizeError(params.errorMessage);
+
+  // Enhanced root cause detection for unknown errors
+  let enhancedMetadata = params.metadata || {};
+  if (category === 'unknown' && params.stack) {
+    // Extract potential root cause from stack trace
+    const stackLines = params.stack.split('\n').slice(0, 5);
+    enhancedMetadata = {
+      ...enhancedMetadata,
+      stackSummary: stackLines.join(' | '),
+      rootCauseHint: extractRootCauseHint(params.errorMessage, params.stack),
+    };
+  }
+
+  // Add timestamp context for debugging timing issues
+  enhancedMetadata = {
+    ...enhancedMetadata,
+    recordedAt: new Date().toISOString(),
+  };
 
   const record: FailureRecord = {
     id: generateFailureId(),
@@ -237,7 +256,7 @@ export function recordFailure(params: {
     endpoint: params.endpoint,
     walletHash: params.walletHash,
     correlationId: params.correlationId,
-    metadata: params.metadata,
+    metadata: enhancedMetadata,
   };
 
   failureStore.push(record);
@@ -247,7 +266,37 @@ export function recordFailure(params: {
     failureStore.shift();
   }
 
+  // Log critical failures immediately for faster debugging
+  if (category === 'execution' || category === 'auth') {
+    console.error(`[FailureAnalytics] CRITICAL ${category} failure:`, {
+      id: record.id,
+      code: record.errorCode,
+      message: record.errorMessage.substring(0, 100),
+      chain: record.chain,
+      intentType: record.intentType,
+    });
+  }
+
   return record;
+}
+
+/**
+ * Extract a hint about the root cause from error message and stack
+ */
+function extractRootCauseHint(message: string, stack: string): string {
+  // Check for common root causes in stack
+  if (stack.includes('ECONNREFUSED')) return 'RPC connection refused';
+  if (stack.includes('ETIMEDOUT')) return 'Network timeout';
+  if (stack.includes('insufficient funds')) return 'Insufficient gas or balance';
+  if (stack.includes('nonce')) return 'Nonce conflict';
+  if (stack.includes('revert')) return 'Contract revert';
+  if (stack.includes('signature')) return 'Signature validation failed';
+  if (stack.includes('session')) return 'Session-related issue';
+  if (stack.includes('allowance')) return 'Token allowance issue';
+
+  // Default: use first meaningful word from message
+  const words = message.split(/\s+/).filter(w => w.length > 4);
+  return words[0] || 'Unknown';
 }
 
 /**

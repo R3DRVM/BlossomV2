@@ -34,6 +34,7 @@ const MODES: Record<ExecutionMode, {
   color: string;
   bgColor: string;
   borderColor: string;
+  ringColor: string;
 }> = {
   direct: {
     label: 'Direct Signing',
@@ -43,6 +44,7 @@ const MODES: Record<ExecutionMode, {
     color: 'text-blue-600',
     bgColor: 'bg-blue-50',
     borderColor: 'border-blue-200',
+    ringColor: 'ring-blue-600',
   },
   session: {
     label: 'One-Click Session',
@@ -52,6 +54,7 @@ const MODES: Record<ExecutionMode, {
     color: 'text-emerald-600',
     bgColor: 'bg-emerald-50',
     borderColor: 'border-emerald-200',
+    ringColor: 'ring-emerald-600',
   },
   confirm: {
     label: 'Confirm Mode',
@@ -61,6 +64,7 @@ const MODES: Record<ExecutionMode, {
     color: 'text-amber-600',
     bgColor: 'bg-amber-50',
     borderColor: 'border-amber-200',
+    ringColor: 'ring-amber-600',
   },
 };
 
@@ -210,7 +214,7 @@ export default function ExecutionModeSelector({
                 flex-1 flex flex-col items-center gap-1 px-2 py-2 rounded-lg border text-xs
                 transition-all duration-200
                 ${isSelected
-                  ? `${modeConfig.bgColor} ${modeConfig.borderColor} ${modeConfig.color} ring-2 ring-offset-1 ring-${modeConfig.color.replace('text-', '')}`
+                  ? `${modeConfig.bgColor} ${modeConfig.borderColor} ${modeConfig.color} ring-2 ring-offset-1 ${modeConfig.ringColor}`
                   : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
                 }
               `}

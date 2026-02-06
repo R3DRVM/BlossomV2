@@ -22,11 +22,9 @@ import {
   TrendingDown,
   Wallet,
   Route,
-  Shield,
   Clock,
   ChevronDown,
   ChevronUp,
-  ExternalLink,
   Loader2,
 } from 'lucide-react';
 

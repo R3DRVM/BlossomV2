@@ -138,7 +138,7 @@ const IMPLEMENTED_VENUES: Record<string, Record<string, string[]>> = {
   },
   solana: {
     deposit: ['solana_vault'],
-    swap: ['demo_dex'],
+    swap: ['jupiter', 'demo_dex'], // Jupiter for real swaps, demo_dex for proof_only
     bridge: ['bridge_proof'],
     perp: ['demo_perp'],
     proof: ['native'],
@@ -579,14 +579,28 @@ export function routeIntent(
 
   // Handle swap intents
   if (kind === 'swap') {
-    // Solana swaps go to proof_only since execution isn't fully wired
+    // Check if Solana executor is configured for real swaps
+    const solanaPrivateKey = process.env.SOLANA_PRIVATE_KEY;
+
     if (targetChain === 'solana') {
+      // Enable real Solana swaps if private key is configured
+      if (solanaPrivateKey) {
+        return {
+          chain: 'solana',
+          network: 'devnet',
+          venue: 'jupiter', // Use Jupiter for real swaps
+          executionType: 'real',
+          warnings: ['Solana swap via Jupiter on devnet.'],
+        };
+      }
+
+      // Fallback to proof_only if not configured
       return {
         chain: 'solana',
         network: 'devnet',
         venue: 'demo_dex',
         executionType: 'proof_only',
-        warnings: ['PROOF_ONLY: Solana swap integration pending. Recording intent proof on-chain.'],
+        warnings: ['PROOF_ONLY: SOLANA_PRIVATE_KEY not configured. Set this env var for real Solana swaps.'],
       };
     }
 
@@ -2348,12 +2362,14 @@ async function executeSolana(
     updateExecutionAsync,
     linkExecutionToIntentAsync,
   } = await import('../../execution-ledger/db');
+  const { buildExplorerUrl } = await import('../ledger/ledger');
 
   // Get intent's existing metadata to preserve caller info (source, domain, runId)
   const existingIntent = await getIntentAsync(intentId);
   const existingMetadataJson = existingIntent?.metadata_json;
 
   const now = Math.floor(Date.now() / 1000);
+  const startTime = Date.now();
 
   // Check for Solana private key
   const solanaPrivateKey = process.env.SOLANA_PRIVATE_KEY;
@@ -2376,6 +2392,131 @@ async function executeSolana(
         message: 'Solana wallet not configured',
       },
     };
+  }
+
+  // For real swap execution via Jupiter
+  if (parsed.kind === 'swap' && route.venue === 'jupiter') {
+    try {
+      const { createSolanaExecutor } = await import('../solana/solanaExecutor');
+
+      const executor = createSolanaExecutor({ privateKey: solanaPrivateKey });
+
+      if (!executor.isInitialized()) {
+        throw new Error('Failed to initialize Solana executor');
+      }
+
+      const executorPubkey = executor.getPublicKey();
+
+      // Create execution record
+      const execution = await createExecutionAsync({
+        chain: 'solana',
+        network: 'devnet',
+        kind: 'swap',
+        venue: 'jupiter' as any,
+        intent: parsed.rawParams.original || 'Solana swap',
+        action: 'swap',
+        fromAddress: executorPubkey || 'unknown',
+        token: parsed.amountUnit || 'SOL',
+        usdEstimate: estimateIntentUsd(parsed),
+        usdEstimateIsEstimate: true,
+      });
+
+      await linkExecutionToIntentAsync(execution.id, intentId);
+
+      // Execute the swap via Jupiter
+      const inputToken = parsed.amountUnit || 'USDC';
+      const outputToken = parsed.targetAsset || 'SOL';
+      const amount = parsed.amount || '100';
+
+      const swapResult = await executor.executeSwap({
+        inputToken,
+        outputToken,
+        amount,
+        slippageBps: 50,
+      });
+
+      const latencyMs = Date.now() - startTime;
+
+      if (swapResult.ok) {
+        await updateExecutionAsync(execution.id, {
+          status: 'confirmed',
+          txHash: swapResult.signature,
+          explorerUrl: swapResult.explorerUrl,
+          latencyMs,
+        });
+
+        await updateIntentStatusAsync(intentId, {
+          status: 'confirmed',
+          confirmedAt: Math.floor(Date.now() / 1000),
+          metadataJson: mergeMetadata(existingMetadataJson, {
+            parsed,
+            route,
+            executedKind: 'real',
+            executionId: execution.id,
+            txHash: swapResult.signature,
+            explorerUrl: swapResult.explorerUrl,
+            solana: swapResult.metadata,
+          }),
+        });
+
+        return {
+          ok: true,
+          intentId,
+          status: 'confirmed',
+          executionId: execution.id,
+          txHash: swapResult.signature,
+          explorerUrl: swapResult.explorerUrl,
+          metadata: {
+            executedKind: 'real',
+            ...swapResult.metadata,
+          },
+        };
+      } else {
+        await updateExecutionAsync(execution.id, {
+          status: 'failed',
+          errorCode: swapResult.error?.code,
+          errorMessage: swapResult.error?.message,
+          latencyMs,
+        });
+
+        await updateIntentStatusAsync(intentId, {
+          status: 'failed',
+          failureStage: 'execute',
+          errorCode: swapResult.error?.code || 'SWAP_FAILED',
+          errorMessage: swapResult.error?.message || 'Jupiter swap failed',
+        });
+
+        return {
+          ok: false,
+          intentId,
+          status: 'failed',
+          executionId: execution.id,
+          error: {
+            stage: 'execute',
+            code: swapResult.error?.code || 'SWAP_FAILED',
+            message: swapResult.error?.message || 'Jupiter swap failed',
+          },
+        };
+      }
+    } catch (error: any) {
+      await updateIntentStatusAsync(intentId, {
+        status: 'failed',
+        failureStage: 'execute',
+        errorCode: 'SOLANA_SWAP_ERROR',
+        errorMessage: error.message?.slice(0, 200),
+      });
+
+      return {
+        ok: false,
+        intentId,
+        status: 'failed',
+        error: {
+          stage: 'execute',
+          code: 'SOLANA_SWAP_ERROR',
+          message: error.message,
+        },
+      };
+    }
   }
 
   // Optional: Pull Solana market context (Pyth/Jupiter) for devnet-safe metadata
@@ -2419,7 +2560,7 @@ async function executeSolana(
     console.warn('[solana] Price/routing enrichment failed:', error.message);
   }
 
-  // Create execution record
+  // Create execution record for non-swap intents
   const solanaKind = parsed.kind === 'unknown' ? 'proof' : parsed.kind;
   const execution = await createExecutionAsync({
     chain: 'solana',
@@ -2436,11 +2577,10 @@ async function executeSolana(
 
   await linkExecutionToIntentAsync(execution.id, intentId);
 
-  // For MVP: Mark as confirmed without actual execution
-  // Full Solana execution would use the SolanaClient
+  // For non-swap intents: Mark as confirmed with metadata
   await updateExecutionAsync(execution.id, {
     status: 'confirmed',
-    latencyMs: 100,
+    latencyMs: Date.now() - startTime,
   });
 
   await updateIntentStatusAsync(intentId, {
@@ -2449,9 +2589,8 @@ async function executeSolana(
     metadataJson: mergeMetadata(existingMetadataJson, {
       parsed,
       route,
-      executedKind: 'real',
+      executedKind: route.executionType === 'real' ? 'real' : 'proof_only',
       executionId: execution.id,
-      note: 'Solana execution simulated for MVP',
       solana: solanaContext,
     }),
   });
@@ -2462,8 +2601,8 @@ async function executeSolana(
     status: 'confirmed',
     executionId: execution.id,
     metadata: {
-      executedKind: 'real',
-      note: 'Solana execution simulated for MVP',
+      executedKind: route.executionType === 'real' ? 'real' : 'proof_only',
+      solana: solanaContext,
     },
   };
 }

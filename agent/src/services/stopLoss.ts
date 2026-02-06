@@ -148,6 +148,23 @@ export async function createTrailingStop(params: {
  * Create a generic stop order
  */
 async function createStopOrder(params: CreateStopOrderParams): Promise<StopOrder> {
+  // Validate trigger price for non-trailing stop orders
+  if (params.orderType !== 'trailing_stop' && (!params.triggerPrice || params.triggerPrice <= 0)) {
+    throw new Error(`Invalid trigger price for ${params.orderType}: ${params.triggerPrice}`);
+  }
+
+  // Validate trailing percentage for trailing stops
+  if (params.orderType === 'trailing_stop') {
+    if (!params.trailingPct || params.trailingPct <= 0 || params.trailingPct > 50) {
+      throw new Error(`Invalid trailing percentage: ${params.trailingPct}. Must be between 0 and 50.`);
+    }
+  }
+
+  // Validate size
+  if (!params.sizeUsd || params.sizeUsd <= 0) {
+    throw new Error(`Invalid size: ${params.sizeUsd}`);
+  }
+
   const order: StopOrder = {
     id: uuidv4(),
     positionId: params.positionId,

@@ -5,7 +5,7 @@ import PerpPositionEditor from './positions/PerpPositionEditor';
 import EventPositionEditor from './positions/EventPositionEditor';
 import PositionEditorCard from './PositionEditorCard';
 import SectionHeader from './ui/SectionHeader';
-import { ChevronDown, Clock, LogOut, RefreshCw, ChevronUp } from 'lucide-react';
+import { ChevronDown, Clock, RefreshCw, ChevronUp } from 'lucide-react';
 import { executionMode, executionAuthMode, ethTestnetChainId, forceDemoPortfolio } from '../lib/config';
 import { getAddress, getAddressIfExplicit, getChainId, connectWallet as legacyConnectWallet, switchToSepolia, getProvider, disconnectWallet as legacyDisconnectWallet, isExplicitlyConnected } from '../lib/walletAdapter';
 import { isBackendHealthy, onBackendHealthChange, AGENT_API_BASE_URL } from '../lib/apiClient';

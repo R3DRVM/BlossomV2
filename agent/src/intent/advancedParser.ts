@@ -210,7 +210,7 @@ function normalizeAsset(asset: string): string {
  * Parse DCA intent
  */
 export function parseDCAIntent(text: string): DCAIntent | null {
-  const lowerText = text.toLowerCase();
+  // Note: Using original text for regex matching to preserve case in asset names
 
   // Try basic pattern first
   let match = text.match(PATTERNS.dca.basic);
@@ -324,6 +324,18 @@ export function parseLeverageIntent(text: string): LeverageIntent | null {
 
   if (!leverage || !asset) {
     return null;
+  }
+
+  // Validate leverage is within safe bounds (1x to 100x max)
+  if (leverage < 1) {
+    leverage = 1;
+  } else if (leverage > 100) {
+    leverage = 100; // Cap at 100x for safety
+  }
+
+  // Validate margin amount is positive
+  if (marginAmount <= 0) {
+    marginAmount = 100; // Default $100 margin
   }
 
   // Extract optional entry/TP/SL
@@ -554,13 +566,13 @@ function parseSimpleStep(text: string, stepNumber: number): ParsedStepIntent | n
  * Returns parsed advanced intent or null if not an advanced intent
  */
 export function parseAdvancedIntent(text: string): AdvancedParsedIntent | null {
-  const lowerText = text.toLowerCase();
+  const normalizedText = text.toLowerCase();
 
   // Check for DCA keywords
   if (
-    lowerText.includes('dca') ||
-    lowerText.includes('dollar cost average') ||
-    (lowerText.includes('buy') && lowerText.includes('every'))
+    normalizedText.includes('dca') ||
+    normalizedText.includes('dollar cost average') ||
+    (normalizedText.includes('buy') && normalizedText.includes('every'))
   ) {
     const dcaIntent = parseDCAIntent(text);
     if (dcaIntent) {
@@ -570,9 +582,9 @@ export function parseAdvancedIntent(text: string): AdvancedParsedIntent | null {
 
   // Check for leverage keywords
   if (
-    lowerText.includes('leverage') ||
-    lowerText.match(/\d+\s*x\s*(long|short)/i) ||
-    lowerText.match(/(long|short)\s+\w+\s+\d+\s*x/i)
+    normalizedText.includes('leverage') ||
+    normalizedText.match(/\d+\s*x\s*(long|short)/i) ||
+    normalizedText.match(/(long|short)\s+\w+\s+\d+\s*x/i)
   ) {
     const leverageIntent = parseLeverageIntent(text);
     if (leverageIntent) {
@@ -582,11 +594,11 @@ export function parseAdvancedIntent(text: string): AdvancedParsedIntent | null {
 
   // Check for yield optimization keywords
   if (
-    lowerText.includes('best yield') ||
-    lowerText.includes('highest yield') ||
-    lowerText.includes('find yield') ||
-    lowerText.includes('earn yield') ||
-    lowerText.includes('where can i earn')
+    normalizedText.includes('best yield') ||
+    normalizedText.includes('highest yield') ||
+    normalizedText.includes('find yield') ||
+    normalizedText.includes('earn yield') ||
+    normalizedText.includes('where can i earn')
   ) {
     const yieldIntent = parseYieldOptimizeIntent(text);
     if (yieldIntent) {
@@ -596,10 +608,10 @@ export function parseAdvancedIntent(text: string): AdvancedParsedIntent | null {
 
   // Check for multi-step patterns
   if (
-    lowerText.includes('half') ||
-    lowerText.includes('then') ||
-    lowerText.match(/\d+%.*and.*\d+%/) ||
-    lowerText.includes('rest')
+    normalizedText.includes('half') ||
+    normalizedText.includes('then') ||
+    normalizedText.match(/\d+%.*and.*\d+%/) ||
+    normalizedText.includes('rest')
   ) {
     const multiStepIntent = parseMultiStepIntent(text);
     if (multiStepIntent) {
@@ -683,18 +695,19 @@ export function advancedIntentToStandard(
         },
       };
 
+    default:
+      // Exhaustive check - TypeScript will error if a case is missing
+      const _exhaustiveCheck: never = advanced;
+      return {
+        kind: 'unknown',
+        action: 'proof',
+        rawParams: {
+          original: (advanced as AdvancedParsedIntent).rawText || '',
+          advancedKind: 'unknown',
+          parseError: `Unhandled advanced intent kind`,
+        },
+      };
   }
-
-  // Exhaustive check - should never reach here
-  const _exhaustive: never = advanced;
-  return {
-    kind: 'unknown',
-    action: 'proof',
-    rawParams: {
-      original: '',
-      advancedKind: 'unknown',
-    },
-  };
 }
 
 /**
