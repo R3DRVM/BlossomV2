@@ -865,7 +865,20 @@ async function applyDeterministicFallback(
   // Normalize input before parsing
   const normalizedMessage = normalizeUserInput(userMessage);
   const lowerMessage = normalizedMessage.toLowerCase();
-  
+
+  // Detect target chain from user message
+  // Priority: explicit "solana" mention > SOL token detection > default to sepolia
+  const isSolanaIntent = lowerMessage.includes('solana') ||
+    lowerMessage.includes(' sol ') ||
+    lowerMessage.match(/\bsol\b/) !== null ||
+    lowerMessage.match(/\bwsol\b/) !== null ||
+    lowerMessage.match(/swap.*sol/i) !== null ||
+    lowerMessage.match(/buy.*sol/i) !== null ||
+    lowerMessage.match(/sell.*sol/i) !== null;
+
+  const targetChain = isSolanaIntent ? 'solana' : 'sepolia';
+  const chainDisplay = isSolanaIntent ? 'Solana Devnet' : 'Sepolia';
+
   if (isEventPrompt) {
     // Extract event details
     const stakeMatch = userMessage.match(/\$(\d+)/) || userMessage.match(/(\d+)\s*(usd|dollar)/i);
@@ -882,7 +895,7 @@ async function applyDeterministicFallback(
       actions: [],
       executionRequest: {
         kind: 'event',
-        chain: 'sepolia',
+        chain: targetChain,
         marketId: market?.id || 'FED_CUTS_MAR_2025',
         outcome: outcome as 'YES' | 'NO',
         stakeUsd,
@@ -964,7 +977,7 @@ async function applyDeterministicFallback(
         actions: [],
         executionRequest: {
           kind: 'perp',
-          chain: 'sepolia',
+          chain: targetChain,
           market: `${asset}-USD`,
           side: side as 'long' | 'short',
           leverage,
@@ -980,7 +993,7 @@ async function applyDeterministicFallback(
       actions: [],
       executionRequest: {
         kind: 'perp',
-        chain: 'sepolia',
+        chain: targetChain,
         market: `${asset}-USD`,
         side: side as 'long' | 'short',
         leverage,
@@ -991,28 +1004,40 @@ async function applyDeterministicFallback(
   }
   
   if (isSwapPrompt) {
-    // Extract amount and tokens
-    const amountMatch = userMessage.match(/(\d+\.?\d*)\s*(usdc|weth|eth)/i);
-    const tokenInMatch = lowerMessage.match(/(usdc|weth|eth)/);
-    const tokenOutMatch = lowerMessage.match(/to\s+(usdc|weth|eth)/);
-    
+    // Extract amount and tokens (including SOL for Solana swaps)
+    const amountMatch = userMessage.match(/(\d+\.?\d*)\s*(usdc|weth|eth|sol|wsol)/i);
+    const tokenInMatch = lowerMessage.match(/(usdc|weth|eth|sol|wsol)/);
+    const tokenOutMatch = lowerMessage.match(/(?:to|for)\s+(usdc|weth|eth|sol|wsol)/);
+
     if (amountMatch && tokenInMatch) {
       const amount = amountMatch[1];
-      const tokenIn = tokenInMatch[1].toUpperCase() === 'ETH' ? 'ETH' : tokenInMatch[1].toUpperCase();
-      const tokenOut = tokenOutMatch ? (tokenOutMatch[1].toUpperCase() === 'ETH' ? 'WETH' : tokenOutMatch[1].toUpperCase()) : 
-                       (tokenIn === 'REDACTED' ? 'WETH' : 'REDACTED');
-      
+      const rawTokenIn = tokenInMatch[1].toUpperCase();
+      const tokenIn = rawTokenIn === 'ETH' ? 'ETH' : rawTokenIn === 'WSOL' ? 'SOL' : rawTokenIn;
+
+      let tokenOut: string;
+      if (tokenOutMatch) {
+        const rawOut = tokenOutMatch[1].toUpperCase();
+        tokenOut = rawOut === 'ETH' ? 'WETH' : rawOut === 'WSOL' ? 'SOL' : rawOut;
+      } else {
+        // Default output based on chain and input
+        if (isSolanaIntent) {
+          tokenOut = tokenIn === 'SOL' ? 'USDC' : 'SOL';
+        } else {
+          tokenOut = tokenIn === 'USDC' ? 'WETH' : 'USDC';
+        }
+      }
+
       return {
-        assistantMessage: `I'll swap ${amount} ${tokenIn} to ${tokenOut} on Sepolia.`,
+        assistantMessage: `I'll swap ${amount} ${tokenIn} to ${tokenOut} on ${chainDisplay}.`,
         actions: [],
         executionRequest: {
           kind: 'swap',
-          chain: 'sepolia',
-          tokenIn: tokenIn as 'ETH' | 'WETH' | 'REDACTED',
-          tokenOut: tokenOut as 'WETH' | 'REDACTED',
+          chain: targetChain,
+          tokenIn,
+          tokenOut,
           amountIn: amount,
           slippageBps: 50,
-          fundingPolicy: tokenIn === 'ETH' ? 'auto' : 'require_tokenIn',
+          fundingPolicy: tokenIn === 'ETH' || tokenIn === 'SOL' ? 'auto' : 'require_tokenIn',
         },
       };
     }
@@ -1081,11 +1106,11 @@ async function applyDeterministicFallback(
     }
 
     return {
-      assistantMessage: `I'll allocate $${amount} to ${vaultName || 'yield vault'}. ${vaultName ? `Earning ~5-7% APY.` : 'Recommended: Aave REDACTED at 5.00% APY.'}`,
+      assistantMessage: `I'll allocate $${amount} to ${vaultName || 'yield vault'} on ${chainDisplay}. ${vaultName ? `Earning ~5-7% APY.` : 'Recommended: Aave REDACTED at 5.00% APY.'}`,
       actions: [],
       executionRequest: {
         kind: 'lend_supply',
-        chain: 'sepolia',
+        chain: targetChain,
         asset: 'REDACTED',
         amount,
         protocol: 'demo',
@@ -1356,7 +1381,9 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
     const SLANG_PRICE_RE = /\b(wut|wuts|whats|wat|how\s+much)\s+(is\s+)?(eth|btc|sol|bitcoin|ethereum|solana)\s*(doing|doin|worth|at|rn|right\s+now)?\b/i;
     // Matches: "is sol pumping", "is eth up", "is btc down today", "how is eth doing"
     const PUMP_PRICE_RE = /\b(is|how\s+is)\s+(eth|btc|sol|bitcoin|ethereum|solana)\s+(pumping|dumping|up|down|doing|mooning|crashing|performing)\s*(today|rn|right\s+now|currently)?\s*\??$/i;
-    const hasPriceQueryIntent = PRICE_QUERY_RE.test(normalizedUserMessage) || SLANG_PRICE_RE.test(normalizedUserMessage) || PUMP_PRICE_RE.test(normalizedUserMessage);
+    // Exclude swap/trade intents from price query detection
+    const isSwapIntent = /\b(swap|exchange|trade|convert|buy|sell)\b/i.test(normalizedUserMessage);
+    const hasPriceQueryIntent = !isSwapIntent && (PRICE_QUERY_RE.test(normalizedUserMessage) || SLANG_PRICE_RE.test(normalizedUserMessage) || PUMP_PRICE_RE.test(normalizedUserMessage));
 
     if (hasPriceQueryIntent) {
       console.log('[api/chat] Price query detected');
