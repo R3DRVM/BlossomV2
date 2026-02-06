@@ -5,7 +5,7 @@ import PerpPositionEditor from './positions/PerpPositionEditor';
 import EventPositionEditor from './positions/EventPositionEditor';
 import PositionEditorCard from './PositionEditorCard';
 import SectionHeader from './ui/SectionHeader';
-import { ChevronDown, Clock, LogOut, RefreshCw, ChevronUp, Loader2 } from 'lucide-react';
+import { ChevronDown, Clock, LogOut, RefreshCw, ChevronUp } from 'lucide-react';
 import { executionMode, executionAuthMode, ethTestnetChainId, forceDemoPortfolio } from '../lib/config';
 import { getAddress, getAddressIfExplicit, getChainId, connectWallet as legacyConnectWallet, switchToSepolia, getProvider, disconnectWallet as legacyDisconnectWallet, isExplicitlyConnected } from '../lib/walletAdapter';
 import { isBackendHealthy, onBackendHealthChange, AGENT_API_BASE_URL } from '../lib/apiClient';
@@ -15,7 +15,7 @@ import ConnectWalletButton, { useWalletStatus } from './wallet/ConnectWalletButt
 import { useAccount, useChainId as useWagmiChainId, useSwitchChain } from 'wagmi';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { sepolia } from 'wagmi/chains';
-import { useToast } from './toast/useToast';
+import MintBUSDC from './MintBUSDC';
 
 interface RightPanelProps {
   selectedStrategyId?: string | null;
@@ -60,7 +60,6 @@ export default function RightPanel(_props: RightPanelProps) {
   const { switchChain } = useSwitchChain();
   const { publicKey: solanaPublicKey, connected: solanaConnected } = useWallet();
   const walletStatus = useWalletStatus();
-  const { showToast } = useToast();
 
   // Wallet connection state machine (eth_testnet mode only)
   type WalletState = 'DISCONNECTED' | 'CONNECTING' | 'CONNECTED_LOADING' | 'CONNECTED_READY' | 'WRONG_NETWORK' | 'ERROR' | 'BACKEND_OFFLINE' | 'BACKEND_MISCONFIGURED' | 'RPC_UNREACHABLE';
@@ -83,8 +82,6 @@ export default function RightPanel(_props: RightPanelProps) {
   const lastKnownBalancesRef = useRef<{ value: number; balances: any[] } | null>(null);
 
   // Demo token faucet state
-  const [faucetStatus, setFaucetStatus] = useState<'idle' | 'minting' | 'success' | 'error'>('idle');
-  const [faucetError, setFaucetError] = useState<string>('');
   const [faucetConfigured, setFaucetConfigured] = useState<boolean>(true); // Assume configured until checked
   const [faucetConfigChecked, setFaucetConfigChecked] = useState<boolean>(false);
 
@@ -796,7 +793,6 @@ export default function RightPanel(_props: RightPanelProps) {
         setTimeout(poll, nextDelay);
       } else {
         console.log('[RightPanel] Balance polling complete');
-        setFaucetStatus('idle');
       }
     };
 
@@ -804,66 +800,6 @@ export default function RightPanel(_props: RightPanelProps) {
     setTimeout(poll, delayMs);
   }, []);
 
-  const handleGetDemoTokens = async () => {
-    if (!walletAddress) return;
-
-    setFaucetStatus('minting');
-    setFaucetError('');
-
-    try {
-      const response = await fetch(`${AGENT_API_BASE_URL}/api/demo/faucet`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          userAddress: walletAddress
-        })
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Faucet request failed');
-      }
-
-      const result = await response.json();
-      console.log('[RightPanel] Demo tokens minted successfully:', result);
-
-      setFaucetStatus('success');
-
-      // Show success toast
-      showToast({
-        title: 'Demo bUSDC minted!',
-        description: result.txHash
-          ? `10,000 demo bUSDC sent to your wallet. TX: ${result.txHash.slice(0, 10)}...`
-          : '10,000 demo bUSDC sent to your wallet.',
-        variant: 'success'
-      });
-
-      // Mark faucet as claimed in localStorage
-      if (walletAddress) {
-        localStorage.setItem(`blossom_faucet_claimed_${walletAddress.toLowerCase()}`, 'true');
-      }
-
-      // Poll for balance updates with exponential backoff
-      pollForBalanceUpdate(8, 2000);
-
-    } catch (error: any) {
-      console.error('[RightPanel] Faucet error:', error);
-      setFaucetStatus('error');
-      setFaucetError(error.message || 'Failed to mint tokens');
-
-      // Show error toast
-      showToast({
-        title: 'Mint failed',
-        description: error.message || 'Failed to mint demo tokens. Please try again.',
-        variant: 'default'
-      });
-
-      // Reset status after 3 seconds
-      setTimeout(() => setFaucetStatus('idle'), 3000);
-    }
-  };
 
   // Calculate perp PnL (simplified - using totalPnlPct for now)
   const perpPnlUsd = account.accountValue * (account.totalPnlPct / 100);
@@ -1140,34 +1076,17 @@ export default function RightPanel(_props: RightPanelProps) {
               const wasClaimed = faucetClaimedKey && localStorage.getItem(faucetClaimedKey) === 'true';
               if (!hasLowUsdc || wasClaimed) return null;
 
-              const isDisabled = !faucetConfigured || faucetStatus === 'minting' || faucetStatus === 'success';
-
               return (
-                <span className="flex items-center gap-1.5 text-[9px] text-slate-500">
-                  <span>Need bUSDC?</span>
-                  <button
-                    onClick={faucetConfigured ? handleGetDemoTokens : undefined}
-                    disabled={isDisabled}
-                    title={!faucetConfigured ? 'Faucet temporarily unavailable' : undefined}
-                    className={`flex items-center gap-1 font-medium ${
-                      !faucetConfigured ? 'text-slate-400 cursor-not-allowed' :
-                      faucetStatus === 'minting' ? 'text-slate-400' :
-                      faucetStatus === 'success' ? 'text-emerald-600' :
-                      faucetStatus === 'error' ? 'text-rose-500' :
-                      'text-pink-600 hover:text-pink-700 underline'
-                    }`}
-                  >
-                    {faucetStatus === 'minting' && (
-                      <>
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                        <span>Minting...</span>
-                      </>
-                    )}
-                    {faucetStatus === 'success' && <span>Sent!</span>}
-                    {faucetStatus === 'error' && <span>Failed</span>}
-                    {faucetStatus === 'idle' && <span>{faucetConfigured ? 'Mint' : 'Unavailable'}</span>}
-                  </button>
-                </span>
+                <MintBUSDC
+                  walletAddress={walletAddress}
+                  disabled={!faucetConfigured}
+                  onMinted={() => {
+                    if (walletAddress) {
+                      localStorage.setItem(`blossom_faucet_claimed_${walletAddress.toLowerCase()}`, 'true');
+                    }
+                    pollForBalanceUpdate(8, 2000);
+                  }}
+                />
               );
             })()}
             {!isEthTestnetMode && (

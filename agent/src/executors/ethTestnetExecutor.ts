@@ -688,19 +688,16 @@ export async function prepareEthTestnetExecution(
       // Wrap actions for session mode if needed
       let pullActionData: string;
       let swapActionData: string;
-      let maxSpendUnits: bigint = 1n;
 
       if (authMode === 'session') {
-        // Derive maxSpendUnits from amountIn
-        maxSpendUnits = amountIn / (100n * 10n**6n) + 1n;
-        
+        // Spend cap should apply to the SWAP action only (avoid double-counting PULL)
         pullActionData = encodeAbiParameters(
           [{ type: 'uint256' }, { type: 'bytes' }],
-          [maxSpendUnits, pullInnerData]
+          [0n, pullInnerData]
         );
         swapActionData = encodeAbiParameters(
           [{ type: 'uint256' }, { type: 'bytes' }],
-          [maxSpendUnits, swapInnerData]
+          [amountIn, swapInnerData]
         );
       } else {
         // Direct mode: use raw innerData
@@ -761,17 +758,16 @@ export async function prepareEthTestnetExecution(
       // Wrap actions for session mode if needed
       let pullActionData: string;
       let swapActionData: string;
-      let maxSpendUnits: bigint = 1n;
 
       if (authMode === 'session') {
-        maxSpendUnits = amountIn / (100n * 10n**6n) + 1n;
+        // Spend cap should apply to the SWAP action only (avoid double-counting PULL)
         pullActionData = encodeAbiParameters(
           [{ type: 'uint256' }, { type: 'bytes' }],
-          [maxSpendUnits, pullInnerData]
+          [0n, pullInnerData]
         );
         swapActionData = encodeAbiParameters(
           [{ type: 'uint256' }, { type: 'bytes' }],
-          [maxSpendUnits, swapInnerData]
+          [amountIn, swapInnerData]
         );
       } else {
         pullActionData = pullInnerData;
@@ -815,13 +811,11 @@ export async function prepareEthTestnetExecution(
 
       // For session mode, wrap with maxSpendUnits
       let actionData: string;
-      let maxSpendUnits: bigint = 1n;
 
       if (authMode === 'session') {
-        maxSpendUnits = amountIn / (100n * 10n**6n) + 1n;
         actionData = encodeAbiParameters(
           [{ type: 'uint256' }, { type: 'bytes' }],
-          [maxSpendUnits, innerData]
+          [amountIn, innerData]
         );
       } else {
         actionData = innerData;
@@ -1003,7 +997,7 @@ export async function prepareEthTestnetExecution(
       );
       const lendData = encodeAbiParameters(
         [{ type: 'uint256' }, { type: 'bytes' }],
-        [0n, lendInnerData]
+        [amount, lendInnerData]
       );
 
       actions = [
@@ -1111,7 +1105,7 @@ export async function prepareEthTestnetExecution(
       // Wrap for session mode if needed
       let actionData: string;
       if (authMode === 'session') {
-        const maxSpendUnits = marginAmount / (100n * 10n**6n) + 1n;
+        const maxSpendUnits = marginAmount;
         actionData = encodeAbiParameters(
           [{ type: 'uint256' }, { type: 'bytes' }],
           [maxSpendUnits, routerData]
@@ -1196,7 +1190,7 @@ export async function prepareEthTestnetExecution(
       // Wrap for session mode if needed
       let actionData: string;
       if (authMode === 'session') {
-        const maxSpendUnits = stakeAmount / (100n * 10n**6n) + 1n;
+        const maxSpendUnits = stakeAmount;
         actionData = encodeAbiParameters(
           [{ type: 'uint256' }, { type: 'bytes' }],
           [maxSpendUnits, routerData]
@@ -1669,4 +1663,3 @@ export async function prepareEthTestnetExecution(
 
   return result;
 }
-

@@ -231,8 +231,54 @@ export async function executePlan(
 
       console.log(`${logPrefix} Session mode enabled for address:`, userAddr?.slice(0, 10));
 
-      // Build plan for relayed execution
-      const plan = buildExecutionPlan(params);
+      // Build plan for relayed execution via backend (ensures correct adapter data + session wrapping)
+      let plan: any | null = null;
+      let planValue: string | undefined;
+      try {
+        const prepareResponse = await callAgent('/api/execute/prepare', {
+          method: 'POST',
+          body: JSON.stringify({
+            draftId: params.draftId,
+            userAddress: params.userAddress,
+            executionRequest: params.executionRequest,
+            executionIntent: params.executionIntent,
+            strategy: params.strategy,
+            executionKind: params.executionKind,
+            authMode: 'session',
+          }),
+        });
+
+        if (!prepareResponse.ok) {
+          const errorData = await prepareResponse.json().catch(() => ({ error: 'Failed to prepare session plan' }));
+          return {
+            ok: false,
+            mode: 'wallet',
+            error: errorData.error || errorData.message || 'Failed to prepare session plan',
+            errorCode: errorData.errorCode,
+            notes: errorData.notes || [],
+          };
+        }
+
+        const prepareData = await prepareResponse.json();
+        plan = prepareData?.plan || null;
+        planValue = prepareData?.value;
+      } catch (prepareError: any) {
+        return {
+          ok: false,
+          mode: 'wallet',
+          error: prepareError?.message || 'Failed to prepare session plan',
+          errorCode: 'PREPARE_FAILED',
+        };
+      }
+
+      if (!plan || !plan.actions?.length) {
+        return {
+          ok: false,
+          mode: 'wallet',
+          error: 'Prepared plan missing actions. Please retry.',
+          errorCode: 'INVALID_PLAN',
+        };
+      }
 
       const response = await callAgent('/api/execute/relayed', {
         method: 'POST',
@@ -241,6 +287,7 @@ export async function executePlan(
           userAddress: params.userAddress,
           sessionId,
           plan,
+          value: planValue,
         }),
       });
 
@@ -262,11 +309,22 @@ export async function executePlan(
 
         // Check for specific error codes
         const checkCode = errorCode || (data.error?.code);
+        const errorText = String(errorMessage || '').toLowerCase();
+        const sessionErrorCodes = new Set([
+          'SESSION_NOT_CREATED',
+          'SESSION_NOT_FOUND',
+          'SESSION_EXPIRED_OR_REVOKED',
+          'SESSION_NOT_ACTIVE',
+          'SESSION_SETUP_REQUIRED',
+          'SESSION_SETUP_FAILED',
+          'SESSION_SETUP_PENDING',
+        ]);
         const isSessionNotCreated =
-          checkCode === 'SESSION_NOT_CREATED' ||
-          checkCode === 'SESSION_NOT_FOUND' ||
-          String(errorMessage || '').toLowerCase().includes('not_created') ||
-          String(errorMessage || '').toLowerCase().includes('session');
+          (checkCode ? sessionErrorCodes.has(checkCode) : false) ||
+          errorText.includes('not_created') ||
+          errorText.includes('session not found') ||
+          errorText.includes('session expired') ||
+          errorText.includes('session revoked');
 
         // Auto-heal stale session IDs once: recreate session and retry relayed execution.
         if (isSessionNotCreated && userAddr) {

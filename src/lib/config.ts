@@ -34,8 +34,15 @@ export const ethTestnetChainId = 11155111; // Sepolia
 export const ethTestnetRpcUrl =
   import.meta.env.VITE_ETH_TESTNET_RPC_URL;
 
+export const solanaDevnetRpcUrl =
+  import.meta.env.VITE_SOLANA_RPC_URL || 'https://api.devnet.solana.com';
+
+export const solanaProgramId =
+  import.meta.env.VITE_SOLANA_PROGRAM_ID;
+
 export const executionAuthMode: 'direct' | 'session' =
-  (import.meta.env.VITE_EXECUTION_AUTH_MODE as 'direct' | 'session') || 'direct';
+  (import.meta.env.VITE_EXECUTION_AUTH_MODE as 'direct' | 'session') ||
+  (executionMode === 'eth_testnet' ? 'session' : 'direct');
 
 // Dev warning: Alert if session mode is needed but not configured
 if (import.meta.env.DEV && executionMode === 'eth_testnet' && executionAuthMode === 'direct') {

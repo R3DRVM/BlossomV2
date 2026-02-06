@@ -3870,11 +3870,23 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
 
           if (!result.ok) {
             const errorText = String(result.error || '').toLowerCase();
+            const sessionFallbackCodes = new Set([
+              'NO_SESSION',
+              'INVALID_SESSION_ID',
+              'SESSION_NOT_CREATED',
+              'SESSION_NOT_FOUND',
+              'SESSION_EXPIRED_OR_REVOKED',
+              'SESSION_NOT_ACTIVE',
+              'SESSION_SETUP_REQUIRED',
+              'SESSION_SETUP_FAILED',
+              'SESSION_SETUP_PENDING',
+            ]);
             const shouldFallbackToManual =
-              result.errorCode === 'NO_SESSION' ||
-              result.errorCode === 'INVALID_SESSION_ID' ||
+              (result.errorCode ? sessionFallbackCodes.has(result.errorCode) : false) ||
               errorText.includes('not_created') ||
-              errorText.includes('session');
+              errorText.includes('session not found') ||
+              errorText.includes('session expired') ||
+              errorText.includes('session revoked');
 
             if (shouldFallbackToManual) {
               const fallbackMessage: ChatMessage = {

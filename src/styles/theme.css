@@ -1,0 +1,37 @@
+/**
+ * Blossom landing theme: light/dark via data-theme on <html>.
+ * Used by /landing-preview (LandingPreviewSelecta) and hero/engine components.
+ */
+
+/* Default (light) */
+:root,
+[data-theme="light"] {
+  --blossom-pink: #FF6BA0;
+  --blossom-bg: #ffffff;
+  --blossom-text: #111827;
+  --blossom-text-muted: #6B7280;
+  --blossom-border: #E5E7EB;
+  --blossom-nav-bg: rgba(255, 255, 255, 0.85);
+  --blossom-card-bg: rgba(255, 255, 255, 0.9);
+  /* Dotted grid (Selecta-style): light gray dots on white */
+  --blossom-bg-pattern: radial-gradient(circle at center, #d1d5db 1px, transparent 1px);
+  /* Engine diagram: crisp stroke (not washed out) */
+  --blossom-engine-stroke: #C7156B;
+  --blossom-engine-glow: #FF6BA0;
+  --blossom-engine-fill: rgba(199, 21, 107, 0.12);
+  --blossom-engine-muted: #6B7280;
+}
+
+[data-theme="dark"] {
+  --blossom-bg: #0f0f12;
+  --blossom-text: #f8f8fc;
+  --blossom-text-muted: #a1a1aa;
+  --blossom-border: #27272a;
+  --blossom-nav-bg: rgba(15, 15, 18, 0.9);
+  --blossom-card-bg: rgba(24, 24, 28, 0.95);
+  --blossom-bg-pattern: radial-gradient(circle at center, #3f3f46 1px, transparent 1px);
+  --blossom-engine-stroke: #FF8FBC;
+  --blossom-engine-glow: #FF8FBC;
+  --blossom-engine-fill: rgba(255, 143, 188, 0.15);
+  --blossom-engine-muted: #a1a1aa;
+}

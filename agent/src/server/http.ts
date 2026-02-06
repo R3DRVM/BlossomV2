@@ -138,6 +138,22 @@ const mintRateLimit = rateLimit({
   },
 });
 
+// SECURITY FIX: Global rate limit to prevent distributed DoS across endpoints
+// This catches attackers who spread requests across multiple endpoints
+const globalRateLimit = rateLimit({
+  windowMs: 60 * 1000, // 1 minute window
+  max: 100, // 100 requests per minute per IP (generous but protective)
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    ok: false,
+    error: 'Too many requests. Please slow down.',
+    errorCode: 'RATE_LIMIT_EXCEEDED',
+  },
+  // Skip rate limiting for health checks
+  skip: (req) => req.path === '/health' || req.path === '/api/health' || req.path === '/api/rpc/health',
+});
+
 // Configure CORS with specific origins for security
 app.use(cors({
   origin: (origin, callback) => {
@@ -171,6 +187,10 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'X-Ledger-Secret', 'X-Access-Code', 'X-Wallet-Address', 'x-correlation-id'],
 }));
+
+// SECURITY: Apply global rate limit before other middleware
+app.use(globalRateLimit);
+
 app.use(express.json());
 app.use(cookieParser());
 
@@ -3366,10 +3386,14 @@ app.post('/api/session/prepare', async (req, res) => {
       }
     }
 
-    // Generate session ID
+    // Generate session ID with cryptographic entropy (SECURITY FIX)
+    // Previous: userAddress + timestamp (predictable)
+    // Now: userAddress + timestamp + crypto random bytes (unpredictable)
     const { keccak256, toBytes, parseUnits } = await import('viem');
+    const { randomBytes } = await import('crypto');
+    const entropy = randomBytes(32).toString('hex');
     const sessionId = keccak256(
-      toBytes(userAddress + Date.now().toString())
+      toBytes(userAddress + Date.now().toString() + entropy)
     );
 
     // DEBUG: Log generated sessionId

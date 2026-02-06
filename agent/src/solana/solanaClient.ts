@@ -34,8 +34,9 @@ export class SolanaClient {
 
   /**
    * Make an RPC call to Solana
+   * Public for advanced use cases (token accounts, etc.)
    */
-  private async rpcCall<T>(method: string, params: any[] = []): Promise<T> {
+  async rpcCall<T>(method: string, params: any[] = []): Promise<T> {
     const response = await fetch(this.rpcUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

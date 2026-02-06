@@ -14,6 +14,14 @@ import { getCollapsedPreviewFields, type CollapsedPreviewFields } from '../lib/c
 import IntentExecutionCard from './IntentExecutionCard';
 import type { IntentExecutionResult } from '../lib/apiClient';
 
+function sanitizeMessageText(input: unknown): string {
+  const raw = typeof input === 'string'
+    ? input
+    : (input && typeof input === 'object' ? JSON.stringify(input) : String(input ?? ''));
+  // React escapes by default, but we still normalize angle brackets to guard against any future HTML rendering.
+  return raw.replace(/</g, '‹').replace(/>/g, '›');
+}
+
 interface MessageBubbleProps {
   text: string;
   isUser: boolean;
@@ -322,7 +330,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
           </div>
         )}
       </div>
-      <div className={`flex flex-col ${isUser ? 'items-end' : 'items-start'} max-w-[70%]`}>
+      <div className={`flex flex-col ${isUser ? 'items-end' : 'items-start'} max-w-[92%] sm:max-w-[70%]`}>
         <div className="text-[11px] font-medium text-gray-600 mb-0.5">
           {isUser ? 'You' : 'Blossom'}
         </div>
@@ -335,7 +343,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
             className={`whitespace-pre-wrap m-0 ${isUser ? 'chat-message-text-user' : 'chat-message-text-assistant'}`}
             style={isUser ? { fontWeight: 400 } : { fontWeight: 400 }}
           >
-            {typeof text === 'string' ? text : (text && typeof text === 'object' ? JSON.stringify(text) : String(text ?? ''))}
+            {sanitizeMessageText(text)}
           </p>
           {/* Intent Execution Card (from ledger system) */}
           {!isUser && intentExecution && (

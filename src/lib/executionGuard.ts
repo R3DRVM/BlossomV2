@@ -66,7 +66,7 @@ export const FAUCET_URLS = {
 export const DEMO_TOKEN_INFO = {
   usdc: {
     address: '0x6751001fD8207c494703C062139784abCa099bB9',
-    symbol: 'REDACTED',
+    symbol: 'bUSDC',
   },
   weth: {
     address: '0x1dDc15c5655f5e8633C170105929d9562e12D9e3',

@@ -24,6 +24,8 @@ export interface SessionStatus {
 }
 
 export interface PlanSpendEstimate {
+  // NOTE: spendWei is actually "session spend units" (bUSDC-style 6 decimals).
+  // We keep the field name to avoid breaking API responses.
   spendWei: bigint;
   spendUsd?: number;
   determinable: boolean;
@@ -65,10 +67,8 @@ export async function estimatePlanSpend(plan: {
             action.data as `0x${string}`
           );
           const amountIn = decoded[3];
-          // For swaps, spend is the amountIn (in token units, not ETH)
-          // We can't convert to USD without price oracle, so mark as determinable but don't add to totalSpendWei
-          // For now, we'll use a conservative estimate: assume 1 ETH max per swap
-          totalSpendWei += BigInt(parseUnits('1', 18)); // Conservative: 1 ETH per swap
+          // For swaps, spend is amountIn in token units. Use as-is for session spend units.
+          totalSpendWei += BigInt(amountIn);
         } catch {
           // Session mode: wrapped as (maxSpendUnits, innerData)
           try {
@@ -77,11 +77,8 @@ export async function estimatePlanSpend(plan: {
               action.data as `0x${string}`
             );
             const maxSpendUnits = decoded[0];
-            // maxSpendUnits is in token units (e.g., REDACTED has 6 decimals)
-            // Convert to wei-equivalent for comparison (rough estimate: 1 unit = 1e-12 ETH)
-            // Actually, for policy, we should compare against session's maxSpend which is in wei
-            // So we'll use maxSpendUnits directly as a conservative estimate
-            totalSpendWei += maxSpendUnits * BigInt(1e12); // Rough conversion (assumes 6-decimal token)
+            // maxSpendUnits is already in session spend units (bUSDC 6 decimals).
+            totalSpendWei += maxSpendUnits;
           } catch {
             determinable = false;
           }
@@ -94,11 +91,20 @@ export async function estimatePlanSpend(plan: {
             action.data as `0x${string}`
           );
           const amount = decoded[2];
-          // PULL doesn't spend ETH, but transfers tokens
-          // For policy, we'll count it conservatively
-          totalSpendWei += amount * BigInt(1e12); // Rough conversion
+          // PULL transfers tokens; count in token units
+          totalSpendWei += amount;
         } catch {
-          determinable = false;
+          // Session mode: wrapped as (maxSpendUnits, innerData)
+          try {
+            const decodedWrapped = decodeAbiParameters(
+              [{ type: 'uint256' }, { type: 'bytes' }],
+              action.data as `0x${string}`
+            );
+            const maxSpendUnits = decodedWrapped[0];
+            totalSpendWei += maxSpendUnits;
+          } catch {
+            determinable = false;
+          }
         }
       } else if (action.actionType === 1) {
         // WRAP action (ETH -> WETH)
@@ -120,10 +126,8 @@ export async function estimatePlanSpend(plan: {
             action.data as `0x${string}`
           );
           const amount = decoded[2];
-          // For Aave supply, spend is the amount supplied (in token units)
-          // Convert to wei-equivalent for policy comparison
-          // Assume 6 decimals for REDACTED (most common)
-          totalSpendWei += amount * BigInt(1e12); // Convert 6-decimal token to wei-equivalent
+          // For Aave supply, spend is the amount supplied (token units)
+          totalSpendWei += amount;
         } catch {
           // Session mode: wrapped as (maxSpendUnits, innerData)
           try {
@@ -132,8 +136,7 @@ export async function estimatePlanSpend(plan: {
               action.data as `0x${string}`
             );
             const maxSpendUnits = decoded[0];
-            // maxSpendUnits is in token units (e.g., REDACTED has 6 decimals)
-            totalSpendWei += maxSpendUnits * BigInt(1e12); // Rough conversion (assumes 6-decimal token)
+            totalSpendWei += maxSpendUnits;
           } catch {
             determinable = false;
           }
@@ -148,7 +151,7 @@ export async function estimatePlanSpend(plan: {
             action.data as `0x${string}`
           );
           const maxSpendUnits = decodedWrapped[0];
-          totalSpendWei += maxSpendUnits * BigInt(1e12); // Convert 6-decimal token to wei-equivalent
+          totalSpendWei += maxSpendUnits;
         } catch {
           // Raw event format: (bytes32 marketId, uint8 outcome, uint256 amount)
           try {
@@ -157,9 +160,32 @@ export async function estimatePlanSpend(plan: {
               action.data as `0x${string}`
             );
             const amount = decoded[2];
-            totalSpendWei += amount * BigInt(1e12); // Convert 6-decimal token to wei-equivalent
+            totalSpendWei += amount;
           } catch {
             // If it isn't event-shaped, fall back conservatively but remain determinable.
+            totalSpendWei += BigInt(parseUnits('0.1', 18));
+          }
+        }
+      } else if (action.actionType === 8) {
+        // EVENT action (session-wrapped or direct)
+        instrumentType = 'event';
+        try {
+          const decodedWrapped = decodeAbiParameters(
+            [{ type: 'uint256' }, { type: 'bytes' }],
+            action.data as `0x${string}`
+          );
+          const maxSpendUnits = decodedWrapped[0];
+          totalSpendWei += maxSpendUnits;
+        } catch {
+          try {
+            // Direct router data: (address stakeToken, uint256 amount, bytes adapterData)
+            const decoded = decodeAbiParameters(
+              [{ type: 'address' }, { type: 'uint256' }, { type: 'bytes' }],
+              action.data as `0x${string}`
+            );
+            const amount = decoded[1];
+            totalSpendWei += amount;
+          } catch {
             totalSpendWei += BigInt(parseUnits('0.1', 18));
           }
         }
@@ -173,7 +199,7 @@ export async function estimatePlanSpend(plan: {
             action.data as `0x${string}`
           );
           const maxSpendUnits = decodedWrapped[0];
-          totalSpendWei += maxSpendUnits * BigInt(1e12);
+          totalSpendWei += maxSpendUnits;
         } catch {
           try {
             // Raw perp format (fallback for non-session execution)
@@ -182,7 +208,7 @@ export async function estimatePlanSpend(plan: {
               action.data as `0x${string}`
             );
             const size = decoded[2];
-            totalSpendWei += size * BigInt(1e12); // size is 6-decimal USD units
+            totalSpendWei += size;
           } catch {
             // Conservative fallback
             totalSpendWei += BigInt(parseUnits('0.1', 18));

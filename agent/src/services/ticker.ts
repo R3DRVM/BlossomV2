@@ -70,7 +70,7 @@ const STATIC_EVENT_TICKER: EventTickerItem[] = [
  */
 export async function getOnchainTicker(): Promise<TickerPayload> {
   const symbols: PriceSymbol[] = ['BTC', 'ETH', 'SOL', 'AVAX', 'LINK'];
-  const priceData: Array<{ symbol: string; priceUsd: number; change24hPct: number; source: 'coingecko' | 'static' }> = [];
+  const priceData: Array<{ symbol: string; priceUsd: number; change24hPct: number; source: 'coingecko' | 'static' | 'pyth' | 'jupiter' }> = [];
   let hasLiveData = false;
   let hasStaticFallback = false;
 

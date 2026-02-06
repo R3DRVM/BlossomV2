@@ -1,0 +1,9 @@
+[programs.devnet]
+blossom_sol = "ReplaceWithProgramId1111111111111111111111111"
+
+[provider]
+cluster = "devnet"
+wallet = "~/.config/solana/id.json"
+
+[scripts]
+deploy = "node scripts/solana-deploy.ts"

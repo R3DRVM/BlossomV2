@@ -127,6 +127,10 @@ export const REDACTED_ADDRESS_SEPOLIA = process.env.REDACTED_ADDRESS_SEPOLIA;
 
 export const WETH_ADDRESS_SEPOLIA = process.env.WETH_ADDRESS_SEPOLIA;
 
+// Solana devnet config (for cross-chain intents)
+export const SOLANA_RPC_URL = process.env.SOLANA_RPC_URL || 'https://api.devnet.solana.com';
+export const SOLANA_PROGRAM_ID = process.env.SOLANA_PROGRAM_ID;
+
 // Demo swap venue (deterministic for investor demos)
 // Default addresses for Sepolia (safe fallback)
 const DEFAULT_DEMO_TOKENS = {
@@ -137,9 +141,13 @@ const DEFAULT_DEMO_TOKENS = {
 };
 
 // Use env vars if set, otherwise fallback to defaults for Sepolia
-export const DEMO_REDACTED_ADDRESS =
+export const DEMO_BUSDC_ADDRESS =
+  process.env.DEMO_BUSDC_ADDRESS ||
   process.env.DEMO_REDACTED_ADDRESS ||
   (ETH_TESTNET_CHAIN_ID === 11155111 ? DEFAULT_DEMO_TOKENS.sepolia.usdc : undefined);
+
+// Backwards-compatible alias
+export const DEMO_REDACTED_ADDRESS = DEMO_BUSDC_ADDRESS;
 
 export const DEMO_WETH_ADDRESS =
   process.env.DEMO_WETH_ADDRESS ||

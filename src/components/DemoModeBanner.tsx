@@ -46,7 +46,8 @@ export default function DemoModeBanner({ className = '', compact = false }: Demo
       {expanded && (
         <div className="px-3 pb-3 space-y-3">
           <p className="text-xs text-amber-600">
-            This is a testnet demo. No real funds are used.
+            Testnet only. No real funds are used, and all balances are demo bUSDC.
+            Execution may fail if your wallet lacks Sepolia gas.
           </p>
 
           <div className="space-y-2">
@@ -77,7 +78,7 @@ export default function DemoModeBanner({ className = '', compact = false }: Demo
             <h4 className="text-xs font-medium text-amber-800">Demo Token Addresses:</h4>
             <div className="space-y-1">
               <div className="flex items-center justify-between text-xs">
-                <span className="text-amber-600">REDACTED:</span>
+                <span className="text-amber-600">bUSDC:</span>
                 <code className="font-mono text-amber-800 bg-white px-1 rounded">
                   {DEMO_TOKEN_INFO.usdc.address.slice(0, 10)}...
                 </code>

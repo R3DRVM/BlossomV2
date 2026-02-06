@@ -1,6 +1,7 @@
 import { Routes, Route } from 'react-router-dom';
 import BlossomAppShell from '../layouts/BlossomAppShell';
 import LandingPage from '../pages/LandingPage';
+import LandingPreviewSelecta from '../pages/LandingPreviewSelecta';
 import DevnetActivityPage from '../pages/DevnetActivityPage';
 import DevLedgerPage from '../pages/DevLedgerPage';
 import DevStatsPage from '../pages/DevStatsPage';
@@ -65,6 +66,7 @@ export default function AppRouter() {
   return (
     <Routes>
       <Route path="/" element={<LandingPage />} />
+      <Route path="/landing-preview" element={<LandingPreviewSelecta />} />
       <Route path="/app" element={<BlossomAppShell />} />
       <Route path="/whitepaper" element={<WhitepaperPage />} />
       <Route path="/stats" element={<DevStatsPage isPublic />} />

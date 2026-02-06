@@ -3,6 +3,7 @@ import './polyfills'
 
 import React from 'react'
 import ReactDOM from 'react-dom/client'
+import * as Sentry from '@sentry/react'
 import { BrowserRouter } from 'react-router-dom'
 import { BlossomProvider } from './context/BlossomContext'
 import { ActivityFeedProvider } from './context/ActivityFeedContext'
@@ -32,6 +33,17 @@ const buildBranch = typeof __BUILD_BRANCH__ !== 'undefined' ? __BUILD_BRANCH__ :
 const buildEnv = typeof __BUILD_ENV__ !== 'undefined' ? __BUILD_ENV__ : 'development';
 const buildTime = typeof __BUILD_TIME__ !== 'undefined' ? __BUILD_TIME__ : 'unknown';
 console.log(`%c🌸 Blossom Build: ${buildSha} (${buildBranch}) [${buildEnv}] ${buildTime}`, 'color: #FF6BA0; font-weight: bold;');
+
+// Sentry (optional)
+const sentryDsn = import.meta.env.VITE_SENTRY_DSN;
+if (sentryDsn) {
+  Sentry.init({
+    dsn: sentryDsn,
+    environment: buildEnv,
+    release: buildSha,
+    tracesSampleRate: 0.1,
+  });
+}
 
 // Make build info available globally for debugging
 if (typeof window !== 'undefined') {

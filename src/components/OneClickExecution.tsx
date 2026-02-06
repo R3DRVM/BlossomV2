@@ -7,8 +7,9 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { useSignMessage } from 'wagmi';
 import { Loader2, Shield, ShieldCheck } from 'lucide-react';
+import { callAgent } from '../lib/apiClient';
+import { sendTransaction } from '../lib/walletAdapter';
 
 interface OneClickExecutionProps {
   userAddress: string;
@@ -22,10 +23,6 @@ const getAuthorizedKey = (address: string) => `blossom_oneclick_auth_${address.t
 const getSessionIdKey = (address: string) => `blossom_oneclick_sessionid_${address.toLowerCase()}`;
 const getLegacySessionIdKey = (address: string) => `blossom_session_${address.toLowerCase()}`;
 
-// Authorization message
-const getAuthMessage = (address: string) =>
-  `Blossom One-Click Execution Authorization\n\nI authorize Blossom to execute transactions on my behalf for this session.\n\nWallet: ${address}\nTimestamp: ${new Date().toISOString()}`;
-
 export default function OneClickExecution({
   userAddress,
   onEnabled,
@@ -34,8 +31,6 @@ export default function OneClickExecution({
   const [isEnabled, setIsEnabled] = useState(false);
   const [isAuthorized, setIsAuthorized] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-
-  const { signMessageAsync } = useSignMessage();
 
   // Initialize from localStorage on mount and address change
   useEffect(() => {
@@ -61,51 +56,86 @@ export default function OneClickExecution({
 
     try {
       if (!isEnabled) {
-        // Enabling: require signature authorization and create session
-        const message = getAuthMessage(userAddress);
-        const signature = await signMessageAsync({ message });
+        // Enabling: create on-chain session (single wallet signature)
+        const response = await callAgent('/api/session/prepare', {
+          method: 'POST',
+          body: JSON.stringify({ userAddress }),
+        });
 
-        if (signature) {
-          // Call backend to prepare session (generates sessionId)
-          const { callAgent } = await import('../lib/apiClient');
-          const response = await callAgent('/api/session/prepare', {
-            method: 'POST',
-            body: JSON.stringify({ userAddress }),
-          });
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData?.error?.message || errorData?.error || 'Failed to prepare session');
+        }
 
-          if (!response.ok) {
-            throw new Error('Failed to prepare session');
-          }
+        const data = await response.json();
+        const sessionId = data?.session?.sessionId;
+        const txTo = data?.session?.to;
+        const txData = data?.session?.data;
+        const txValue = data?.session?.value || '0x0';
 
-          const data = await response.json();
+        if (!sessionId || !txTo || !txData) {
+          throw new Error('Session preparation returned invalid transaction data');
+        }
 
-          // Store the generated sessionId for later use
-          if (data.session?.sessionId) {
-            localStorage.setItem(getSessionIdKey(userAddress), data.session.sessionId);
-            localStorage.setItem(getLegacySessionIdKey(userAddress), data.session.sessionId);
+        const txHash = await sendTransaction({
+          to: txTo,
+          data: txData,
+          value: txValue,
+        });
 
-            if (import.meta.env.DEV) {
-              console.log('[OneClickExecution] Stored sessionId:', data.session.sessionId.substring(0, 16) + '...');
+        if (!txHash) {
+          throw new Error('Session creation transaction was rejected');
+        }
+
+        // Wait for confirmation (up to ~60s)
+        let confirmed = false;
+        for (let i = 0; i < 30; i++) {
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+          try {
+            const statusResponse = await callAgent(`/api/execute/status?txHash=${encodeURIComponent(txHash)}`, {
+              method: 'GET',
+            });
+            if (!statusResponse.ok) continue;
+            const statusData = await statusResponse.json();
+            const status = String(statusData?.status || '').toLowerCase();
+            if (status === 'confirmed') {
+              confirmed = true;
+              break;
             }
+            if (status === 'reverted' || status === 'failed') {
+              throw new Error('Session creation transaction reverted');
+            }
+          } catch {
+            // keep polling
           }
+        }
 
-          // Store authorization
-          localStorage.setItem(getEnabledKey(userAddress), 'true');
-          localStorage.setItem(getAuthorizedKey(userAddress), 'true');
-          setIsEnabled(true);
-          setIsAuthorized(true);
-          onEnabled?.();
+        if (!confirmed) {
+          throw new Error('Session creation is still pending. Please retry in a few seconds.');
+        }
 
-          if (import.meta.env.DEV) {
-            console.log('[OneClickExecution] Authorized and enabled for', userAddress);
-          }
+        // Store the generated sessionId for later use
+        localStorage.setItem(getSessionIdKey(userAddress), sessionId);
+        localStorage.setItem(getLegacySessionIdKey(userAddress), sessionId);
+
+        // Store authorization flags
+        localStorage.setItem(getEnabledKey(userAddress), 'true');
+        localStorage.setItem(getAuthorizedKey(userAddress), 'true');
+        setIsEnabled(true);
+        setIsAuthorized(true);
+        onEnabled?.();
+
+        if (import.meta.env.DEV) {
+          console.log('[OneClickExecution] Session created and enabled for', userAddress, sessionId.substring(0, 16) + '...');
         }
       } else {
         // Disabling: clear state
         localStorage.setItem(getEnabledKey(userAddress), 'false');
+        localStorage.setItem(getAuthorizedKey(userAddress), 'false');
         localStorage.removeItem(getSessionIdKey(userAddress)); // Clear stored sessionId
         localStorage.removeItem(getLegacySessionIdKey(userAddress)); // Clear legacy stored sessionId
         setIsEnabled(false);
+        setIsAuthorized(false);
         onDisabled?.();
 
         if (import.meta.env.DEV) {
@@ -120,7 +150,7 @@ export default function OneClickExecution({
     } finally {
       setIsLoading(false);
     }
-  }, [isEnabled, userAddress, signMessageAsync, onEnabled, onDisabled]);
+  }, [isEnabled, userAddress, onEnabled, onDisabled]);
 
   const isFullyAuthorized = isEnabled && isAuthorized;
 

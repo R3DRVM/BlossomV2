@@ -1,0 +1,12 @@
+[package]
+name = "blossom-sol"
+version = "0.1.0"
+description = "Blossom Solana execution program (devnet)"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "blossom_sol"
+
+[dependencies]
+anchor-lang = "0.30.0"

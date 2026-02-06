@@ -61,8 +61,11 @@ export default defineConfig({
     __BUILD_ENV__: JSON.stringify(BUILD_ENV),
     __BUILD_TIME__: JSON.stringify(BUILD_TIME),
   },
+  // Stabilize pre-bundle to avoid 504 Outdated Optimize Dep / blank screen.
+  // If it still happens: rm -rf node_modules/.vite .vite && npm run dev -- --force
   optimizeDeps: {
-    include: ['buffer'],
+    include: ['react', 'react-dom', 'react-router-dom', 'buffer'],
+    exclude: [],
     esbuildOptions: {
       define: {
         global: 'globalThis',

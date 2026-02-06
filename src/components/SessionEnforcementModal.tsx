@@ -6,20 +6,18 @@
  */
 
 import { useState, useEffect } from 'react';
-import { useAccount, useSignMessage } from 'wagmi';
+import { useAccount } from 'wagmi';
 import { Loader2, Shield, ShieldCheck, Zap, Info } from 'lucide-react';
 import { BlossomLogo } from './BlossomLogo';
 import { Button } from './ui/Button';
+import { callAgent } from '../lib/apiClient';
+import { sendTransaction } from '../lib/walletAdapter';
 
 // LocalStorage keys (matching OneClickExecution.tsx)
 const getEnabledKey = (address: string) => `blossom_oneclick_${address.toLowerCase()}`;
 const getAuthorizedKey = (address: string) => `blossom_oneclick_auth_${address.toLowerCase()}`;
 const getManualSigningKey = (address: string) => `blossom_manual_signing_${address.toLowerCase()}`;
 const SESSION_REQUIRED_KEY = 'blossom_session_required_dismissed';
-
-// Authorization message
-const getAuthMessage = (address: string) =>
-  `Blossom One-Click Execution Authorization\n\nI authorize Blossom to execute transactions on my behalf for this session.\n\nWallet: ${address}\nTimestamp: ${new Date().toISOString()}`;
 
 interface SessionEnforcementModalProps {
   onSessionEnabled: () => void;
@@ -44,7 +42,6 @@ export function hasUserChosenSigningMode(address: string | undefined): boolean {
 
 export default function SessionEnforcementModal({ onSessionEnabled }: SessionEnforcementModalProps) {
   const { address, isConnected } = useAccount();
-  const { signMessageAsync } = useSignMessage();
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
@@ -78,20 +75,74 @@ export default function SessionEnforcementModal({ onSessionEnabled }: SessionEnf
     setError('');
 
     try {
-      const message = getAuthMessage(address);
-      const signature = await signMessageAsync({ message });
+      const response = await callAgent('/api/session/prepare', {
+        method: 'POST',
+        body: JSON.stringify({ userAddress: address }),
+      });
 
-      if (signature) {
-        // Store authorization
-        localStorage.setItem(getEnabledKey(address), 'true');
-        localStorage.setItem(getAuthorizedKey(address), 'true');
-
-        console.log('[SessionEnforcement] Session enabled for', address);
-        onSessionEnabled();
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData?.error?.message || errorData?.error || 'Failed to prepare session');
       }
+
+      const data = await response.json();
+      const sessionId = data?.session?.sessionId;
+      const txTo = data?.session?.to;
+      const txData = data?.session?.data;
+      const txValue = data?.session?.value || '0x0';
+
+      if (!sessionId || !txTo || !txData) {
+        throw new Error('Session preparation returned invalid transaction data');
+      }
+
+      const txHash = await sendTransaction({
+        to: txTo,
+        data: txData,
+        value: txValue,
+      });
+
+      if (!txHash) {
+        throw new Error('Session creation transaction was rejected');
+      }
+
+      // Wait for confirmation (up to ~60s)
+      let confirmed = false;
+      for (let i = 0; i < 30; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        try {
+          const statusResponse = await callAgent(`/api/execute/status?txHash=${encodeURIComponent(txHash)}`, {
+            method: 'GET',
+          });
+          if (!statusResponse.ok) continue;
+          const statusData = await statusResponse.json();
+          const status = String(statusData?.status || '').toLowerCase();
+          if (status === 'confirmed') {
+            confirmed = true;
+            break;
+          }
+          if (status === 'reverted' || status === 'failed') {
+            throw new Error('Session creation transaction reverted');
+          }
+        } catch {
+          // keep polling
+        }
+      }
+
+      if (!confirmed) {
+        throw new Error('Session creation is still pending. Please retry in a few seconds.');
+      }
+
+      // Store authorization + sessionId (match OneClickExecution.tsx)
+      localStorage.setItem(getEnabledKey(address), 'true');
+      localStorage.setItem(getAuthorizedKey(address), 'true');
+      localStorage.setItem(`blossom_oneclick_sessionid_${address.toLowerCase()}`, sessionId);
+      localStorage.setItem(`blossom_session_${address.toLowerCase()}`, sessionId);
+
+      console.log('[SessionEnforcement] Session enabled for', address);
+      onSessionEnabled();
     } catch (err: any) {
-      console.warn('[SessionEnforcement] Signature failed:', err.message);
-      setError('Signature rejected. Please try again.');
+      console.warn('[SessionEnforcement] Session setup failed:', err.message);
+      setError(err.message || 'Session setup failed. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -124,7 +175,7 @@ export default function SessionEnforcementModal({ onSessionEnabled }: SessionEnf
               Enable One-Click Session
             </h2>
             <p className="mt-2 text-sm text-slate-600">
-              For seamless execution, enable session mode with a one-time signature.
+              For seamless execution, enable session mode with a one-time approval transaction.
             </p>
           </div>
 
@@ -137,7 +188,7 @@ export default function SessionEnforcementModal({ onSessionEnabled }: SessionEnf
               </li>
               <li className="flex items-start gap-2">
                 <Shield className="h-4 w-4 text-blue-500 mt-0.5 flex-shrink-0" />
-                <span>Your keys stay secure - only signs a permission message</span>
+                <span>Your keys stay secure — one-time approval, no repeated prompts</span>
               </li>
               <li className="flex items-start gap-2">
                 <Zap className="h-4 w-4 text-amber-500 mt-0.5 flex-shrink-0" />
@@ -152,8 +203,8 @@ export default function SessionEnforcementModal({ onSessionEnabled }: SessionEnf
               <p className="text-xs text-blue-700">
                 One-Click Session mode allows Blossom to submit transactions on your behalf
                 without requiring individual confirmations. You maintain full control and can
-                disable this at any time. Your private keys are never shared - you only sign
-                a permission message that authorizes this session.
+                disable this at any time. Your private keys are never shared — you approve a
+                single on-chain session and Blossom relays trades within that session.
               </p>
             </div>
           )}
@@ -175,7 +226,7 @@ export default function SessionEnforcementModal({ onSessionEnabled }: SessionEnf
               {isLoading ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                  Waiting for signature...
+                  Waiting for approval...
                 </>
               ) : (
                 <>
