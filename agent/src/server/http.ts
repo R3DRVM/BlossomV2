@@ -9,6 +9,7 @@ import { config } from 'dotenv';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { createHash } from 'crypto';
+import * as Sentry from '@sentry/node';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -40,14 +41,35 @@ if (loadedEnvFile) {
   console.log(`⚠️  No .env file found (using system environment variables)`);
 }
 
+const SENTRY_DSN = process.env.SENTRY_DSN || process.env.SENTRY_DSN_BACKEND;
+const SENTRY_ENV = process.env.SENTRY_ENV || process.env.VERCEL_ENV || process.env.NODE_ENV || 'development';
+const SENTRY_RELEASE = process.env.VERCEL_GIT_COMMIT_SHA
+  ? `agent@${process.env.VERCEL_GIT_COMMIT_SHA.slice(0, 7)}`
+  : undefined;
+const SENTRY_ENABLED = !!SENTRY_DSN;
+
+if (SENTRY_ENABLED) {
+  Sentry.init({
+    dsn: SENTRY_DSN,
+    environment: SENTRY_ENV,
+    release: SENTRY_RELEASE,
+    tracesSampleRate: Number(process.env.SENTRY_TRACES_SAMPLE_RATE ?? 0.1),
+    sendDefaultPii: false,
+  });
+  console.log(`📡 Sentry enabled (${SENTRY_ENV})`);
+}
+
 import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
+import rateLimit from 'express-rate-limit';
+import { z } from 'zod';
 import { BlossomAction, BlossomPortfolioSnapshot, BlossomExecutionRequest, ExecutionResult } from '../types/blossom';
 import { validateActions, buildBlossomPrompts } from '../utils/actionParser';
 import { callLlm } from '../services/llmClient';
 import * as perpsSim from '../plugins/perps-sim';
 import * as defiSim from '../plugins/defi-sim';
+import { verifyRequestAuth, getAuthMode } from '../auth';
 
 // Allowed CORS origins for MVP
 const ALLOWED_ORIGINS = [
@@ -65,6 +87,8 @@ import { logExecutionArtifact, getExecutionArtifacts, dumpExecutionArtifacts } f
 import { validateAccessCode, hasAccess, initializeAccessGate, getAllAccessCodes, createAccessCode, revokeAccessCode, checkAccess } from '../utils/accessGate';
 import { logEvent, createRequestLogger, hashAddress } from '../telemetry/logger';
 import { waitForReceipt } from '../executors/evmReceipt';
+import { checkAndRecordMint } from '../utils/mintLimiter';
+import { postStatsEvent } from '../stats';
 
 /**
  * JSON-RPC Response type
@@ -75,6 +99,45 @@ type JsonRpcResponse<T = unknown> = {
 };
 
 const app = express();
+
+// Rate limits for high-risk execution endpoints
+const executeRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    const wallet = req.headers['x-wallet-address'];
+    if (Array.isArray(wallet)) return wallet[0];
+    return (wallet as string) || req.ip;
+  },
+});
+
+const sessionRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    const wallet = req.headers['x-wallet-address'];
+    if (Array.isArray(wallet)) return wallet[0];
+    return (wallet as string) || req.ip;
+  },
+});
+
+// Rate limit for mint endpoint - prevent DoS attacks on token minting
+const mintRateLimit = rateLimit({
+  windowMs: 60 * 1000, // 1 minute window
+  max: 5, // Max 5 mint requests per minute per wallet
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    const wallet = req.headers['x-wallet-address'];
+    if (Array.isArray(wallet)) return wallet[0];
+    return (wallet as string) || req.ip;
+  },
+});
+
 // Configure CORS with specific origins for security
 app.use(cors({
   origin: (origin, callback) => {
@@ -110,6 +173,48 @@ app.use(cors({
 }));
 app.use(express.json());
 app.use(cookieParser());
+
+// Auth gate for execution endpoints (AUTH_MODE=siwe)
+async function requireAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const result = await verifyRequestAuth(req);
+  if (!result.ok) {
+    return res.status(401).json({
+      ok: false,
+      error: 'Unauthorized',
+      reason: result.reason || 'invalid_signature',
+      authMode: getAuthMode(),
+    });
+  }
+  return next();
+}
+
+// Apply rate limits to execution/session routes
+app.use('/api/execute', executeRateLimit);
+app.use('/api/session', sessionRateLimit);
+
+// Minimal request validation schemas
+const ExecutePrepareSchema = z.object({
+  draftId: z.string().min(1).optional(),
+  userAddress: z.string().regex(/^0x[a-fA-F0-9]{40}$/).optional(),
+  authMode: z.enum(['direct', 'session']).optional(),
+  executionRequest: z.object({ kind: z.string() }).passthrough().optional(),
+  executionIntent: z.any().optional(),
+}).passthrough();
+
+const ExecuteRelayedSchema = z.object({
+  draftId: z.string().min(1),
+  userAddress: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
+  sessionId: z.string().min(1),
+  plan: z.object({ actions: z.array(z.any()).optional() }).passthrough(),
+}).passthrough();
+
+const ExecuteSubmitSchema = z.object({
+  draftId: z.string().min(1),
+  txHash: z.string().min(1),
+  userAddress: z.string().regex(/^0x[a-fA-F0-9]{40}$/).optional(),
+  strategy: z.any().optional(),
+  executionRequest: z.any().optional(),
+}).passthrough();
 
 // ============================================
 // TELEMETRY-ONLY MODE: Block sensitive endpoints
@@ -2204,7 +2309,7 @@ app.get('/api/ticker', async (req, res) => {
  * POST /api/execute/prepare
  * Prepare execution plan for ETH testnet
  */
-app.post('/api/execute/prepare', maybeCheckAccess, async (req, res) => {
+app.post('/api/execute/prepare', requireAuth, maybeCheckAccess, async (req, res) => {
   const correlationId = req.correlationId || generateCorrelationId();
   const prepareStartTime = Date.now();
   
@@ -2217,6 +2322,18 @@ app.post('/api/execute/prepare', maybeCheckAccess, async (req, res) => {
   });
   
   try {
+    const parsed = ExecutePrepareSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Invalid request body',
+        errorCode: 'INVALID_BODY',
+        details: parsed.error.flatten(),
+        correlationId,
+      });
+    }
+    req.body = parsed.data;
+
     const { EXECUTION_MODE, EXECUTION_DISABLED, V1_DEMO } = await import('../config');
     
     // V1: Emergency kill switch
@@ -2484,9 +2601,20 @@ app.post('/api/setup/approve', maybeCheckAccess, async (req, res) => {
  * Submit transaction hash after execution
  * Returns unified ExecutionResult with receipt confirmation in eth_testnet mode
  */
-app.post('/api/execute/submit', maybeCheckAccess, async (req, res) => {
+app.post('/api/execute/submit', requireAuth, maybeCheckAccess, async (req, res) => {
   const submitStartTime = Date.now();
   try {
+    const parsed = ExecuteSubmitSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Invalid request body',
+        errorCode: 'INVALID_BODY',
+        details: parsed.error.flatten(),
+      });
+    }
+    req.body = parsed.data;
+
     const { draftId, txHash, userAddress, strategy, executionRequest } = req.body;
 
     if (!draftId || !txHash) {
@@ -2547,6 +2675,32 @@ app.post('/api/execute/submit', maybeCheckAccess, async (req, res) => {
           success: false,
         });
       }
+    }
+
+    // Post execution stats (best-effort)
+    try {
+      const feeBps = Number(process.env.BUSDC_FEE_BPS || 25);
+      const usdEstimate =
+        strategy?.notionalUsd ||
+        strategy?.usdNotional ||
+        executionRequest?.amountUsd ||
+        executionRequest?.stakeUsd ||
+        null;
+      const feeBusdc = usdEstimate ? (Number(usdEstimate) * feeBps) / 10000 : null;
+
+      await postStatsEvent({
+        type: 'execution',
+        status: receiptStatus,
+        chain: EXECUTION_MODE === 'eth_testnet' ? 'ethereum/sepolia' : EXECUTION_MODE,
+        venue: strategy?.venue || executionRequest?.venue,
+        usdEstimate: usdEstimate ? Number(usdEstimate) : null,
+        feeBps,
+        feeBusdc,
+        txHash,
+        userAddress,
+      });
+    } catch {
+      // Swallow stats errors (non-blocking)
     }
 
     // Update sim state after successful ProofOfExecution
@@ -3229,7 +3383,9 @@ app.post('/api/session/prepare', async (req, res) => {
 
     // Set session parameters
     const expiresAt = BigInt(Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60); // 7 days
-    const maxSpend = BigInt(parseUnits('10', 18)); // 10 ETH max spend (in wei)
+    // Session spend cap uses token units (bUSDC 6 decimals)
+    const maxSpendBusdc = process.env.SESSION_MAX_SPEND_BUSDC || '10000';
+    const maxSpend = BigInt(parseUnits(maxSpendBusdc, 6));
 
     // Build allowed adapters list (include all configured adapters that are globally allowlisted in router)
     const configuredAdapters = [
@@ -3335,7 +3491,7 @@ app.post('/api/session/prepare', async (req, res) => {
       sessionId,
       caps: {
         maxSpend: maxSpend.toString(),
-        maxSpendUsd: '10000', // Approximate USD value of 10 ETH
+        maxSpendUsd: maxSpendBusdc, // bUSDC is USD-pegged in demo
         expiresAt: expiresAt.toString(),
         expiresAtIso: new Date(Number(expiresAt) * 1000).toISOString(),
       },
@@ -3458,7 +3614,7 @@ app.post('/api/session/prepare', async (req, res) => {
  * POST /api/execute/relayed
  * Execute a plan using session permissions (relayed by backend)
  */
-app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
+app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res) => {
   console.log('[api/execute/relayed] Handler invoked - DEBUG MARKER V2');
   const correlationId = req.correlationId || generateCorrelationId();
   const relayedStartTime = Date.now();
@@ -3472,6 +3628,18 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
   });
   
   try {
+    const parsed = ExecuteRelayedSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Invalid request body',
+        errorCode: 'INVALID_BODY',
+        details: parsed.error.flatten(),
+        correlationId,
+      });
+    }
+    req.body = parsed.data;
+
     const { EXECUTION_MODE, EXECUTION_AUTH_MODE, EXECUTION_DISABLED, V1_DEMO } = await import('../config');
     
     // V1: Emergency kill switch
@@ -3483,12 +3651,12 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
       });
     }
     
-    // V1_DEMO: Enforce single-action plans for canonical flows
-    if (V1_DEMO && req.body.plan && req.body.plan.actions && req.body.plan.actions.length !== 1) {
+    // V1_DEMO: Enforce small action counts (allow PULL + SWAP/LEND as 2-step flows)
+    if (V1_DEMO && req.body.plan && req.body.plan.actions && req.body.plan.actions.length > 2) {
       return res.status(400).json({
-        error: 'V1_DEMO mode requires single-action plans',
+        error: 'V1_DEMO mode only allows 1-2 action plans',
         errorCode: 'V1_DEMO_MULTI_ACTION_REJECTED',
-        message: `Plan has ${req.body.plan.actions.length} actions. V1_DEMO mode only allows single-action plans.`,
+        message: `Plan has ${req.body.plan.actions.length} actions. V1_DEMO allows up to 2 actions (e.g. PULL + SWAP/LEND).`,
       });
     }
 
@@ -3591,9 +3759,10 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
       'defi': 3,
       'borrow': 4,
       'repay': 5,
+      'event_buy': 5,
       'proof': 6,
-      'event': 6, // Event markets use proof adapter
       'perp': 7,
+      'event': 8,
     };
 
     // Normalize actions
@@ -3611,63 +3780,108 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
         // Get action type for encoding
         const actionType = action.actionType ?? actionTypeMap[action.type] ?? 0;
 
-        if (actionType === 6) { // Proof/Event action
-          // Encode event market data: (bytes32 marketId, uint8 outcome, uint256 amount)
+        if (actionType === 8) { // EVENT action (DemoEventAdapter)
+          const { keccak256, stringToBytes, parseUnits } = await import('viem');
           const eventData = action.data;
-          const marketId = eventData.eventId || eventData.marketId ||
-            `0x${Buffer.from(eventData.market || 'unknown').toString('hex').padStart(64, '0')}`;
-          const outcome = eventData.outcome === 'yes' || eventData.outcome === true ? 1 : 0;
-          const amount = BigInt(Math.floor((eventData.amount || 10) * 1e6)); // Convert to REDACTED decimals
+          const marketIdRaw = eventData.eventId || eventData.marketId || eventData.market || 'demo-market';
+          const marketId = marketIdRaw.startsWith('0x') && marketIdRaw.length === 66
+            ? marketIdRaw
+            : keccak256(stringToBytes(marketIdRaw));
+          const outcome = String(eventData.outcome || 'yes').toLowerCase() === 'no' || eventData.outcome === false ? 2 : 1;
+          const stakeAmount = parseUnits(String(eventData.stakeUsd || eventData.amount || 5), 6);
+          const user = (plan.user || userAddress) as `0x${string}`;
+          const stakeToken = (DEMO_REDACTED_ADDRESS || REDACTED_ADDRESS_SEPOLIA || '0x0000000000000000000000000000000000000000') as `0x${string}`;
 
           try {
-            action.data = encodeAbiParameters(
+            const adapterData = encodeAbiParameters(
               [
+                { type: 'uint8', name: 'action' },
+                { type: 'address', name: 'user' },
                 { type: 'bytes32', name: 'marketId' },
-                { type: 'uint8', name: 'outcome' },
                 { type: 'uint256', name: 'amount' },
               ],
-              [marketId as `0x${string}`, outcome, amount]
+              [outcome, user, marketId as `0x${string}`, stakeAmount]
+            );
+            const routerData = encodeAbiParameters(
+              [
+                { type: 'address', name: 'stakeToken' },
+                { type: 'uint256', name: 'amount' },
+                { type: 'bytes', name: 'adapterData' },
+              ],
+              [stakeToken, stakeAmount, adapterData]
+            );
+            const maxSpendUnits = stakeAmount;
+            action.data = encodeAbiParameters(
+              [{ type: 'uint256' }, { type: 'bytes' }],
+              [maxSpendUnits, routerData]
             );
           } catch (encodeError: any) {
             console.warn('[relayed] Failed to encode event data, using fallback:', encodeError.message);
-            // Fallback: encode as simple bytes
             action.data = '0x' + Buffer.from(JSON.stringify(eventData)).toString('hex');
           }
-        } else if (actionType === 7) { // Perp action
-          // Encode perp data: (bytes32 market, bool isLong, uint256 size, uint256 leverage)
+        } else if (actionType === 7) { // PERP action (DemoPerpAdapter)
+          const { parseUnits } = await import('viem');
           const perpData = action.data;
-          const market = `0x${Buffer.from(perpData.token || perpData.asset || 'ETH').toString('hex').padStart(64, '0')}`;
-          const isLong = perpData.direction === 'long' || perpData.isLong === true;
-          const size = BigInt(Math.floor((perpData.depositUsd || perpData.amount || 100) * 1e6));
-          const leverage = BigInt(perpData.leverage || perpData.leverageX || 10);
+          const marketRaw = (perpData.market || perpData.asset || perpData.token || 'ETH').toString().toUpperCase();
+          const marketMap: Record<string, number> = { 'BTC': 0, 'BTC-USD': 0, 'ETH': 1, 'ETH-USD': 1, 'SOL': 2, 'SOL-USD': 2 };
+          const marketEnum = marketMap[marketRaw] ?? 1;
+          const sideEnum = String(perpData.direction || 'long').toLowerCase() === 'short' || perpData.isLong === false ? 1 : 0;
+          const leverage = BigInt(perpData.leverage || perpData.leverageX || 5);
+          const marginAmount = parseUnits(String(perpData.marginUsd || perpData.depositUsd || perpData.amount || 100), 6);
+          const user = (plan.user || userAddress) as `0x${string}`;
+          const marginToken = (DEMO_REDACTED_ADDRESS || REDACTED_ADDRESS_SEPOLIA || '0x0000000000000000000000000000000000000000') as `0x${string}`;
 
           try {
-            action.data = encodeAbiParameters(
+            const adapterData = encodeAbiParameters(
               [
-                { type: 'bytes32', name: 'market' },
-                { type: 'bool', name: 'isLong' },
-                { type: 'uint256', name: 'size' },
+                { type: 'uint8', name: 'action' },
+                { type: 'address', name: 'user' },
+                { type: 'uint8', name: 'market' },
+                { type: 'uint8', name: 'side' },
+                { type: 'uint256', name: 'margin' },
                 { type: 'uint256', name: 'leverage' },
               ],
-              [market as `0x${string}`, isLong, size, leverage]
+              [1, user, marketEnum, sideEnum, marginAmount, leverage]
+            );
+            const routerData = encodeAbiParameters(
+              [
+                { type: 'address', name: 'marginToken' },
+                { type: 'uint256', name: 'margin' },
+                { type: 'bytes', name: 'adapterData' },
+              ],
+              [marginToken, marginAmount, adapterData]
+            );
+            const maxSpendUnits = marginAmount;
+            action.data = encodeAbiParameters(
+              [{ type: 'uint256' }, { type: 'bytes' }],
+              [maxSpendUnits, routerData]
             );
           } catch (encodeError: any) {
             console.warn('[relayed] Failed to encode perp data, using fallback:', encodeError.message);
             action.data = '0x' + Buffer.from(JSON.stringify(perpData)).toString('hex');
           }
-        } else if (actionType === 3) { // Lend action
-          // Encode lend data: (address token, uint256 amount)
+        } else if (actionType === 3) { // Lend action (DemoLend/Aave)
+          const { parseUnits } = await import('viem');
           const lendData = action.data;
-          const token = lendData.token || lendData.asset || '0x0000000000000000000000000000000000000000';
-          const amount = BigInt(Math.floor((lendData.amount || 100) * 1e6));
+          const asset = lendData.asset || lendData.token || DEMO_REDACTED_ADDRESS || REDACTED_ADDRESS_SEPOLIA || '0x0000000000000000000000000000000000000000';
+          const vault = lendData.vault || lendData.vaultAddress || lendData.pool || '0x0000000000000000000000000000000000000000';
+          const amount = parseUnits(String(lendData.amount || 100), asset?.toLowerCase() === (WETH_ADDRESS_SEPOLIA || '').toLowerCase() ? 18 : 6);
+          const user = (plan.user || userAddress) as `0x${string}`;
 
           try {
-            action.data = encodeAbiParameters(
+            const innerData = encodeAbiParameters(
               [
-                { type: 'address', name: 'token' },
+                { type: 'address', name: 'asset' },
+                { type: 'address', name: 'vault' },
                 { type: 'uint256', name: 'amount' },
+                { type: 'address', name: 'onBehalfOf' },
               ],
-              [token as `0x${string}`, amount]
+              [asset as `0x${string}`, vault as `0x${string}`, amount, user]
+            );
+            // Session wrapper with maxSpendUnits equal to amount (in token units)
+            action.data = encodeAbiParameters(
+              [{ type: 'uint256' }, { type: 'bytes' }],
+              [amount, innerData]
             );
           } catch (encodeError: any) {
             console.warn('[relayed] Failed to encode lend data, using fallback:', encodeError.message);
@@ -3691,10 +3905,12 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
     // STRICT SERVER-SIDE GUARDS
     const guardConfig = await import('../config');
     const EXECUTION_ROUTER_ADDRESS = guardConfig.EXECUTION_ROUTER_ADDRESS;
+    const ETH_TESTNET_RPC_URL = guardConfig.ETH_TESTNET_RPC_URL;
     const UNISWAP_V3_ADAPTER_ADDRESS = guardConfig.UNISWAP_V3_ADAPTER_ADDRESS;
     const WETH_WRAP_ADAPTER_ADDRESS = guardConfig.WETH_WRAP_ADAPTER_ADDRESS;
     const MOCK_SWAP_ADAPTER_ADDRESS = guardConfig.MOCK_SWAP_ADAPTER_ADDRESS;
     const REDACTED_ADDRESS_SEPOLIA = guardConfig.REDACTED_ADDRESS_SEPOLIA;
+    const DEMO_REDACTED_ADDRESS = guardConfig.DEMO_REDACTED_ADDRESS || guardConfig.DEMO_BUSDC_ADDRESS;
     const WETH_ADDRESS_SEPOLIA = guardConfig.WETH_ADDRESS_SEPOLIA;
 
     // Guard 1: Validate action count (max 4 for MVP)
@@ -3800,6 +4016,55 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
             adapter,
             allowedAdapters: Array.from(allowedAdapters),
             message: `Adapter ${adapter} not allowed. Allowed adapters: ${Array.from(allowedAdapters).join(', ')}`,
+          },
+          correlationId,
+        });
+      }
+    }
+
+    // Guard 2b: Verify adapters are actually allowlisted on-chain (prevents on-chain revert)
+    if (EXECUTION_ROUTER_ADDRESS && ETH_TESTNET_RPC_URL) {
+      try {
+        const { eth_call, decodeBool } = await import('../executors/evmRpc');
+        const { encodeFunctionData } = await import('viem');
+        const isAdapterAllowedAbi = [
+          {
+            name: 'isAdapterAllowed',
+            type: 'function',
+            stateMutability: 'view',
+            inputs: [{ name: '', type: 'address' }],
+            outputs: [{ name: '', type: 'bool' }],
+          },
+        ] as const;
+
+        const uniqueAdapters = Array.from(new Set(plan.actions.map(a => a.adapter?.toLowerCase())));
+        for (const adapter of uniqueAdapters) {
+          if (!adapter) continue;
+          const data = encodeFunctionData({
+            abi: isAdapterAllowedAbi,
+            functionName: 'isAdapterAllowed',
+            args: [adapter as `0x${string}`],
+          });
+          const result = await eth_call(ETH_TESTNET_RPC_URL, EXECUTION_ROUTER_ADDRESS, data);
+          const isAllowed = decodeBool(result);
+          if (!isAllowed) {
+            return res.status(400).json({
+              ok: false,
+              error: {
+                code: 'ADAPTER_NOT_ALLOWED',
+                adapter,
+                message: `Adapter ${adapter} is not allowlisted in router`,
+              },
+              correlationId,
+            });
+          }
+        }
+      } catch (error: any) {
+        return res.status(400).json({
+          ok: false,
+          error: {
+            code: 'ADAPTER_CHECK_FAILED',
+            message: `Failed to verify adapter allowlist status: ${error.message}`,
           },
           correlationId,
         });
@@ -4017,9 +4282,11 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
     let instrumentType: 'swap' | 'perp' | 'defi' | 'event' | undefined;
     if (plan.actions.length > 0) {
       const firstAction = plan.actions[0];
-      if (firstAction.actionType === 0) instrumentType = 'swap';
-      else if (firstAction.actionType === 6) instrumentType = 'perp'; // PROOF could be perp or event
-      else if (firstAction.actionType === 2) instrumentType = 'swap'; // PULL is usually for swaps
+      if (firstAction.actionType === 0 || firstAction.actionType === 2) instrumentType = 'swap';
+      else if (firstAction.actionType === 3) instrumentType = 'defi';
+      else if (firstAction.actionType === 7) instrumentType = 'perp';
+      else if (firstAction.actionType === 8) instrumentType = 'event';
+      else if (firstAction.actionType === 6) instrumentType = 'event'; // PROOF fallback
     }
     instrumentType = instrumentType || spendEstimate.instrumentType;
 
@@ -5768,10 +6035,11 @@ app.get('/api/wallet/balances', maybeCheckAccess, async (req, res) => {
  */
 app.get('/api/demo/config', async (req, res) => {
   try {
-    const { EXECUTION_MODE, DEMO_REDACTED_ADDRESS, DEMO_WETH_ADDRESS } = await import('../config');
+    const { EXECUTION_MODE, DEMO_BUSDC_ADDRESS, DEMO_REDACTED_ADDRESS, DEMO_WETH_ADDRESS } = await import('../config');
+    const stableAddress = DEMO_BUSDC_ADDRESS || DEMO_REDACTED_ADDRESS;
 
     const missing: string[] = [];
-    if (!DEMO_REDACTED_ADDRESS) missing.push('DEMO_REDACTED_ADDRESS');
+    if (!stableAddress) missing.push('DEMO_BUSDC_ADDRESS');
     if (!DEMO_WETH_ADDRESS) missing.push('DEMO_WETH_ADDRESS');
 
     res.json({
@@ -5791,12 +6059,13 @@ app.get('/api/demo/config', async (req, res) => {
 
 /**
  * POST /api/demo/faucet
- * Mints demo tokens (REDACTED and WETH) to a user address
+ * Mints demo tokens (bUSDC and WETH) to a user address
  * Only available in eth_testnet mode
  */
 app.post('/api/demo/faucet', maybeCheckAccess, async (req, res) => {
   try {
-    const { EXECUTION_MODE, DEMO_REDACTED_ADDRESS, DEMO_WETH_ADDRESS } = await import('../config');
+    const { EXECUTION_MODE, DEMO_BUSDC_ADDRESS, DEMO_REDACTED_ADDRESS, DEMO_WETH_ADDRESS } = await import('../config');
+    const stableAddress = DEMO_BUSDC_ADDRESS || DEMO_REDACTED_ADDRESS;
 
     // Only allow in testnet mode
     if (EXECUTION_MODE !== 'eth_testnet') {
@@ -5807,9 +6076,9 @@ app.post('/api/demo/faucet', maybeCheckAccess, async (req, res) => {
     }
 
     // Validate demo token addresses are configured
-    if (!DEMO_REDACTED_ADDRESS || !DEMO_WETH_ADDRESS) {
+    if (!stableAddress || !DEMO_WETH_ADDRESS) {
       const missing: string[] = [];
-      if (!DEMO_REDACTED_ADDRESS) missing.push('DEMO_REDACTED_ADDRESS');
+      if (!stableAddress) missing.push('DEMO_BUSDC_ADDRESS');
       if (!DEMO_WETH_ADDRESS) missing.push('DEMO_WETH_ADDRESS');
 
       return res.status(503).json({
@@ -5856,6 +6125,75 @@ app.post('/api/demo/faucet', maybeCheckAccess, async (req, res) => {
     res.status(500).json({
       ok: false,
       error: 'Failed to mint demo tokens',
+      details: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/mint
+ * Mint bUSDC for testnet use with a daily cap (default 1000/day)
+ */
+app.post('/api/mint', mintRateLimit, maybeCheckAccess, async (req, res) => {
+  try {
+    const { EXECUTION_MODE } = await import('../config');
+
+    if (EXECUTION_MODE !== 'eth_testnet') {
+      return res.status(400).json({
+        ok: false,
+        error: 'Mint only available in eth_testnet mode'
+      });
+    }
+
+    const { userAddress, amount } = req.body || {};
+
+    if (!userAddress || typeof userAddress !== 'string') {
+      return res.status(400).json({
+        ok: false,
+        error: 'userAddress is required'
+      });
+    }
+
+    if (!/^0x[a-fA-F0-9]{40}$/i.test(userAddress)) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Invalid userAddress format'
+      });
+    }
+
+    const amountNum = Number(amount ?? 1000);
+    if (!Number.isFinite(amountNum) || amountNum <= 0) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Invalid amount'
+      });
+    }
+
+    const limitCheck = await checkAndRecordMint(userAddress, amountNum);
+    if (!limitCheck.ok) {
+      return res.status(429).json({
+        ok: false,
+        error: 'Daily mint limit exceeded',
+        remaining: limitCheck.remaining,
+        cap: limitCheck.cap
+      });
+    }
+
+    const { mintBusdc } = await import('../utils/demoTokenMinter');
+    const result = await mintBusdc(userAddress, amountNum);
+
+    res.json({
+      ok: true,
+      success: true,
+      txHash: result.txHash,
+      amount: result.amount,
+      remaining: limitCheck.remaining
+    });
+  } catch (error: any) {
+    console.error('[api/mint] Error:', error);
+    res.status(500).json({
+      ok: false,
+      error: 'Failed to mint bUSDC',
       details: error.message
     });
   }
@@ -8380,6 +8718,16 @@ app.get('/api/stats/public', async (req, res) => {
  */
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
   const correlationId = req.correlationId || 'unknown';
+
+  if (SENTRY_ENABLED) {
+    Sentry.captureException(err, {
+      tags: {
+        correlationId,
+        path: req.path,
+        method: req.method,
+      },
+    });
+  }
   
   // Log error details (dev only for full stack)
   const errorLog: Record<string, any> = {

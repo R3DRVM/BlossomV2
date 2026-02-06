@@ -85,3 +85,16 @@ CREATE TABLE IF NOT EXISTS request_log (
 
 CREATE INDEX IF NOT EXISTS idx_request_log_endpoint ON request_log(endpoint);
 CREATE INDEX IF NOT EXISTS idx_request_log_created ON request_log(created_at);
+
+-- Mint records table (for bUSDC minting daily limits)
+CREATE TABLE IF NOT EXISTS mint_records (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_address TEXT NOT NULL,
+    mint_date TEXT NOT NULL,  -- YYYY-MM-DD format
+    amount_minted REAL NOT NULL,
+    created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+    UNIQUE(user_address, mint_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_mint_records_user ON mint_records(user_address);
+CREATE INDEX IF NOT EXISTS idx_mint_records_date ON mint_records(mint_date);
