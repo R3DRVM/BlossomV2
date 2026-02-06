@@ -78,7 +78,7 @@ function mergeMetadata(existingJson: string | undefined, newData: Record<string,
 }
 
 // Type definitions (duplicated to avoid rootDir issues)
-type IntentKind = 'perp' | 'deposit' | 'swap' | 'bridge' | 'unknown';
+type IntentKind = 'perp' | 'deposit' | 'swap' | 'bridge' | 'event' | 'unknown';
 type IntentStatus = 'queued' | 'planned' | 'routed' | 'executing' | 'confirmed' | 'failed';
 type IntentFailureStage = 'plan' | 'route' | 'execute' | 'confirm' | 'quote';
 type ExecutionKind = 'perp' | 'deposit' | 'bridge' | 'swap' | 'proof' | 'relay' | 'transfer';
@@ -133,6 +133,7 @@ const IMPLEMENTED_VENUES: Record<string, Record<string, string[]>> = {
     swap: ['demo_dex', 'uniswap'],
     bridge: ['bridge_proof'],  // Proof only, not real bridging
     perp: ['demo_perp'],       // Proof only
+    event: ['native'],         // Event/prediction market - proof only
     proof: ['native'],
     unknown: ['native'],
   },
@@ -141,6 +142,7 @@ const IMPLEMENTED_VENUES: Record<string, Record<string, string[]>> = {
     swap: ['jupiter', 'demo_dex'], // Jupiter for real swaps, demo_dex for proof_only
     bridge: ['bridge_proof'],
     perp: ['demo_perp'],
+    event: ['native'],         // Event/prediction market - proof only
     proof: ['native'],
     unknown: ['native'],
   },
@@ -189,6 +191,10 @@ const INTENT_PATTERNS = {
     bet: /(?:bet|wager|stake)\s+(?:on\s+)?(?:the\s+)?/i,
     market: /prediction\s*market/i,
     volume: /(?:highest|top|best)\s*(?:volume|liquidity)/i,
+    // Simple price level betting: "bet X on Y above/below Z"
+    priceLevel: /(?:above|below|over|under|at)\s*\$?\d+/i,
+    // Outcome betting: "bet on X winning", "bet X will Y"
+    outcome: /(?:bet|wager)\s+(?:on\s+)?(?:\w+\s+)?(?:will|to)\s+/i,
   },
   hedge: {
     basic: /hedge\s+(?:my\s+)?(?:positions?|portfolio)/i,
@@ -429,13 +435,22 @@ export function parseIntent(intentText: string): ParsedIntent {
     };
   }
 
-  // Check for prediction market intent
-  if (INTENT_PATTERNS.prediction.market.test(text) ||
-      (INTENT_PATTERNS.prediction.bet.test(text) && INTENT_PATTERNS.prediction.volume.test(text))) {
+  // Check for prediction market / event betting intent
+  // Match: "prediction market", "bet on highest volume", "bet X on Y above/below Z", etc.
+  const hasBetPattern = INTENT_PATTERNS.prediction.bet.test(text);
+  const isPredictionMarket = INTENT_PATTERNS.prediction.market.test(text);
+  const hasVolumePattern = INTENT_PATTERNS.prediction.volume.test(text);
+  const hasPriceLevelPattern = INTENT_PATTERNS.prediction.priceLevel.test(text);
+  const hasOutcomePattern = INTENT_PATTERNS.prediction.outcome.test(text);
+
+  if (isPredictionMarket ||
+      (hasBetPattern && hasVolumePattern) ||
+      (hasBetPattern && hasPriceLevelPattern) ||
+      hasOutcomePattern) {
     return {
-      kind: 'unknown', // Will be routed as proof_only with special handling
-      action: 'prediction_bet',
-      rawParams: { ...rawParams, intentType: 'prediction', requiresMarketData: true },
+      kind: 'event', // Event/prediction market betting - routed as proof_only
+      action: 'event',
+      rawParams: { ...rawParams, intentType: 'event', requiresMarketData: true },
     };
   }
 
@@ -1050,8 +1065,8 @@ export function routeIntent(
     };
   }
 
-  // Prediction market intent requires market data
-  if (rawParams?.intentType === 'prediction') {
+  // Event/prediction market intent requires market data
+  if (rawParams?.intentType === 'event' || rawParams?.intentType === 'prediction' || kind === 'event') {
     // For now, we don't have prediction market data source integrated
     return {
       chain: targetChain,
@@ -1059,7 +1074,7 @@ export function routeIntent(
       venue: 'native',
       executionType: 'proof_only',
       warnings: [
-        'PROOF_ONLY: Prediction market intent requires market data integration.',
+        'PROOF_ONLY: Event/prediction market intent requires market data integration.',
         'Polymarket/prediction data source not yet integrated - recording intent proof on-chain.',
       ],
     };
