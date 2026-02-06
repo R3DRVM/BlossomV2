@@ -3791,6 +3791,12 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
     // The frontend sends a simplified intent format. We need to convert it
     // to the on-chain ExecutionPlan format before validation and execution.
 
+    // Import config values BEFORE action normalization (fixes TDZ error)
+    const configModule = await import('../config');
+    const DEMO_REDACTED_ADDRESS = configModule.DEMO_REDACTED_ADDRESS || configModule.DEMO_BUSDC_ADDRESS;
+    const REDACTED_ADDRESS_SEPOLIA = configModule.REDACTED_ADDRESS_SEPOLIA;
+    const WETH_ADDRESS_SEPOLIA = configModule.WETH_ADDRESS_SEPOLIA;
+
     // Add missing plan fields
     if (!plan.user) {
       plan.user = userAddress;
@@ -3959,15 +3965,12 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
     });
 
     // STRICT SERVER-SIDE GUARDS
-    const guardConfig = await import('../config');
-    const EXECUTION_ROUTER_ADDRESS = guardConfig.EXECUTION_ROUTER_ADDRESS;
-    const ETH_TESTNET_RPC_URL = guardConfig.ETH_TESTNET_RPC_URL;
-    const UNISWAP_V3_ADAPTER_ADDRESS = guardConfig.UNISWAP_V3_ADAPTER_ADDRESS;
-    const WETH_WRAP_ADAPTER_ADDRESS = guardConfig.WETH_WRAP_ADAPTER_ADDRESS;
-    const MOCK_SWAP_ADAPTER_ADDRESS = guardConfig.MOCK_SWAP_ADAPTER_ADDRESS;
-    const REDACTED_ADDRESS_SEPOLIA = guardConfig.REDACTED_ADDRESS_SEPOLIA;
-    const DEMO_REDACTED_ADDRESS = guardConfig.DEMO_REDACTED_ADDRESS || guardConfig.DEMO_BUSDC_ADDRESS;
-    const WETH_ADDRESS_SEPOLIA = guardConfig.WETH_ADDRESS_SEPOLIA;
+    // Note: DEMO_REDACTED_ADDRESS, REDACTED_ADDRESS_SEPOLIA, WETH_ADDRESS_SEPOLIA already imported above
+    const EXECUTION_ROUTER_ADDRESS = configModule.EXECUTION_ROUTER_ADDRESS;
+    const ETH_TESTNET_RPC_URL = configModule.ETH_TESTNET_RPC_URL;
+    const UNISWAP_V3_ADAPTER_ADDRESS = configModule.UNISWAP_V3_ADAPTER_ADDRESS;
+    const WETH_WRAP_ADAPTER_ADDRESS = configModule.WETH_WRAP_ADAPTER_ADDRESS;
+    const MOCK_SWAP_ADAPTER_ADDRESS = configModule.MOCK_SWAP_ADAPTER_ADDRESS;
 
     // Guard 1: Validate action count (max 4 for MVP)
     if (!plan.actions || !Array.isArray(plan.actions)) {
