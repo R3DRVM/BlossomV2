@@ -4877,6 +4877,12 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
           )}
           {/* Message Input */}
           <div className="p-4">
+            {/* Wallet Connect Prompt - show when no wallet connected */}
+            {!walletStatus.evmConnected && !walletStatus.solConnected && (
+              <div className="mb-2 px-3 py-1.5 text-[11px] text-blue-700 bg-blue-50 border border-blue-200 rounded-lg text-center">
+                Connect a wallet to execute trades on Sepolia testnet
+              </div>
+            )}
             {/* One-Click Gate Notice - only show if NOT using manual signing mode */}
             {executionAuthMode === 'session' && !isOneClickAuthorized(walletStatus.evmAddress) && !isManualSigningEnabled(walletStatus.evmAddress) && walletStatus.evmConnected && (
               <div className="mb-2 px-3 py-1.5 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg text-center">
