@@ -1760,7 +1760,10 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
        normalizedUserMessage.toLowerCase().includes('leverage'));
     
     // Detect if this is an event prompt - match patterns like "bet X on Y above/below Z"
-    const isEventPrompt = /bet|wager|risk.*on|event|prediction\s*market/i.test(normalizedUserMessage) &&
+    // IMPORTANT: Perp intents take priority - if isPerpPrompt is true, isEventPrompt should be false
+    const hasPerpKeywords = /\b(long|short|perp|leverage|\d+x)\b/i.test(normalizedUserMessage);
+    const isEventPrompt = !isPerpPrompt && !hasPerpKeywords &&
+      /bet|wager|risk.*on|event|prediction\s*market/i.test(normalizedUserMessage) &&
       (normalizedUserMessage.toLowerCase().includes('yes') ||
        normalizedUserMessage.toLowerCase().includes('no') ||
        normalizedUserMessage.toLowerCase().includes('fed') ||
@@ -1843,7 +1846,10 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
          normalizedUserMessage.toLowerCase().includes('2x') ||
          normalizedUserMessage.toLowerCase().includes('3x') ||
          normalizedUserMessage.toLowerCase().includes('leverage'));
-      const normalizedIsEventPrompt = /bet|wager|risk.*on|event|prediction\s*market/i.test(normalizedUserMessage) &&
+      // IMPORTANT: Perp intents take priority - if normalizedIsPerpPrompt is true, isEventPrompt should be false
+      const normalizedHasPerpKeywords = /\b(long|short|perp|leverage|\d+x)\b/i.test(normalizedUserMessage);
+      const normalizedIsEventPrompt = !normalizedIsPerpPrompt && !normalizedHasPerpKeywords &&
+        /bet|wager|risk.*on|event|prediction\s*market/i.test(normalizedUserMessage) &&
         (normalizedUserMessage.toLowerCase().includes('yes') ||
          normalizedUserMessage.toLowerCase().includes('no') ||
          normalizedUserMessage.toLowerCase().includes('fed') ||
@@ -3231,41 +3237,72 @@ app.get('/api/execute/preflight', async (req, res) => {
       UNISWAP_V3_ADAPTER_ADDRESS,
       WETH_WRAP_ADAPTER_ADDRESS,
     } = await import('../config');
-    
-    const allowedAdapters: string[] = [];
-    if (UNISWAP_V3_ADAPTER_ADDRESS) {
-      allowedAdapters.push(UNISWAP_V3_ADAPTER_ADDRESS.toLowerCase());
-    }
-    if (WETH_WRAP_ADAPTER_ADDRESS) {
-      allowedAdapters.push(WETH_WRAP_ADAPTER_ADDRESS.toLowerCase());
-    }
-    if (MOCK_SWAP_ADAPTER_ADDRESS) {
-      allowedAdapters.push(MOCK_SWAP_ADAPTER_ADDRESS.toLowerCase());
-    }
-    if (PROOF_ADAPTER_ADDRESS) {
-      allowedAdapters.push(PROOF_ADAPTER_ADDRESS.toLowerCase());
-    }
-    if (ERC20_PULL_ADAPTER_ADDRESS) {
-      allowedAdapters.push(ERC20_PULL_ADAPTER_ADDRESS.toLowerCase());
-    }
-    if (DEMO_LEND_ADAPTER_ADDRESS) {
-      allowedAdapters.push(DEMO_LEND_ADAPTER_ADDRESS.toLowerCase());
-    }
-    if (AAVE_ADAPTER_ADDRESS) {
-      allowedAdapters.push(AAVE_ADAPTER_ADDRESS.toLowerCase());
-    }
 
     // Check perps configuration
     const { DEMO_PERP_ADAPTER_ADDRESS, DEMO_PERP_ENGINE_ADDRESS, DEMO_EVENT_ADAPTER_ADDRESS, DEMO_EVENT_ENGINE_ADDRESS } = await import('../config');
     const perpsEnabled = !!DEMO_PERP_ADAPTER_ADDRESS && routerOk;
     const eventsRealEnabled = !!DEMO_EVENT_ADAPTER_ADDRESS && routerOk;
 
-    // Add demo perp and event adapters to allowlist for real on-chain execution
-    if (DEMO_PERP_ADAPTER_ADDRESS) {
-      allowedAdapters.push(DEMO_PERP_ADAPTER_ADDRESS.toLowerCase());
-    }
-    if (DEMO_EVENT_ADAPTER_ADDRESS) {
-      allowedAdapters.push(DEMO_EVENT_ADAPTER_ADDRESS.toLowerCase());
+    // Collect all configured adapters to verify on-chain
+    const configuredAdapters: string[] = [];
+    if (UNISWAP_V3_ADAPTER_ADDRESS) configuredAdapters.push(UNISWAP_V3_ADAPTER_ADDRESS.toLowerCase());
+    if (WETH_WRAP_ADAPTER_ADDRESS) configuredAdapters.push(WETH_WRAP_ADAPTER_ADDRESS.toLowerCase());
+    if (MOCK_SWAP_ADAPTER_ADDRESS) configuredAdapters.push(MOCK_SWAP_ADAPTER_ADDRESS.toLowerCase());
+    if (PROOF_ADAPTER_ADDRESS) configuredAdapters.push(PROOF_ADAPTER_ADDRESS.toLowerCase());
+    if (ERC20_PULL_ADAPTER_ADDRESS) configuredAdapters.push(ERC20_PULL_ADAPTER_ADDRESS.toLowerCase());
+    if (DEMO_LEND_ADAPTER_ADDRESS) configuredAdapters.push(DEMO_LEND_ADAPTER_ADDRESS.toLowerCase());
+    if (AAVE_ADAPTER_ADDRESS) configuredAdapters.push(AAVE_ADAPTER_ADDRESS.toLowerCase());
+    if (DEMO_PERP_ADAPTER_ADDRESS) configuredAdapters.push(DEMO_PERP_ADAPTER_ADDRESS.toLowerCase());
+    if (DEMO_EVENT_ADAPTER_ADDRESS) configuredAdapters.push(DEMO_EVENT_ADAPTER_ADDRESS.toLowerCase());
+
+    // Verify each adapter is on-chain allowlisted in the router
+    // This prevents the "Prepared plan uses adapter not allowlisted in router" error
+    const allowedAdapters: string[] = [];
+    const notAllowlistedAdapters: string[] = [];
+
+    if (routerOk && ETH_TESTNET_RPC_URL && EXECUTION_ROUTER_ADDRESS) {
+      const { eth_call, decodeBool } = await import('../executors/evmRpc');
+      const { encodeFunctionData } = await import('viem');
+      const isAdapterAllowedAbi = [
+        {
+          name: 'isAdapterAllowed',
+          type: 'function',
+          stateMutability: 'view',
+          inputs: [{ name: '', type: 'address' }],
+          outputs: [{ name: '', type: 'bool' }],
+        },
+      ] as const;
+
+      for (const adapter of configuredAdapters) {
+        try {
+          const data = encodeFunctionData({
+            abi: isAdapterAllowedAbi,
+            functionName: 'isAdapterAllowed',
+            args: [adapter as `0x${string}`],
+          });
+          const result = await eth_call(ETH_TESTNET_RPC_URL, EXECUTION_ROUTER_ADDRESS, data);
+          const isAllowed = decodeBool(result);
+          if (isAllowed) {
+            allowedAdapters.push(adapter);
+          } else {
+            notAllowlistedAdapters.push(adapter);
+          }
+        } catch (error: any) {
+          console.warn(`[preflight] Failed to check adapter ${adapter}:`, error.message);
+          // Don't add adapter if we can't verify
+          notAllowlistedAdapters.push(adapter);
+        }
+      }
+
+      // Log adapters not allowlisted for debugging
+      if (notAllowlistedAdapters.length > 0) {
+        console.warn('[preflight] Adapters configured but NOT on-chain allowlisted:', notAllowlistedAdapters);
+        notes.push(`${notAllowlistedAdapters.length} adapter(s) configured but not on-chain allowlisted`);
+      }
+    } else {
+      // If we can't verify on-chain, include all configured adapters (fallback)
+      allowedAdapters.push(...configuredAdapters);
+      notes.push('Could not verify adapter allowlist on-chain (router/RPC unavailable)');
     }
 
     // Venue availability flags for frontend execution routing
