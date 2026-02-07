@@ -6698,6 +6698,28 @@ app.post('/api/demo/execute-direct', maybeCheckAccess, async (req, res) => {
       gasUsed: receipt.gasUsed.toString(),
     });
 
+    // Record execution to database for stats tracking
+    if (receipt.status === 'success') {
+      try {
+        const { recordExecutionWithResult } = await import('../ledger/ledger');
+        const execId = await recordExecutionWithResult({
+          chain: 'ethereum',
+          network: 'sepolia',
+          kind: req.body.kind || 'swap',
+          venue: req.body.venue || 'demo_dex',
+          walletAddress: effectivePlan.user,
+          usdEstimate: req.body.usdEstimate || 10,
+          amountDisplay: req.body.amountDisplay || 'Relayer execution',
+        }, {
+          success: true,
+          txHash,
+        });
+        console.log('[api/demo/execute-direct] Recorded execution:', execId);
+      } catch (recordError: any) {
+        console.warn('[api/demo/execute-direct] Failed to record execution:', recordError.message);
+      }
+    }
+
     res.json({
       ok: true,
       success: receipt.status === 'success',
