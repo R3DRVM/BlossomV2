@@ -11,11 +11,12 @@ import { readFileSync, existsSync, readdirSync } from 'fs';
 import { resolve, dirname, join, basename } from 'path';
 import { fileURLToPath } from 'url';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const ledgerPath = resolve(__dirname, 'agent/dist/execution-ledger');
+// Use process.cwd() for Vercel compatibility
+const projectRoot = process.cwd();
+const ledgerPath = resolve(projectRoot, 'agent/dist/execution-ledger');
 
 console.log('🌸 Building Blossom Agent server bundle for Vercel...\n');
-console.log(`   Working dir: ${__dirname}`);
+console.log(`   Project root: ${projectRoot}`);
 console.log(`   Ledger path: ${ledgerPath}`);
 
 const startTime = Date.now();
@@ -25,22 +26,34 @@ const resolvePlugin = {
   name: 'resolve-agent-paths',
   setup(build) {
     // Handle all relative .js imports by resolving from the importer's directory
-    build.onResolve({ filter: /^\.\/.*\.js$/ }, args => {
+    build.onResolve({ filter: /^\.\/[^/]+\.js$/ }, args => {
+      // Only handle if importer is in execution-ledger
+      if (!args.importer.includes('execution-ledger')) {
+        return null;
+      }
       const dir = dirname(args.importer);
       const resolved = resolve(dir, args.path);
+      console.log(`   Resolving ${args.path} from ${dir} -> ${resolved}`);
       if (existsSync(resolved)) {
         return { path: resolved };
       }
+      console.log(`   NOT FOUND: ${resolved}`);
       return null;
     });
 
     // Handle imports like '../../execution-ledger/db-pg-client'
     build.onResolve({ filter: /execution-ledger\/[^/]+$/ }, args => {
-      const moduleName = basename(args.path);
-      const resolved = join(ledgerPath, moduleName + '.js');
+      let moduleName = basename(args.path);
+      // Don't add .js if already present
+      if (!moduleName.endsWith('.js')) {
+        moduleName = moduleName + '.js';
+      }
+      const resolved = join(ledgerPath, moduleName);
+      console.log(`   Resolving execution-ledger/${moduleName} -> ${resolved}`);
       if (existsSync(resolved)) {
         return { path: resolved };
       }
+      console.log(`   NOT FOUND: ${resolved}`);
       return null;
     });
   }
