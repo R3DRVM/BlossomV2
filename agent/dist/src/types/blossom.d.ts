@@ -65,6 +65,46 @@ export type BlossomExecutionRequest = {
     outcome: "YES" | "NO";
     stakeUsd: number;
     price?: number;
+} | {
+    /** HIP-3 Market Creation on Hyperliquid */
+    kind: "perp_create";
+    chain: "hyperliquid_testnet";
+    /** Asset symbol for the new market (e.g., "DOGE-USD", "PEPE-USD") */
+    assetSymbol: string;
+    /** Index token symbol for oracle (e.g., "DOGE", "PEPE") */
+    indexToken?: string;
+    /** Maximum leverage allowed (1-50) */
+    maxLeverage?: number;
+    /** Maker fee in basis points (default: 2 = 0.02%) */
+    makerFeeBps?: number;
+    /** Taker fee in basis points (default: 5 = 0.05%) */
+    takerFeeBps?: number;
+    /** Oracle type: 'pyth' (default), 'chainlink', or 'custom' */
+    oracleType?: "pyth" | "chainlink" | "custom";
+    /** Oracle price feed ID (Pyth 32-byte ID or Chainlink aggregator address) */
+    oraclePriceId?: string;
+    /** HYPE bond amount (string for bigint, default: 1M HYPE) */
+    bondAmount?: string;
+    /** Maintenance margin in basis points (default: 250 = 2.5%) */
+    maintenanceMarginBps?: number;
+    /** Initial margin in basis points (default: 500 = 5%) */
+    initialMarginBps?: number;
+} | {
+    /** Open/manage position on Hyperliquid */
+    kind: "hyperliquid_perp";
+    chain: "hyperliquid_testnet";
+    /** Market to trade (e.g., "ETH-USD", "BTC-USD") */
+    market: string;
+    /** Position side */
+    side: "long" | "short";
+    /** Position size in contracts/base asset */
+    size: string;
+    /** Leverage (1-50x) */
+    leverage: number;
+    /** Action type */
+    action: "open" | "close" | "modify";
+    /** Reduce-only flag for closing */
+    reduceOnly?: boolean;
 };
 export interface BlossomPortfolioSnapshot {
     accountValueUsd: number;

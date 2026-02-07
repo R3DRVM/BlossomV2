@@ -248,4 +248,172 @@ export async function getLiFiChains() {
         return [];
     }
 }
+/**
+ * Get route from LiFi with transaction data
+ * Returns full transaction data for execution
+ *
+ * SECURITY NOTE: This returns unsigned transaction data.
+ * The frontend must sign this with the user's wallet (non-custodial).
+ * DO NOT sign or submit transactions on behalf of users without explicit delegation.
+ */
+export async function getLiFiRoute(params) {
+    try {
+        const fromChainId = resolveChainId(params.fromChain);
+        const toChainId = resolveChainId(params.toChain);
+        if (!fromChainId || !toChainId) {
+            return {
+                ok: false,
+                error: {
+                    code: LiFiErrorCodes.LIFI_UNSUPPORTED_CHAIN,
+                    message: `Unsupported chain: ${params.fromChain} or ${params.toChain}`,
+                },
+            };
+        }
+        const fromTokenAddress = resolveTokenAddress(params.fromToken, params.fromChain);
+        const toTokenAddress = resolveTokenAddress(params.toToken, params.toChain);
+        const queryParams = new URLSearchParams({
+            fromChain: fromChainId.toString(),
+            toChain: toChainId.toString(),
+            fromToken: fromTokenAddress,
+            toToken: toTokenAddress,
+            fromAmount: params.fromAmount,
+            fromAddress: params.fromAddress,
+            toAddress: params.toAddress || params.fromAddress,
+            slippage: (params.slippage ?? 0.005).toString(),
+        });
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 15000);
+        try {
+            const response = await fetch(`${LIFI_API_BASE}/quote?${queryParams}`, {
+                method: 'GET',
+                headers: { 'Accept': 'application/json' },
+                signal: controller.signal,
+            });
+            clearTimeout(timeout);
+            if (!response.ok) {
+                const data = await response.json().catch(() => ({}));
+                return {
+                    ok: false,
+                    error: {
+                        code: LiFiErrorCodes.LIFI_QUOTE_FAILED,
+                        message: data.message || 'Route request failed',
+                    },
+                };
+            }
+            const data = await response.json();
+            // Extract transaction request
+            const transactionRequest = {
+                to: data.transactionRequest?.to || '',
+                data: data.transactionRequest?.data || '',
+                value: data.transactionRequest?.value || '0',
+                gasLimit: data.transactionRequest?.gasLimit,
+                gasPrice: data.transactionRequest?.gasPrice,
+                chainId: fromChainId,
+            };
+            if (!transactionRequest.to || !transactionRequest.data) {
+                return {
+                    ok: false,
+                    error: {
+                        code: LiFiErrorCodes.LIFI_QUOTE_FAILED,
+                        message: 'No transaction data in route response',
+                    },
+                };
+            }
+            return {
+                ok: true,
+                transactionRequest,
+                quote: {
+                    id: data.id,
+                    type: data.type || 'BRIDGE',
+                    tool: data.tool,
+                    toolDetails: data.toolDetails,
+                    fromChain: fromChainId,
+                    toChain: toChainId,
+                    fromToken: data.action?.fromToken,
+                    toToken: data.action?.toToken,
+                    fromAmount: data.action?.fromAmount,
+                    toAmount: data.estimate?.toAmount,
+                    toAmountMin: data.estimate?.toAmountMin,
+                    estimatedDuration: data.estimate?.executionDuration || 300,
+                    feeCosts: data.estimate?.feeCosts || [],
+                    gasCosts: data.estimate?.gasCosts || [],
+                },
+            };
+        }
+        catch (fetchError) {
+            clearTimeout(timeout);
+            throw fetchError;
+        }
+    }
+    catch (error) {
+        return {
+            ok: false,
+            error: {
+                code: LiFiErrorCodes.LIFI_UNREACHABLE,
+                message: error.message || 'LiFi route request failed',
+            },
+        };
+    }
+}
+/**
+ * Track LiFi bridge status
+ * Polls the LiFi API for transaction status
+ */
+export async function trackLiFiStatus(txHash, fromChainId) {
+    try {
+        const response = await fetch(`${LIFI_API_BASE}/status?txHash=${txHash}&fromChain=${fromChainId}`, {
+            method: 'GET',
+            headers: { 'Accept': 'application/json' },
+        });
+        if (!response.ok) {
+            return { status: 'NOT_FOUND' };
+        }
+        const data = await response.json();
+        return {
+            status: data.status || 'NOT_FOUND',
+            substatus: data.substatus,
+            sending: data.sending
+                ? {
+                    txHash: data.sending.txHash,
+                    amount: data.sending.amount,
+                    token: data.sending.token?.symbol || '',
+                }
+                : undefined,
+            receiving: data.receiving
+                ? {
+                    txHash: data.receiving.txHash,
+                    amount: data.receiving.amount,
+                    token: data.receiving.token?.symbol || '',
+                }
+                : undefined,
+            tool: data.tool,
+            lifiExplorerLink: data.lifiExplorerLink,
+        };
+    }
+    catch {
+        return { status: 'NOT_FOUND' };
+    }
+}
+/**
+ * Poll for bridge completion
+ * Returns when bridge is complete or timeout reached
+ *
+ * @param txHash Source chain transaction hash
+ * @param fromChainId Source chain ID
+ * @param maxWaitMs Maximum wait time (default 5 minutes)
+ * @param pollIntervalMs Poll interval (default 10 seconds)
+ */
+export async function waitForBridgeCompletion(txHash, fromChainId, maxWaitMs = 5 * 60 * 1000, pollIntervalMs = 10 * 1000) {
+    const startTime = Date.now();
+    while (Date.now() - startTime < maxWaitMs) {
+        const status = await trackLiFiStatus(txHash, fromChainId);
+        if (status.status === 'DONE' || status.status === 'FAILED') {
+            return status;
+        }
+        // Wait before next poll
+        await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+    }
+    // Timeout - return last known status
+    return await trackLiFiStatus(txHash, fromChainId);
+}
 //# sourceMappingURL=lifi.js.map

@@ -31,21 +31,16 @@ export async function estimatePlanSpend(plan) {
                         { type: 'uint256' },
                     ], action.data);
                     const amountIn = decoded[3];
-                    // For swaps, spend is the amountIn (in token units, not ETH)
-                    // We can't convert to USD without price oracle, so mark as determinable but don't add to totalSpendWei
-                    // For now, we'll use a conservative estimate: assume 1 ETH max per swap
-                    totalSpendWei += BigInt(parseUnits('1', 18)); // Conservative: 1 ETH per swap
+                    // For swaps, spend is amountIn in token units. Use as-is for session spend units.
+                    totalSpendWei += BigInt(amountIn);
                 }
                 catch {
                     // Session mode: wrapped as (maxSpendUnits, innerData)
                     try {
                         const decoded = decodeAbiParameters([{ type: 'uint256' }, { type: 'bytes' }], action.data);
                         const maxSpendUnits = decoded[0];
-                        // maxSpendUnits is in token units (e.g., REDACTED has 6 decimals)
-                        // Convert to wei-equivalent for comparison (rough estimate: 1 unit = 1e-12 ETH)
-                        // Actually, for policy, we should compare against session's maxSpend which is in wei
-                        // So we'll use maxSpendUnits directly as a conservative estimate
-                        totalSpendWei += maxSpendUnits * BigInt(1e12); // Rough conversion (assumes 6-decimal token)
+                        // maxSpendUnits is already in session spend units (bUSDC 6 decimals).
+                        totalSpendWei += maxSpendUnits;
                     }
                     catch {
                         determinable = false;
@@ -57,13 +52,26 @@ export async function estimatePlanSpend(plan) {
                 try {
                     const decoded = decodeAbiParameters([{ type: 'address' }, { type: 'address' }, { type: 'uint256' }], action.data);
                     const amount = decoded[2];
-                    // PULL doesn't spend ETH, but transfers tokens
-                    // For policy, we'll count it conservatively
-                    totalSpendWei += amount * BigInt(1e12); // Rough conversion
+                    // PULL transfers tokens; count in token units
+                    totalSpendWei += amount;
                 }
                 catch {
-                    determinable = false;
+                    // Session mode: wrapped as (maxSpendUnits, innerData)
+                    try {
+                        const decodedWrapped = decodeAbiParameters([{ type: 'uint256' }, { type: 'bytes' }], action.data);
+                        const maxSpendUnits = decodedWrapped[0];
+                        totalSpendWei += maxSpendUnits;
+                    }
+                    catch {
+                        determinable = false;
+                    }
                 }
+            }
+            else if (action.actionType === 1) {
+                // WRAP action (ETH -> WETH)
+                // Spend is already represented in plan.value; no additional spend required.
+                instrumentType = instrumentType || 'swap';
+                // Keep determinable true.
             }
             else if (action.actionType === 3) {
                 // LEND_SUPPLY action (Aave supply)
@@ -77,18 +85,15 @@ export async function estimatePlanSpend(plan) {
                         { type: 'address' },
                     ], action.data);
                     const amount = decoded[2];
-                    // For Aave supply, spend is the amount supplied (in token units)
-                    // Convert to wei-equivalent for policy comparison
-                    // Assume 6 decimals for REDACTED (most common)
-                    totalSpendWei += amount * BigInt(1e12); // Convert 6-decimal token to wei-equivalent
+                    // For Aave supply, spend is the amount supplied (token units)
+                    totalSpendWei += amount;
                 }
                 catch {
                     // Session mode: wrapped as (maxSpendUnits, innerData)
                     try {
                         const decoded = decodeAbiParameters([{ type: 'uint256' }, { type: 'bytes' }], action.data);
                         const maxSpendUnits = decoded[0];
-                        // maxSpendUnits is in token units (e.g., REDACTED has 6 decimals)
-                        totalSpendWei += maxSpendUnits * BigInt(1e12); // Rough conversion (assumes 6-decimal token)
+                        totalSpendWei += maxSpendUnits;
                     }
                     catch {
                         determinable = false;
@@ -97,10 +102,67 @@ export async function estimatePlanSpend(plan) {
             }
             else if (action.actionType === 6) {
                 // PROOF action (perps/events)
-                instrumentType = 'perp'; // Default to perp, could be event
-                // PROOF actions don't spend tokens directly, they're proof-of-execution
-                // For policy, we'll use a conservative estimate
-                totalSpendWei += BigInt(parseUnits('0.1', 18)); // Conservative: 0.1 ETH equivalent
+                // In session mode, proof/event actions may be wrapped as (maxSpendUnits, innerData)
+                instrumentType = 'event';
+                try {
+                    const decodedWrapped = decodeAbiParameters([{ type: 'uint256' }, { type: 'bytes' }], action.data);
+                    const maxSpendUnits = decodedWrapped[0];
+                    totalSpendWei += maxSpendUnits;
+                }
+                catch {
+                    // Raw event format: (bytes32 marketId, uint8 outcome, uint256 amount)
+                    try {
+                        const decoded = decodeAbiParameters([{ type: 'bytes32' }, { type: 'uint8' }, { type: 'uint256' }], action.data);
+                        const amount = decoded[2];
+                        totalSpendWei += amount;
+                    }
+                    catch {
+                        // If it isn't event-shaped, fall back conservatively but remain determinable.
+                        totalSpendWei += BigInt(parseUnits('0.1', 18));
+                    }
+                }
+            }
+            else if (action.actionType === 8) {
+                // EVENT action (session-wrapped or direct)
+                instrumentType = 'event';
+                try {
+                    const decodedWrapped = decodeAbiParameters([{ type: 'uint256' }, { type: 'bytes' }], action.data);
+                    const maxSpendUnits = decodedWrapped[0];
+                    totalSpendWei += maxSpendUnits;
+                }
+                catch {
+                    try {
+                        // Direct router data: (address stakeToken, uint256 amount, bytes adapterData)
+                        const decoded = decodeAbiParameters([{ type: 'address' }, { type: 'uint256' }, { type: 'bytes' }], action.data);
+                        const amount = decoded[1];
+                        totalSpendWei += amount;
+                    }
+                    catch {
+                        totalSpendWei += BigInt(parseUnits('0.1', 18));
+                    }
+                }
+            }
+            else if (action.actionType === 7) {
+                // PERP action: (bytes32 market, bool isLong, uint256 size, uint256 leverage)
+                instrumentType = 'perp';
+                try {
+                    // Session-wrapped format: (maxSpendUnits, innerData)
+                    const decodedWrapped = decodeAbiParameters([{ type: 'uint256' }, { type: 'bytes' }], action.data);
+                    const maxSpendUnits = decodedWrapped[0];
+                    totalSpendWei += maxSpendUnits;
+                }
+                catch {
+                    try {
+                        // Raw perp format (fallback for non-session execution)
+                        const decoded = decodeAbiParameters([{ type: 'bytes32' }, { type: 'bool' }, { type: 'uint256' }, { type: 'uint256' }], action.data);
+                        const size = decoded[2];
+                        totalSpendWei += size;
+                    }
+                    catch {
+                        // Conservative fallback
+                        totalSpendWei += BigInt(parseUnits('0.1', 18));
+                    }
+                }
             }
             else {
                 // Unknown action type
@@ -220,6 +282,181 @@ export async function evaluateSessionPolicy(sessionId, userAddress, plan, allowe
     // All checks passed
     return {
         allowed: true,
+    };
+}
+/**
+ * Default Hyperliquid session limits
+ */
+export const DEFAULT_HYPERLIQUID_LIMITS = {
+    maxOpenInterestUsd: 100000, // $100k max OI per session
+    maxLeveragePerPosition: 25, // 25x max even if market allows more
+    maxPositions: 10, // 10 concurrent positions
+    maxBondSpendHype: BigInt('5000000000000000000000000'), // 5M HYPE max bond
+    maxMarketCreations: 3, // 3 market creations per session
+    leverageBounds: {
+        major: 50, // Full leverage for majors
+        altcoin: 25, // Reduced for altcoins
+        meme: 10, // Very limited for memes
+    },
+};
+/**
+ * Classify asset for leverage bounds
+ */
+export function classifyAssetForLeverage(assetSymbol) {
+    const symbol = assetSymbol.toUpperCase().replace('-USD', '').replace('-PERP', '');
+    const majors = ['BTC', 'ETH'];
+    const memes = ['DOGE', 'SHIB', 'PEPE', 'WIF', 'BONK', 'FLOKI', 'MEME'];
+    if (majors.includes(symbol))
+        return 'major';
+    if (memes.includes(symbol))
+        return 'meme';
+    return 'altcoin';
+}
+/**
+ * Get effective max leverage for an asset based on session limits
+ */
+export function getEffectiveMaxLeverage(assetSymbol, marketMaxLeverage, limits = DEFAULT_HYPERLIQUID_LIMITS) {
+    const assetClass = classifyAssetForLeverage(assetSymbol);
+    const classLimit = limits.leverageBounds[assetClass];
+    return Math.min(marketMaxLeverage, limits.maxLeveragePerPosition, classLimit);
+}
+/**
+ * Evaluate Hyperliquid session policy for a perp operation
+ */
+export async function evaluateHyperliquidPolicy(state, operation, limits = DEFAULT_HYPERLIQUID_LIMITS) {
+    // Check 1: Market creation limits
+    if (operation.type === 'create_market') {
+        if (state.marketsCreated >= limits.maxMarketCreations) {
+            return {
+                allowed: false,
+                code: 'HL_MAX_MARKET_CREATIONS',
+                message: `Maximum market creations reached (${limits.maxMarketCreations})`,
+                details: {
+                    current: state.marketsCreated,
+                    max: limits.maxMarketCreations,
+                },
+            };
+        }
+        // Check bond spend limit
+        const bondAmount = operation.bondAmount || 0n;
+        const newTotalBond = state.bondSpentHype + bondAmount;
+        if (newTotalBond > limits.maxBondSpendHype) {
+            return {
+                allowed: false,
+                code: 'HL_MAX_BOND_SPEND',
+                message: `Bond spend would exceed session limit`,
+                details: {
+                    attemptedBond: bondAmount.toString(),
+                    currentSpent: state.bondSpentHype.toString(),
+                    maxAllowed: limits.maxBondSpendHype.toString(),
+                },
+            };
+        }
+        return { allowed: true };
+    }
+    // Check 2: Position limits for open_position
+    if (operation.type === 'open_position') {
+        // Check max positions
+        if (state.openPositions >= limits.maxPositions) {
+            return {
+                allowed: false,
+                code: 'HL_MAX_POSITIONS',
+                message: `Maximum positions reached (${limits.maxPositions})`,
+                details: {
+                    current: state.openPositions,
+                    max: limits.maxPositions,
+                },
+            };
+        }
+        // Check leverage bounds
+        if (operation.market && operation.leverage) {
+            const effectiveLeverage = getEffectiveMaxLeverage(operation.market, operation.leverage, limits);
+            if (operation.leverage > effectiveLeverage) {
+                return {
+                    allowed: false,
+                    code: 'HL_LEVERAGE_EXCEEDED',
+                    message: `Requested leverage (${operation.leverage}x) exceeds allowed (${effectiveLeverage}x) for ${operation.market}`,
+                    details: {
+                        requested: operation.leverage,
+                        allowed: effectiveLeverage,
+                        assetClass: classifyAssetForLeverage(operation.market),
+                    },
+                };
+            }
+        }
+        // Check OI limits
+        const positionOI = (operation.size || 0) * (operation.leverage || 1);
+        const newTotalOI = state.currentOpenInterestUsd + positionOI;
+        if (newTotalOI > limits.maxOpenInterestUsd) {
+            return {
+                allowed: false,
+                code: 'HL_MAX_OI_EXCEEDED',
+                message: `Position would exceed open interest limit`,
+                details: {
+                    currentOI: state.currentOpenInterestUsd,
+                    positionOI,
+                    newTotalOI,
+                    maxOI: limits.maxOpenInterestUsd,
+                },
+            };
+        }
+        return { allowed: true };
+    }
+    // Check 3: Close position always allowed
+    if (operation.type === 'close_position') {
+        return { allowed: true };
+    }
+    return {
+        allowed: false,
+        code: 'HL_UNKNOWN_OPERATION',
+        message: `Unknown Hyperliquid operation type: ${operation.type}`,
+    };
+}
+/**
+ * Estimate spend for Hyperliquid plan actions
+ */
+export async function estimateHyperliquidSpend(plan) {
+    let bondSpend = 0n;
+    let marginSpend = 0n;
+    let determinable = true;
+    let operationType;
+    const { decodeAbiParameters } = await import('viem');
+    for (const action of plan.actions) {
+        try {
+            // Hyperliquid action types (from hyperliquidExecutor.ts)
+            const HL_ACTION_REGISTER_ASSET = 1;
+            const HL_ACTION_OPEN_POSITION = 2;
+            const HL_ACTION_CLOSE_POSITION = 3;
+            if (action.actionType === HL_ACTION_REGISTER_ASSET) {
+                operationType = 'market_creation';
+                // Bond is in plan.value for HIP-3 creation
+                bondSpend += BigInt(plan.value || '0x0');
+            }
+            else if (action.actionType === HL_ACTION_OPEN_POSITION) {
+                operationType = 'position_open';
+                try {
+                    // Session-wrapped: (maxSpendUnits, innerData)
+                    const decoded = decodeAbiParameters([{ type: 'uint256' }, { type: 'bytes' }], action.data);
+                    marginSpend += decoded[0];
+                }
+                catch {
+                    determinable = false;
+                }
+            }
+            else if (action.actionType === HL_ACTION_CLOSE_POSITION) {
+                operationType = 'position_close';
+                // Close positions don't add spend
+            }
+        }
+        catch {
+            determinable = false;
+        }
+    }
+    return {
+        bondSpend,
+        marginSpend,
+        determinable,
+        operationType,
     };
 }
 //# sourceMappingURL=sessionPolicy.js.map

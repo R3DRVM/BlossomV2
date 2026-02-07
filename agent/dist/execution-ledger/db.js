@@ -653,6 +653,13 @@ export function getExecutionSteps(executionId) {
 }
 export function getSummaryStats() {
     const db = getDatabase();
+    const rawFeeBps = parseInt(process.env.BLOSSOM_FEE_BPS || '25', 10);
+    const feeBps = Math.min(50, Math.max(10, isNaN(rawFeeBps) ? 25 : rawFeeBps));
+    const feeTokenSymbol = process.env.BLOSSOM_FEE_TOKEN_SYMBOL || 'bUSDC';
+    const feeTreasuryAddress = process.env.BLOSSOM_TREASURY_ADDRESS ||
+        process.env.RELAYER_ADDRESS ||
+        process.env.RELAYER_WALLET_ADDRESS ||
+        null;
     // Basic counts
     const totalExec = db.prepare('SELECT COUNT(*) as count FROM executions').get().count;
     const successExec = db.prepare("SELECT COUNT(*) as count FROM executions WHERE status IN ('confirmed', 'finalized')").get().count;
@@ -664,6 +671,7 @@ export function getSummaryStats() {
     WHERE status IN ('confirmed', 'finalized') AND usd_estimate IS NOT NULL
   `).get();
     const totalUsdRouted = usdResult.total;
+    const totalFeeBlsmUsdc = totalUsdRouted * (feeBps / 10000);
     // Relayed transactions (have relayer_address set)
     const relayedCount = db.prepare(`
     SELECT COUNT(*) as count FROM executions WHERE relayer_address IS NOT NULL
@@ -744,6 +752,10 @@ export function getSummaryStats() {
         successRateAdjusted,
         uniqueWallets,
         totalUsdRouted,
+        totalFeeBlsmUsdc: Math.round(totalFeeBlsmUsdc * 100) / 100,
+        feeBps,
+        feeTokenSymbol,
+        feeTreasuryAddress,
         relayedTxCount: relayedCount,
         chainsActive,
         byKind,
@@ -1328,5 +1340,90 @@ export function getDatabaseIdentityHash() {
     }
     // SQLite: return fixed identifier
     return 'sqlite-local';
+}
+/**
+ * Track ERC-8004 feedback locally
+ * Returns the feedback ID
+ */
+export function trackERC8004Feedback(params) {
+    const db = getDatabase();
+    const id = randomUUID();
+    const now = Math.floor(Date.now() / 1000);
+    db.prepare(`
+    INSERT INTO erc8004_feedback (
+      id, agent_id, category, score, execution_id, intent_id,
+      amount_usd, submitted_onchain, metadata_json, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+  `).run(id, params.agentId, params.category, params.score, params.executionId ?? null, params.intentId ?? null, params.amountUsd ?? null, params.metadata ? JSON.stringify(params.metadata) : null, now);
+    return id;
+}
+/**
+ * Mark feedback as submitted on-chain
+ */
+export function markERC8004FeedbackSubmitted(id, txHash) {
+    const db = getDatabase();
+    db.prepare(`
+    UPDATE erc8004_feedback
+    SET submitted_onchain = 1, onchain_tx_hash = ?
+    WHERE id = ?
+  `).run(txHash, id);
+}
+/**
+ * Get feedback entries for an agent
+ */
+export function getERC8004Feedback(params) {
+    const db = getDatabase();
+    const limit = params?.limit ?? 100;
+    let query = 'SELECT * FROM erc8004_feedback WHERE 1=1';
+    const values = [];
+    if (params?.agentId) {
+        query += ' AND agent_id = ?';
+        values.push(params.agentId);
+    }
+    if (params?.category) {
+        query += ' AND category = ?';
+        values.push(params.category);
+    }
+    query += ' ORDER BY created_at DESC LIMIT ?';
+    values.push(limit);
+    return db.prepare(query).all(...values);
+}
+/**
+ * Get aggregated feedback stats for an agent
+ */
+export function getERC8004FeedbackStats(agentId) {
+    const db = getDatabase();
+    // Total count and average
+    const totals = db.prepare(`
+    SELECT COUNT(*) as count, AVG(score) as avgScore
+    FROM erc8004_feedback
+    WHERE agent_id = ?
+  `).get(agentId);
+    // By category
+    const byCategoryRows = db.prepare(`
+    SELECT category, COUNT(*) as count, AVG(score) as avgScore
+    FROM erc8004_feedback
+    WHERE agent_id = ?
+    GROUP BY category
+  `).all(agentId);
+    const byCategory = {};
+    for (const row of byCategoryRows) {
+        byCategory[row.category] = {
+            count: row.count,
+            avgScore: Math.round(row.avgScore * 100) / 100,
+        };
+    }
+    // Submitted on-chain count
+    const submitted = db.prepare(`
+    SELECT COUNT(*) as count
+    FROM erc8004_feedback
+    WHERE agent_id = ? AND submitted_onchain = 1
+  `).get(agentId);
+    return {
+        totalCount: totals.count,
+        averageScore: totals.avgScore !== null ? Math.round(totals.avgScore * 100) / 100 : 0,
+        byCategory,
+        submittedOnchain: submitted.count,
+    };
 }
 //# sourceMappingURL=db.js.map

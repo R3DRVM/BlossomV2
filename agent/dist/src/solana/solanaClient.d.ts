@@ -24,8 +24,9 @@ export declare class SolanaClient {
     constructor(config?: SolanaClientConfig);
     /**
      * Make an RPC call to Solana
+     * Public for advanced use cases (token accounts, etc.)
      */
-    private rpcCall;
+    rpcCall<T>(method: string, params?: any[]): Promise<T>;
     /**
      * Get SOL balance for a public key
      */

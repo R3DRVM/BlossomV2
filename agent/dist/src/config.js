@@ -100,6 +100,9 @@ export const UNISWAP_V3_ADAPTER_ADDRESS = process.env.UNISWAP_V3_ADAPTER_ADDRESS
 export const WETH_WRAP_ADAPTER_ADDRESS = process.env.WETH_WRAP_ADAPTER_ADDRESS;
 export const REDACTED_ADDRESS_SEPOLIA = process.env.REDACTED_ADDRESS_SEPOLIA;
 export const WETH_ADDRESS_SEPOLIA = process.env.WETH_ADDRESS_SEPOLIA;
+// Solana devnet config (for cross-chain intents)
+export const SOLANA_RPC_URL = process.env.SOLANA_RPC_URL || 'https://api.devnet.solana.com';
+export const SOLANA_PROGRAM_ID = process.env.SOLANA_PROGRAM_ID;
 // Demo swap venue (deterministic for investor demos)
 // Default addresses for Sepolia (safe fallback)
 const DEFAULT_DEMO_TOKENS = {
@@ -109,8 +112,11 @@ const DEFAULT_DEMO_TOKENS = {
     }
 };
 // Use env vars if set, otherwise fallback to defaults for Sepolia
-export const DEMO_REDACTED_ADDRESS = process.env.DEMO_REDACTED_ADDRESS ||
+export const DEMO_BUSDC_ADDRESS = process.env.DEMO_BUSDC_ADDRESS ||
+    process.env.DEMO_REDACTED_ADDRESS ||
     (ETH_TESTNET_CHAIN_ID === 11155111 ? DEFAULT_DEMO_TOKENS.sepolia.usdc : undefined);
+// Backwards-compatible alias
+export const DEMO_REDACTED_ADDRESS = DEMO_BUSDC_ADDRESS;
 export const DEMO_WETH_ADDRESS = process.env.DEMO_WETH_ADDRESS ||
     (ETH_TESTNET_CHAIN_ID === 11155111 ? DEFAULT_DEMO_TOKENS.sepolia.weth : undefined);
 export const DEMO_SWAP_ROUTER_ADDRESS = process.env.DEMO_SWAP_ROUTER_ADDRESS;
@@ -271,5 +277,185 @@ export async function validateEthTestnetConfig() {
         throw new Error(`ETH testnet configuration validation failed:\n${errors.map(e => `  - ${e}`).join('\n')}\n` +
             `Please check your .env file and ensure all addresses are correct Sepolia contract addresses.`);
     }
+}
+// ============================================
+// Hyperliquid Testnet Configuration
+// ============================================
+// Enable/disable Hyperliquid integration
+export const HYPERLIQUID_ENABLED = process.env.HYPERLIQUID_ENABLED === 'true';
+// Hyperliquid Testnet Network Configuration
+export const HYPERLIQUID_TESTNET_RPC_URL = process.env.HYPERLIQUID_TESTNET_RPC_URL || 'https://api.hyperliquid-testnet.xyz/evm';
+export const HYPERLIQUID_TESTNET_CHAIN_ID = parseInt(process.env.HYPERLIQUID_TESTNET_CHAIN_ID || '998', 10);
+// Hyperliquid API Endpoints
+export const HYPERLIQUID_EXCHANGE_URL = process.env.HYPERLIQUID_EXCHANGE_URL || 'https://api.hyperliquid-testnet.xyz/exchange';
+export const HYPERLIQUID_INFO_URL = process.env.HYPERLIQUID_INFO_URL || 'https://api.hyperliquid-testnet.xyz/info';
+// HIP-3 Builder Configuration (SENSITIVE - use secure key vault in production)
+// Builder EOA address that will sign market creation transactions
+export const HYPERLIQUID_BUILDER_ADDRESS = process.env.HYPERLIQUID_BUILDER_ADDRESS;
+// Builder private key - NEVER commit to git, use AWS KMS/HashiCorp Vault in production
+// This key is used to sign HIP-3 market creation requests
+export const HYPERLIQUID_BUILDER_PRIVATE_KEY = process.env.HYPERLIQUID_BUILDER_PRIVATE_KEY;
+// Mock HYPE token address on testnet (for bonding)
+export const HYPERLIQUID_MOCK_HYPE_ADDRESS = process.env.HYPERLIQUID_MOCK_HYPE_ADDRESS;
+// Hyperliquid Rate Limits (per-endpoint)
+export const HYPERLIQUID_RATE_LIMIT_MARKET_CREATION = parseInt(process.env.HYPERLIQUID_RATE_LIMIT_MARKET_CREATION || '5', 10); // Max market creations per day
+export const HYPERLIQUID_RATE_LIMIT_POSITION = parseInt(process.env.HYPERLIQUID_RATE_LIMIT_POSITION || '20', 10); // Max position operations per minute
+export const HYPERLIQUID_RATE_LIMIT_QUOTE = parseInt(process.env.HYPERLIQUID_RATE_LIMIT_QUOTE || '10', 10); // Max quote requests per second
+// HIP-3 Default Parameters
+export const HYPERLIQUID_DEFAULT_MAX_LEVERAGE = parseInt(process.env.HYPERLIQUID_DEFAULT_MAX_LEVERAGE || '20', 10);
+export const HYPERLIQUID_DEFAULT_MAKER_FEE_BPS = parseInt(process.env.HYPERLIQUID_DEFAULT_MAKER_FEE_BPS || '2', 10);
+export const HYPERLIQUID_DEFAULT_TAKER_FEE_BPS = parseInt(process.env.HYPERLIQUID_DEFAULT_TAKER_FEE_BPS || '5', 10);
+// Minimum bond amount in HYPE (1M HYPE = 1_000_000 * 10^18)
+export const HYPERLIQUID_MIN_BOND_HYPE = BigInt(process.env.HYPERLIQUID_MIN_BOND_HYPE || '1000000000000000000000000');
+/**
+ * Require Hyperliquid configuration when using HIP-3 features
+ * Throws a clear error if required variables are missing
+ */
+export function requireHyperliquidConfig() {
+    if (!HYPERLIQUID_ENABLED) {
+        throw new Error('Hyperliquid integration is not enabled. Set HYPERLIQUID_ENABLED=true to enable.');
+    }
+    const missing = [];
+    if (!HYPERLIQUID_BUILDER_ADDRESS) {
+        missing.push('HYPERLIQUID_BUILDER_ADDRESS');
+    }
+    // Note: Builder private key check is intentionally loose for testnet
+    // In production, this should check for secure key vault configuration
+    if (missing.length > 0) {
+        throw new Error(`Hyperliquid configuration requires the following environment variables: ${missing.join(', ')}. ` +
+            `Please set them in your .env file or environment.`);
+    }
+}
+/**
+ * Validate Hyperliquid configuration
+ * Checks builder address format and API connectivity
+ */
+export async function validateHyperliquidConfig() {
+    if (!HYPERLIQUID_ENABLED) {
+        return; // Not required if disabled
+    }
+    const errors = [];
+    // Validate chain ID
+    if (HYPERLIQUID_TESTNET_CHAIN_ID !== 998) {
+        errors.push(`HYPERLIQUID_TESTNET_CHAIN_ID should be 998, got ${HYPERLIQUID_TESTNET_CHAIN_ID}`);
+    }
+    // Validate builder address format
+    if (HYPERLIQUID_BUILDER_ADDRESS && !/^0x[a-fA-F0-9]{40}$/.test(HYPERLIQUID_BUILDER_ADDRESS)) {
+        errors.push(`HYPERLIQUID_BUILDER_ADDRESS has invalid format: ${HYPERLIQUID_BUILDER_ADDRESS}`);
+    }
+    // Validate Mock HYPE address format (if set)
+    if (HYPERLIQUID_MOCK_HYPE_ADDRESS && !/^0x[a-fA-F0-9]{40}$/.test(HYPERLIQUID_MOCK_HYPE_ADDRESS)) {
+        errors.push(`HYPERLIQUID_MOCK_HYPE_ADDRESS has invalid format: ${HYPERLIQUID_MOCK_HYPE_ADDRESS}`);
+    }
+    // Validate API URL format
+    if (!HYPERLIQUID_EXCHANGE_URL.startsWith('http')) {
+        errors.push(`HYPERLIQUID_EXCHANGE_URL must be a valid HTTP/HTTPS URL`);
+    }
+    if (!HYPERLIQUID_INFO_URL.startsWith('http')) {
+        errors.push(`HYPERLIQUID_INFO_URL must be a valid HTTP/HTTPS URL`);
+    }
+    // Validate rate limits are positive
+    if (HYPERLIQUID_RATE_LIMIT_MARKET_CREATION <= 0) {
+        errors.push('HYPERLIQUID_RATE_LIMIT_MARKET_CREATION must be positive');
+    }
+    if (errors.length > 0) {
+        throw new Error(`Hyperliquid configuration validation failed:\n${errors.map(e => `  - ${e}`).join('\n')}`);
+    }
+    // Check API connectivity (optional, warn but don't fail)
+    try {
+        const response = await fetch(HYPERLIQUID_INFO_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: 'meta' }),
+            signal: AbortSignal.timeout(5000),
+        });
+        if (!response.ok) {
+            console.warn(`⚠️  [config] Hyperliquid API returned ${response.status} - connectivity may be limited`);
+        }
+        else {
+            console.log(`✅ [config] Hyperliquid testnet API accessible`);
+        }
+    }
+    catch (error) {
+        console.warn(`⚠️  [config] Could not verify Hyperliquid API connectivity: ${error.message}`);
+    }
+}
+// ============================================
+// ERC-8004 Trustless AI Agents Configuration
+// ============================================
+// Enable/disable ERC-8004 integration
+export const ERC8004_ENABLED = process.env.ERC8004_ENABLED === 'true';
+// Registry addresses (Sepolia testnet)
+export const ERC8004_IDENTITY_REGISTRY_SEPOLIA = process.env
+    .ERC8004_IDENTITY_REGISTRY_SEPOLIA;
+export const ERC8004_REPUTATION_REGISTRY_SEPOLIA = process.env
+    .ERC8004_REPUTATION_REGISTRY_SEPOLIA;
+export const ERC8004_VALIDATION_REGISTRY_SEPOLIA = process.env
+    .ERC8004_VALIDATION_REGISTRY_SEPOLIA;
+// Agent identity (set after registration)
+export const ERC8004_AGENT_ID = process.env.ERC8004_AGENT_ID
+    ? BigInt(process.env.ERC8004_AGENT_ID)
+    : undefined;
+// Agent URI - points to ERC-8004 registration JSON
+export const ERC8004_AGENT_URI = process.env.ERC8004_AGENT_URI ||
+    'https://api.blossom.onl/.well-known/agent-registration.json';
+// Automatic feedback submission for significant trades
+export const ERC8004_AUTO_FEEDBACK = process.env.ERC8004_AUTO_FEEDBACK === 'true';
+// Minimum USD amount to trigger automatic feedback
+const rawErc8004FeedbackMinUsd = parseInt(process.env.ERC8004_FEEDBACK_MIN_USD || '100', 10);
+export const ERC8004_FEEDBACK_MIN_USD = isNaN(rawErc8004FeedbackMinUsd)
+    ? 100
+    : rawErc8004FeedbackMinUsd;
+// Require capability validation before execution
+export const ERC8004_REQUIRE_VALIDATION = process.env.ERC8004_REQUIRE_VALIDATION === 'true';
+/**
+ * Require ERC-8004 configuration when using ERC-8004 features
+ * Throws a clear error if required variables are missing
+ */
+export function requireERC8004Config() {
+    if (!ERC8004_ENABLED) {
+        throw new Error('ERC-8004 integration is not enabled. Set ERC8004_ENABLED=true to enable.');
+    }
+    const missing = [];
+    // Agent ID is required for most operations
+    if (ERC8004_AGENT_ID === undefined) {
+        missing.push('ERC8004_AGENT_ID');
+    }
+    if (missing.length > 0) {
+        throw new Error(`ERC-8004 configuration requires the following environment variables: ${missing.join(', ')}. ` +
+            `Run the registration script to obtain an agent ID.`);
+    }
+}
+/**
+ * Validate ERC-8004 configuration
+ * Checks address formats and configuration values
+ */
+export async function validateERC8004Config() {
+    if (!ERC8004_ENABLED) {
+        return; // Not required if disabled
+    }
+    const errors = [];
+    const addressRegex = /^0x[a-fA-F0-9]{40}$/;
+    // Validate registry addresses format (if set)
+    if (ERC8004_IDENTITY_REGISTRY_SEPOLIA &&
+        !addressRegex.test(ERC8004_IDENTITY_REGISTRY_SEPOLIA)) {
+        errors.push(`ERC8004_IDENTITY_REGISTRY_SEPOLIA has invalid format: ${ERC8004_IDENTITY_REGISTRY_SEPOLIA}`);
+    }
+    if (ERC8004_REPUTATION_REGISTRY_SEPOLIA &&
+        !addressRegex.test(ERC8004_REPUTATION_REGISTRY_SEPOLIA)) {
+        errors.push(`ERC8004_REPUTATION_REGISTRY_SEPOLIA has invalid format: ${ERC8004_REPUTATION_REGISTRY_SEPOLIA}`);
+    }
+    if (ERC8004_VALIDATION_REGISTRY_SEPOLIA &&
+        !addressRegex.test(ERC8004_VALIDATION_REGISTRY_SEPOLIA)) {
+        errors.push(`ERC8004_VALIDATION_REGISTRY_SEPOLIA has invalid format: ${ERC8004_VALIDATION_REGISTRY_SEPOLIA}`);
+    }
+    // Validate agent URI format
+    if (ERC8004_AGENT_URI && !ERC8004_AGENT_URI.startsWith('http')) {
+        errors.push(`ERC8004_AGENT_URI must be a valid HTTP/HTTPS URL`);
+    }
+    if (errors.length > 0) {
+        throw new Error(`ERC-8004 configuration validation failed:\n${errors.map((e) => `  - ${e}`).join('\n')}`);
+    }
+    console.log(`✅ [config] ERC-8004 configuration validated`);
 }
 //# sourceMappingURL=config.js.map

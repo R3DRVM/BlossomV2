@@ -1,7 +1,5 @@
-/**
- * Price Service
- * Fetches real market prices with safe fallbacks
- */
+import { getPythPriceForSymbol } from '../solana/pyth';
+import { getJupiterPriceUsd } from '../solana/jupiter';
 // In-memory cache
 const priceCache = new Map();
 // Static fallback prices
@@ -23,6 +21,35 @@ export async function getPrice(symbol) {
     const cached = priceCache.get(symbol);
     if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
         return cached;
+    }
+    // Prefer Pyth/Jupiter for Solana-native pricing when available
+    if (symbol === 'SOL' || symbol === 'ETH' || symbol === 'REDACTED') {
+        const pythSymbol = symbol === 'REDACTED' ? 'USDC' : symbol;
+        const pythPrice = await getPythPriceForSymbol(pythSymbol);
+        if (typeof pythPrice === 'number' && pythPrice > 0) {
+            const snapshot = {
+                symbol,
+                priceUsd: pythPrice,
+                source: 'pyth',
+                fetchedAt: Date.now(),
+            };
+            priceCache.set(symbol, snapshot);
+            return snapshot;
+        }
+        if (symbol === 'SOL' || symbol === 'REDACTED') {
+            const jupSymbol = symbol === 'REDACTED' ? 'USDC' : 'SOL';
+            const jupPrice = await getJupiterPriceUsd(jupSymbol);
+            if (typeof jupPrice === 'number' && jupPrice > 0) {
+                const snapshot = {
+                    symbol,
+                    priceUsd: jupPrice,
+                    source: 'jupiter',
+                    fetchedAt: Date.now(),
+                };
+                priceCache.set(symbol, snapshot);
+                return snapshot;
+            }
+        }
     }
     // Try to fetch from CoinGecko
     try {

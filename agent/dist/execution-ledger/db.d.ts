@@ -315,6 +315,10 @@ export interface StatsSummary {
     successRateAdjusted: number;
     uniqueWallets: number;
     totalUsdRouted: number;
+    totalFeeBlsmUsdc: number;
+    feeBps: number;
+    feeTokenSymbol: string;
+    feeTreasuryAddress: string | null;
     relayedTxCount: number;
     chainsActive: string[];
     byKind: {
@@ -712,4 +716,55 @@ export declare function getSummaryStatsWithIntentsAsync(): Promise<StatsSummary 
  * Returns a safe hash of non-secret DB identifiers (NEVER includes passwords)
  */
 export declare function getDatabaseIdentityHash(): string;
+export type ERC8004FeedbackCategory = 'swap_execution' | 'perp_execution' | 'lend_execution' | 'bridge_execution' | 'event_execution' | 'general';
+export interface ERC8004Feedback {
+    id: string;
+    agent_id: string;
+    category: ERC8004FeedbackCategory;
+    score: number;
+    execution_id?: string;
+    intent_id?: string;
+    amount_usd?: number;
+    submitted_onchain: number;
+    onchain_tx_hash?: string;
+    metadata_json?: string;
+    created_at: number;
+}
+/**
+ * Track ERC-8004 feedback locally
+ * Returns the feedback ID
+ */
+export declare function trackERC8004Feedback(params: {
+    agentId: string;
+    category: ERC8004FeedbackCategory;
+    score: number;
+    executionId?: string;
+    intentId?: string;
+    amountUsd?: number;
+    metadata?: Record<string, any>;
+}): string;
+/**
+ * Mark feedback as submitted on-chain
+ */
+export declare function markERC8004FeedbackSubmitted(id: string, txHash: string): void;
+/**
+ * Get feedback entries for an agent
+ */
+export declare function getERC8004Feedback(params?: {
+    agentId?: string;
+    category?: ERC8004FeedbackCategory;
+    limit?: number;
+}): ERC8004Feedback[];
+/**
+ * Get aggregated feedback stats for an agent
+ */
+export declare function getERC8004FeedbackStats(agentId: string): {
+    totalCount: number;
+    averageScore: number;
+    byCategory: Record<string, {
+        count: number;
+        avgScore: number;
+    }>;
+    submittedOnchain: number;
+};
 //# sourceMappingURL=db.d.ts.map

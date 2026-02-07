@@ -10,8 +10,14 @@
  * 6. Confirm: Wait for confirmation and update ledger
  *
  * This orchestrator is honest about what's implemented vs. not.
+ *
+ * Task 3 Enhancements:
+ * - Advanced intent parsing (DCA, leverage, yield optimization, multi-step)
+ * - Market data validation before execution
+ * - Retry logic with exponential backoff
+ * - Rate limiting for external API calls
  */
-type IntentKind = 'perp' | 'deposit' | 'swap' | 'bridge' | 'unknown';
+type IntentKind = 'perp' | 'perp_create' | 'deposit' | 'swap' | 'bridge' | 'event' | 'unknown';
 type IntentFailureStage = 'plan' | 'route' | 'execute' | 'confirm' | 'quote';
 export type ChainTarget = 'ethereum' | 'solana' | 'both';
 export interface ParsedIntent {
@@ -50,8 +56,25 @@ export interface IntentExecutionResult {
 }
 /**
  * Parse a natural language intent into structured format
+ *
+ * Task 3 Enhancement: Now supports advanced intent parsing for:
+ * - DCA (Dollar Cost Averaging): "DCA $1000 into ETH over 5 days"
+ * - Leverage positions: "Open 10x long on BTC with $500"
+ * - Yield optimization: "Find best yield for $10k USDC"
+ * - Multi-step strategies: "Swap half to ETH, deposit rest to Aave"
+ *
+ * Enhanced with:
+ * - Typo correction for asset names
+ * - Multiple number formats ($1k, 1,000, etc.)
+ * - Natural language variations
+ * - Graceful fallback for ambiguous intents
  */
 export declare function parseIntent(intentText: string): ParsedIntent;
+/**
+ * Infer chain from asset symbol
+ * Returns undefined if asset is multi-chain (e.g., USDC) or unknown
+ */
+export declare function inferChainFromAsset(asset: string): string | undefined;
 /**
  * Determine execution route for a parsed intent
  */
@@ -76,6 +99,9 @@ export declare function runIntent(intentText: string, options?: {
     intentId?: string;
     dryRun?: boolean;
     metadata?: Record<string, any>;
+    sessionId?: string;
+    skipPathValidation?: boolean;
+    confirmedIntentId?: string;
 }): Promise<IntentExecutionResult>;
 /**
  * Execute a previously planned intent by ID

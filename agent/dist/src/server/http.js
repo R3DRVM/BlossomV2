@@ -8,6 +8,7 @@ import { config } from 'dotenv';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { createHash } from 'crypto';
+import * as Sentry from '@sentry/node';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const agentDir = resolve(__dirname, '../..');
@@ -35,21 +36,45 @@ if (loadedEnvFile) {
 else {
     console.log(`⚠️  No .env file found (using system environment variables)`);
 }
+const SENTRY_DSN = process.env.SENTRY_DSN || process.env.SENTRY_DSN_BACKEND;
+const SENTRY_ENV = process.env.SENTRY_ENV || process.env.VERCEL_ENV || process.env.NODE_ENV || 'development';
+const SENTRY_RELEASE = process.env.VERCEL_GIT_COMMIT_SHA
+    ? `agent@${process.env.VERCEL_GIT_COMMIT_SHA.slice(0, 7)}`
+    : undefined;
+const SENTRY_ENABLED = !!SENTRY_DSN;
+if (SENTRY_ENABLED) {
+    Sentry.init({
+        dsn: SENTRY_DSN,
+        environment: SENTRY_ENV,
+        release: SENTRY_RELEASE,
+        tracesSampleRate: Number(process.env.SENTRY_TRACES_SAMPLE_RATE ?? 0.1),
+        sendDefaultPii: false,
+    });
+    console.log(`📡 Sentry enabled (${SENTRY_ENV})`);
+}
 import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
+import rateLimit from 'express-rate-limit';
+import { z } from 'zod';
 import { validateActions, buildBlossomPrompts } from '../utils/actionParser';
 import { callLlm } from '../services/llmClient';
 import * as perpsSim from '../plugins/perps-sim';
 import * as defiSim from '../plugins/defi-sim';
+import { verifyRequestAuth, getAuthMode } from '../auth';
 // Allowed CORS origins for MVP
 const ALLOWED_ORIGINS = [
     'http://localhost:5173',
     'http://127.0.0.1:5173',
     'https://blossom.onl',
     'https://www.blossom.onl',
+    'https://app.blossom.onl',
+    'https://api.blossom.onl',
     // Preview/staging subdomains
     /^https:\/\/.*\.blossom\.onl$/,
+    // Vercel preview deployments
+    /^https:\/\/blossom-v2.*\.vercel\.app$/,
+    /^https:\/\/.*-redrums-projects.*\.vercel\.app$/,
 ];
 import * as eventSim from '../plugins/event-sim';
 import { resetAllSims, getPortfolioSnapshot } from '../services/state';
@@ -58,7 +83,64 @@ import { logExecutionArtifact, getExecutionArtifacts } from '../utils/executionL
 import { validateAccessCode, initializeAccessGate, getAllAccessCodes, createAccessCode, checkAccess } from '../utils/accessGate';
 import { logEvent, hashAddress } from '../telemetry/logger';
 import { waitForReceipt } from '../executors/evmReceipt';
+import { checkAndRecordMint } from '../utils/mintLimiter';
+import { postStatsEvent } from '../stats';
+// State machine imports for intent path isolation
+import { IntentState, classifyIntentPath, getContext, updateContext, processConfirmation, isConfirmation, isCancellation, resetContextState, logTransition, } from '../intent/intentStateMachine';
 const app = express();
+// Rate limits for high-risk execution endpoints
+const executeRateLimit = rateLimit({
+    windowMs: 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => {
+        const wallet = req.headers['x-wallet-address'];
+        if (Array.isArray(wallet))
+            return wallet[0];
+        return wallet || req.ip;
+    },
+});
+const sessionRateLimit = rateLimit({
+    windowMs: 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => {
+        const wallet = req.headers['x-wallet-address'];
+        if (Array.isArray(wallet))
+            return wallet[0];
+        return wallet || req.ip;
+    },
+});
+// Rate limit for mint endpoint - prevent DoS attacks on token minting
+const mintRateLimit = rateLimit({
+    windowMs: 60 * 1000, // 1 minute window
+    max: 5, // Max 5 mint requests per minute per wallet
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => {
+        const wallet = req.headers['x-wallet-address'];
+        if (Array.isArray(wallet))
+            return wallet[0];
+        return wallet || req.ip;
+    },
+});
+// SECURITY FIX: Global rate limit to prevent distributed DoS across endpoints
+// This catches attackers who spread requests across multiple endpoints
+const globalRateLimit = rateLimit({
+    windowMs: 60 * 1000, // 1 minute window
+    max: 100, // 100 requests per minute per IP (generous but protective)
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: {
+        ok: false,
+        error: 'Too many requests. Please slow down.',
+        errorCode: 'RATE_LIMIT_EXCEEDED',
+    },
+    // Skip rate limiting for health checks
+    skip: (req) => req.path === '/health' || req.path === '/api/health' || req.path === '/api/rpc/health',
+});
 // Configure CORS with specific origins for security
 app.use(cors({
     origin: (origin, callback) => {
@@ -88,8 +170,47 @@ app.use(cors({
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'X-Ledger-Secret', 'X-Access-Code', 'X-Wallet-Address', 'x-correlation-id'],
 }));
+// SECURITY: Apply global rate limit before other middleware
+app.use(globalRateLimit);
 app.use(express.json());
 app.use(cookieParser());
+// Auth gate for execution endpoints (AUTH_MODE=siwe)
+async function requireAuth(req, res, next) {
+    const result = await verifyRequestAuth(req);
+    if (!result.ok) {
+        return res.status(401).json({
+            ok: false,
+            error: 'Unauthorized',
+            reason: result.reason || 'invalid_signature',
+            authMode: getAuthMode(),
+        });
+    }
+    return next();
+}
+// Apply rate limits to execution/session routes
+app.use('/api/execute', executeRateLimit);
+app.use('/api/session', sessionRateLimit);
+// Minimal request validation schemas
+const ExecutePrepareSchema = z.object({
+    draftId: z.string().min(1).optional(),
+    userAddress: z.string().regex(/^0x[a-fA-F0-9]{40}$/).optional(),
+    authMode: z.enum(['direct', 'session']).optional(),
+    executionRequest: z.object({ kind: z.string() }).passthrough().optional(),
+    executionIntent: z.any().optional(),
+}).passthrough();
+const ExecuteRelayedSchema = z.object({
+    draftId: z.string().min(1),
+    userAddress: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
+    sessionId: z.string().min(1),
+    plan: z.object({ actions: z.array(z.any()).optional() }).passthrough(),
+}).passthrough();
+const ExecuteSubmitSchema = z.object({
+    draftId: z.string().min(1),
+    txHash: z.string().min(1),
+    userAddress: z.string().regex(/^0x[a-fA-F0-9]{40}$/).optional(),
+    strategy: z.any().optional(),
+    executionRequest: z.any().optional(),
+}).passthrough();
 // ============================================
 // TELEMETRY-ONLY MODE: Block sensitive endpoints
 // ============================================
@@ -611,10 +732,54 @@ async function applyDeterministicFallback(userMessage, isSwapPrompt, isDefiPromp
     // Normalize input before parsing
     const normalizedMessage = normalizeUserInput(userMessage);
     const lowerMessage = normalizedMessage.toLowerCase();
+    // Detect target chain from user message
+    // Priority: explicit "solana" mention > SOL token detection > default to sepolia
+    const isSolanaIntent = lowerMessage.includes('solana') ||
+        lowerMessage.includes(' sol ') ||
+        lowerMessage.match(/\bsol\b/) !== null ||
+        lowerMessage.match(/\bwsol\b/) !== null ||
+        lowerMessage.match(/swap.*sol/i) !== null ||
+        lowerMessage.match(/buy.*sol/i) !== null ||
+        lowerMessage.match(/sell.*sol/i) !== null;
+    const targetChain = isSolanaIntent ? 'solana' : 'sepolia';
+    const chainDisplay = isSolanaIntent ? 'Solana Devnet' : 'Sepolia';
     if (isEventPrompt) {
         // Extract event details
-        const stakeMatch = userMessage.match(/\$(\d+)/) || userMessage.match(/(\d+)\s*(usd|dollar)/i);
+        const stakeMatch = userMessage.match(/\$(\d+)/) || userMessage.match(/(\d+)\s*(usd|usdc|dollar)/i);
         const stakeUsd = stakeMatch ? parseFloat(stakeMatch[1]) : 5;
+        // Check for price level betting: "BTC above 70k" or "ETH below 2000"
+        const priceLevelMatch = lowerMessage.match(/(btc|bitcoin|eth|ethereum|sol|solana)\s*(?:will\s+be\s*)?(?:above|below|over|under|at)\s*\$?(\d+(?:\.\d+)?)\s*(k|m)?/i);
+        if (priceLevelMatch) {
+            // Price level betting
+            const asset = priceLevelMatch[1].toUpperCase().replace(/BITCOIN/i, 'BTC').replace(/ETHEREUM/i, 'ETH').replace(/SOLANA/i, 'SOL');
+            const direction = lowerMessage.includes('above') || lowerMessage.includes('over') ? 'above' : 'below';
+            let priceLevel = parseFloat(priceLevelMatch[2]);
+            const multiplier = priceLevelMatch[3]?.toLowerCase();
+            if (multiplier === 'k')
+                priceLevel *= 1000;
+            if (multiplier === 'm')
+                priceLevel *= 1000000;
+            const marketTitle = `${asset} ${direction} $${priceLevel.toLocaleString()}`;
+            return {
+                assistantMessage: `I'll place a $${stakeUsd} bet that ${asset} will be ${direction} $${priceLevel.toLocaleString()}. This is a prediction market bet.`,
+                actions: [],
+                executionRequest: {
+                    kind: 'event',
+                    chain: targetChain,
+                    marketId: `${asset}_PRICE_${direction.toUpperCase()}_${priceLevel}`,
+                    outcome: 'YES',
+                    stakeUsd,
+                    price: 0.50, // Default 50/50 for price prediction
+                    metadata: {
+                        type: 'price_level',
+                        asset,
+                        direction,
+                        priceLevel,
+                    },
+                },
+            };
+        }
+        // Standard yes/no event betting (Fed rate cut, etc.)
         const outcome = lowerMessage.includes('yes') ? 'YES' : 'NO';
         // Find matching market
         const { findEventMarketByKeyword } = await import('../quotes/eventMarkets');
@@ -625,7 +790,7 @@ async function applyDeterministicFallback(userMessage, isSwapPrompt, isDefiPromp
             actions: [],
             executionRequest: {
                 kind: 'event',
-                chain: 'sepolia',
+                chain: targetChain,
                 marketId: market?.id || 'FED_CUTS_MAR_2025',
                 outcome: outcome,
                 stakeUsd,
@@ -639,10 +804,13 @@ async function applyDeterministicFallback(userMessage, isSwapPrompt, isDefiPromp
         // Support decimal leverage like "5.5x" or "2.5x"
         const leverageMatch = userMessage.match(/(\d+(?:\.\d+)?)x/i);
         const riskMatch = userMessage.match(/(\d+)%\s*risk/i) || userMessage.match(/risk.*?(\d+)%/i);
+        const marginMatch = userMessage.match(/(?:with|using)\s+\$?(\d+(?:,\d{3})*(?:\.\d+)?)\s*(?:usd\s*)?(?:margin|stake|collateral|size)/i) ||
+            userMessage.match(/\$?(\d+(?:,\d{3})*(?:\.\d+)?)\s*(?:usd\s*)?(?:margin|stake|collateral|size)/i);
         const sideMatch = lowerMessage.match(/(long|short)/);
         const asset = assetMatch ? assetMatch[1].toUpperCase() : 'ETH';
         let leverage = leverageMatch ? parseFloat(leverageMatch[1]) : 2;
-        const riskPct = riskMatch ? parseFloat(riskMatch[1]) : 2;
+        const requestedMarginUsd = marginMatch ? parseFloat(marginMatch[1].replace(/,/g, '')) : undefined;
+        let riskPct = riskMatch ? parseFloat(riskMatch[1]) : 2;
         const side = sideMatch ? sideMatch[1] : 'long';
         // P0 Fix: Check if user is asking for an execution plan (not immediate execution)
         const isPlanRequest = /show\s*(me\s*)?(the\s+)?execution\s*plan|execution\s*plan|plan\s*across\s*venues|compare\s*venues/i.test(userMessage);
@@ -670,7 +838,11 @@ async function applyDeterministicFallback(userMessage, isSwapPrompt, isDefiPromp
         }
         // Calculate margin based on risk and account value
         const accountValue = portfolio?.accountValueUsd || 10000;
-        const marginUsd = Math.round((accountValue * riskPct) / 100);
+        const marginUsd = requestedMarginUsd ?? Math.round((accountValue * riskPct) / 100);
+        if (!riskMatch && requestedMarginUsd !== undefined && accountValue > 0) {
+            riskPct = Math.max(0.1, (requestedMarginUsd / accountValue) * 100);
+        }
+        riskPct = Math.round(riskPct * 100) / 100;
         // If asking for plan, provide a rich execution plan without auto-executing
         if (isPlanRequest) {
             const notionalUsd = marginUsd * leverage;
@@ -690,7 +862,7 @@ async function applyDeterministicFallback(userMessage, isSwapPrompt, isDefiPromp
                 actions: [],
                 executionRequest: {
                     kind: 'perp',
-                    chain: 'sepolia',
+                    chain: targetChain,
                     market: `${asset}-USD`,
                     side: side,
                     leverage,
@@ -705,7 +877,7 @@ async function applyDeterministicFallback(userMessage, isSwapPrompt, isDefiPromp
             actions: [],
             executionRequest: {
                 kind: 'perp',
-                chain: 'sepolia',
+                chain: targetChain,
                 market: `${asset}-USD`,
                 side: side,
                 leverage,
@@ -715,33 +887,46 @@ async function applyDeterministicFallback(userMessage, isSwapPrompt, isDefiPromp
         };
     }
     if (isSwapPrompt) {
-        // Extract amount and tokens
-        const amountMatch = userMessage.match(/(\d+\.?\d*)\s*(usdc|weth|eth)/i);
-        const tokenInMatch = lowerMessage.match(/(usdc|weth|eth)/);
-        const tokenOutMatch = lowerMessage.match(/to\s+(usdc|weth|eth)/);
+        // Extract amount and tokens (including SOL for Solana swaps)
+        const amountMatch = userMessage.match(/(\d+\.?\d*)\s*(usdc|weth|eth|sol|wsol)/i);
+        const tokenInMatch = lowerMessage.match(/(usdc|weth|eth|sol|wsol)/);
+        const tokenOutMatch = lowerMessage.match(/(?:to|for)\s+(usdc|weth|eth|sol|wsol)/);
         if (amountMatch && tokenInMatch) {
             const amount = amountMatch[1];
-            const tokenIn = tokenInMatch[1].toUpperCase() === 'ETH' ? 'ETH' : tokenInMatch[1].toUpperCase();
-            const tokenOut = tokenOutMatch ? (tokenOutMatch[1].toUpperCase() === 'ETH' ? 'WETH' : tokenOutMatch[1].toUpperCase()) :
-                (tokenIn === 'REDACTED' ? 'WETH' : 'REDACTED');
+            const rawTokenIn = tokenInMatch[1].toUpperCase();
+            const tokenIn = rawTokenIn === 'ETH' ? 'ETH' : rawTokenIn === 'WSOL' ? 'SOL' : rawTokenIn;
+            let tokenOut;
+            if (tokenOutMatch) {
+                const rawOut = tokenOutMatch[1].toUpperCase();
+                tokenOut = rawOut === 'ETH' ? 'WETH' : rawOut === 'WSOL' ? 'SOL' : rawOut;
+            }
+            else {
+                // Default output based on chain and input
+                if (isSolanaIntent) {
+                    tokenOut = tokenIn === 'SOL' ? 'USDC' : 'SOL';
+                }
+                else {
+                    tokenOut = tokenIn === 'USDC' ? 'WETH' : 'USDC';
+                }
+            }
             return {
-                assistantMessage: `I'll swap ${amount} ${tokenIn} to ${tokenOut} on Sepolia.`,
+                assistantMessage: `I'll swap ${amount} ${tokenIn} to ${tokenOut} on ${chainDisplay}.`,
                 actions: [],
                 executionRequest: {
                     kind: 'swap',
-                    chain: 'sepolia',
-                    tokenIn: tokenIn,
-                    tokenOut: tokenOut,
+                    chain: targetChain,
+                    tokenIn,
+                    tokenOut,
                     amountIn: amount,
                     slippageBps: 50,
-                    fundingPolicy: tokenIn === 'ETH' ? 'auto' : 'require_tokenIn',
+                    fundingPolicy: tokenIn === 'ETH' || tokenIn === 'SOL' ? 'auto' : 'require_tokenIn',
                 },
             };
         }
     }
     if (isDefiPrompt) {
         // NEW: Check for structured allocation format first (from quick action buttons)
-        const structuredAllocMatch = userMessage.match(/allocate\s+amount(Usd|Pct):"?(\d+\.?\d*)"?\s+to\s+protocol:"?([^"]+?)"?(?:\s+REDACTED|\s+yield|$)/i);
+        const structuredAllocMatch = userMessage.match(/allocate\s+amount(Usd|Pct):"?(\d+\.?\d*)"?\s+to\s+protocol:"?([^"]+?)"?(?:\s+(?:REDACTED|bUSDC|blsmUSDC)|\s+yield|$)/i);
         let amount;
         let vaultName;
         if (structuredAllocMatch) {
@@ -764,7 +949,7 @@ async function applyDeterministicFallback(userMessage, isSwapPrompt, isDefiPromp
             // FALLBACK: Natural language format with improved parsing (P0 Fix)
             // Handles: "Deposit 10% of my REDACTED into X", "Deposit $500 REDACTED into X", etc.
             // Check for percentage allocation first: "10%" or "10 percent"
-            const percentMatch = userMessage.match(/(\d+\.?\d*)\s*%\s*(?:of\s*(?:my\s*)?(?:usdc|balance|portfolio))?/i) ||
+            const percentMatch = userMessage.match(/(\d+\.?\d*)\s*%\s*(?:of\s*(?:my\s*)?(?:usdc|busdc|blsmusdc|balance|portfolio))?/i) ||
                 userMessage.match(/(\d+\.?\d*)\s*percent/i);
             // Check for explicit protocol name in the message
             const protocolMatch = userMessage.match(/(?:into|to|in|on)\s+([A-Za-z0-9\.\s]+?)(?:\s+(?:yield|vault|for)|$)/i);
@@ -796,11 +981,11 @@ async function applyDeterministicFallback(userMessage, isSwapPrompt, isDefiPromp
             }
         }
         return {
-            assistantMessage: `I'll allocate $${amount} to ${vaultName || 'yield vault'}. ${vaultName ? `Earning ~5-7% APY.` : 'Recommended: Aave REDACTED at 5.00% APY.'}`,
+            assistantMessage: `I'll allocate $${amount} to ${vaultName || 'yield vault'} on ${chainDisplay}. ${vaultName ? `Earning ~5-7% APY.` : 'Recommended: Aave REDACTED at 5.00% APY.'}`,
             actions: [],
             executionRequest: {
                 kind: 'lend_supply',
-                chain: 'sepolia',
+                chain: targetChain,
                 asset: 'REDACTED',
                 amount,
                 protocol: 'demo',
@@ -950,6 +1135,77 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
             });
         }
         // =============================================================================
+        // STATE MACHINE: Intent Path Isolation (Phase 1)
+        // =============================================================================
+        // Get or create session context for state machine tracking
+        const walletAddress = req.headers['x-wallet-address'];
+        const chatSessionId = walletAddress
+            ? `chat:${walletAddress.toLowerCase()}`
+            : `chat:anonymous:${req.ip || 'unknown'}`;
+        const stateContext = getContext(chatSessionId);
+        if (walletAddress && !stateContext.walletAddress) {
+            updateContext(chatSessionId, { walletAddress: walletAddress.toLowerCase() });
+        }
+        // Check if this is a confirmation/cancellation response
+        if (stateContext.currentState === IntentState.CONFIRMING) {
+            // User is responding to a confirmation request
+            if (isConfirmation(normalizedUserMessage) || isCancellation(normalizedUserMessage)) {
+                const confirmResult = processConfirmation(chatSessionId, normalizedUserMessage);
+                if (confirmResult.confirmed) {
+                    // User confirmed - proceed with execution
+                    // The pendingIntent will be executed below with confirmedIntentId set
+                    logTransition(chatSessionId, 'USER_CONFIRMED', {
+                        pendingIntentId: stateContext.pendingIntentId,
+                    });
+                    // If there's a pending execution request, return it with confirmation status
+                    if (stateContext.pendingIntent) {
+                        const portfolioAfter = buildPortfolioSnapshot();
+                        return res.json({
+                            ok: true,
+                            assistantMessage: "Confirmed. Executing your request...",
+                            actions: [],
+                            executionRequest: null, // Frontend will handle re-triggering execution
+                            modelOk: true,
+                            portfolio: portfolioAfter,
+                            executionResults: [],
+                            confirmationStatus: {
+                                confirmed: true,
+                                pendingIntent: stateContext.pendingIntent,
+                                sessionId: chatSessionId,
+                            },
+                        });
+                    }
+                }
+                else {
+                    // User cancelled or response didn't match
+                    logTransition(chatSessionId, isCancellation(normalizedUserMessage) ? 'USER_CANCELLED' : 'CONFIRMATION_RETRY', {});
+                    const portfolioAfter = buildPortfolioSnapshot();
+                    return res.json({
+                        ok: true,
+                        assistantMessage: confirmResult.message || "Action cancelled. What else can I help you with?",
+                        actions: [],
+                        executionRequest: null,
+                        modelOk: true,
+                        portfolio: portfolioAfter,
+                        executionResults: [],
+                        confirmationStatus: {
+                            confirmed: false,
+                            cancelled: isCancellation(normalizedUserMessage),
+                        },
+                    });
+                }
+            }
+            // If not a confirmation/cancellation, reset state and process as new intent
+            resetContextState(chatSessionId);
+        }
+        // Classify the intent path early for state machine tracking
+        const intentPath = classifyIntentPath(normalizedUserMessage);
+        logTransition(chatSessionId, 'INTENT_CLASSIFIED', {
+            intentPath,
+            currentPath: stateContext.currentPath,
+            userMessage: normalizedUserMessage.substring(0, 50),
+        });
+        // =============================================================================
         // CRITICAL: Detect DeFi TVL query FIRST (before LLM call)
         // Matches: "show me top 5 defi protocols by TVL", "list top defi protocols", etc.
         const LIST_DEFI_PROTOCOLS_RE = /\b(show\s+me\s+)?(top\s+(\d+)\s+)?(defi\s+)?protocols?\s+(by\s+)?(tvl|total\s+value\s+locked)\b/i;
@@ -1002,7 +1258,9 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
         const SLANG_PRICE_RE = /\b(wut|wuts|whats|wat|how\s+much)\s+(is\s+)?(eth|btc|sol|bitcoin|ethereum|solana)\s*(doing|doin|worth|at|rn|right\s+now)?\b/i;
         // Matches: "is sol pumping", "is eth up", "is btc down today", "how is eth doing"
         const PUMP_PRICE_RE = /\b(is|how\s+is)\s+(eth|btc|sol|bitcoin|ethereum|solana)\s+(pumping|dumping|up|down|doing|mooning|crashing|performing)\s*(today|rn|right\s+now|currently)?\s*\??$/i;
-        const hasPriceQueryIntent = PRICE_QUERY_RE.test(normalizedUserMessage) || SLANG_PRICE_RE.test(normalizedUserMessage) || PUMP_PRICE_RE.test(normalizedUserMessage);
+        // Exclude swap/trade intents from price query detection
+        const isSwapIntent = /\b(swap|exchange|trade|convert|buy|sell)\b/i.test(normalizedUserMessage);
+        const hasPriceQueryIntent = !isSwapIntent && (PRICE_QUERY_RE.test(normalizedUserMessage) || SLANG_PRICE_RE.test(normalizedUserMessage) || PUMP_PRICE_RE.test(normalizedUserMessage));
         if (hasPriceQueryIntent) {
             console.log('[api/chat] Price query detected');
             // Extract which asset(s) user is asking about
@@ -1309,12 +1567,17 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
                 normalizedUserMessage.toLowerCase().includes('2x') ||
                 normalizedUserMessage.toLowerCase().includes('3x') ||
                 normalizedUserMessage.toLowerCase().includes('leverage'));
-        // Detect if this is an event prompt
-        const isEventPrompt = /bet|wager|risk.*on|event/i.test(normalizedUserMessage) &&
+        // Detect if this is an event prompt - match patterns like "bet X on Y above/below Z"
+        // IMPORTANT: Perp intents take priority - if isPerpPrompt is true, isEventPrompt should be false
+        const hasPerpKeywords = /\b(long|short|perp|leverage|\d+x)\b/i.test(normalizedUserMessage);
+        const isEventPrompt = !isPerpPrompt && !hasPerpKeywords &&
+            /bet|wager|risk.*on|event|prediction\s*market/i.test(normalizedUserMessage) &&
             (normalizedUserMessage.toLowerCase().includes('yes') ||
                 normalizedUserMessage.toLowerCase().includes('no') ||
                 normalizedUserMessage.toLowerCase().includes('fed') ||
-                normalizedUserMessage.toLowerCase().includes('rate cut'));
+                normalizedUserMessage.toLowerCase().includes('rate cut') ||
+                /(?:above|below|over|under|at)\s*\$?\d+/i.test(normalizedUserMessage) ||
+                /btc|bitcoin|eth|ethereum|sol|solana/i.test(normalizedUserMessage));
         // Check if we're in stub mode and this is a prediction market query
         const hasOpenAIKey = !!process.env.BLOSSOM_OPENAI_API_KEY;
         const hasAnthropicKey = !!process.env.BLOSSOM_ANTHROPIC_API_KEY;
@@ -1383,11 +1646,16 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
                     normalizedUserMessage.toLowerCase().includes('2x') ||
                     normalizedUserMessage.toLowerCase().includes('3x') ||
                     normalizedUserMessage.toLowerCase().includes('leverage'));
-            const normalizedIsEventPrompt = /bet|wager|risk.*on|event/i.test(normalizedUserMessage) &&
+            // IMPORTANT: Perp intents take priority - if normalizedIsPerpPrompt is true, isEventPrompt should be false
+            const normalizedHasPerpKeywords = /\b(long|short|perp|leverage|\d+x)\b/i.test(normalizedUserMessage);
+            const normalizedIsEventPrompt = !normalizedIsPerpPrompt && !normalizedHasPerpKeywords &&
+                /bet|wager|risk.*on|event|prediction\s*market/i.test(normalizedUserMessage) &&
                 (normalizedUserMessage.toLowerCase().includes('yes') ||
                     normalizedUserMessage.toLowerCase().includes('no') ||
                     normalizedUserMessage.toLowerCase().includes('fed') ||
-                    normalizedUserMessage.toLowerCase().includes('rate cut'));
+                    normalizedUserMessage.toLowerCase().includes('rate cut') ||
+                    /(?:above|below|over|under|at)\s*\$?\d+/i.test(normalizedUserMessage) ||
+                    /btc|bitcoin|eth|ethereum|sol|solana/i.test(normalizedUserMessage));
             try {
                 // Call LLM with normalized prompt
                 const llmOutput = await callLlm({ systemPrompt, userPrompt: normalizedUserPrompt });
@@ -1892,7 +2160,7 @@ app.get('/api/ticker', async (req, res) => {
  * POST /api/execute/prepare
  * Prepare execution plan for ETH testnet
  */
-app.post('/api/execute/prepare', maybeCheckAccess, async (req, res) => {
+app.post('/api/execute/prepare', requireAuth, maybeCheckAccess, async (req, res) => {
     const correlationId = req.correlationId || generateCorrelationId();
     const prepareStartTime = Date.now();
     // Extract key info for trace (no secrets)
@@ -1903,6 +2171,17 @@ app.post('/api/execute/prepare', maybeCheckAccess, async (req, res) => {
         userAddress: userAddress?.substring(0, 10),
     });
     try {
+        const parsed = ExecutePrepareSchema.safeParse(req.body);
+        if (!parsed.success) {
+            return res.status(400).json({
+                ok: false,
+                error: 'Invalid request body',
+                errorCode: 'INVALID_BODY',
+                details: parsed.error.flatten(),
+                correlationId,
+            });
+        }
+        req.body = parsed.data;
         const { EXECUTION_MODE, EXECUTION_DISABLED, V1_DEMO } = await import('../config');
         // V1: Emergency kill switch
         if (EXECUTION_DISABLED) {
@@ -1931,7 +2210,103 @@ app.post('/api/execute/prepare', maybeCheckAccess, async (req, res) => {
         // Accept executionRequest from chat or fallback to executionIntent
         const result = await prepareEthTestnetExecution(req.body);
         // Include demo token addresses for frontend approval flow
-        const { DEMO_REDACTED_ADDRESS, DEMO_WETH_ADDRESS, EXECUTION_ROUTER_ADDRESS } = await import('../config');
+        const { DEMO_REDACTED_ADDRESS, DEMO_WETH_ADDRESS, EXECUTION_ROUTER_ADDRESS, ETH_TESTNET_RPC_URL } = await import('../config');
+        // Guard: verify all plan adapters are globally allowlisted in the router.
+        // This prevents wallet prompts for transactions that would always revert.
+        if (result?.plan?.actions?.length && EXECUTION_ROUTER_ADDRESS && ETH_TESTNET_RPC_URL) {
+            const { eth_call, decodeBool } = await import('../executors/evmRpc');
+            const { encodeFunctionData } = await import('viem');
+            const isAdapterAllowedAbi = [
+                {
+                    name: 'isAdapterAllowed',
+                    type: 'function',
+                    stateMutability: 'view',
+                    inputs: [{ name: '', type: 'address' }],
+                    outputs: [{ name: '', type: 'bool' }],
+                },
+            ];
+            for (const [index, action] of result.plan.actions.entries()) {
+                const adapter = action?.adapter;
+                if (!adapter || !/^0x[a-fA-F0-9]{40}$/.test(adapter)) {
+                    return res.status(400).json({
+                        ok: false,
+                        error: 'Invalid adapter on prepared plan action',
+                        errorCode: 'INVALID_ADAPTER',
+                        details: { index, adapter },
+                        correlationId,
+                    });
+                }
+                try {
+                    const data = encodeFunctionData({
+                        abi: isAdapterAllowedAbi,
+                        functionName: 'isAdapterAllowed',
+                        args: [adapter],
+                    });
+                    const callResult = await eth_call(ETH_TESTNET_RPC_URL, EXECUTION_ROUTER_ADDRESS, data);
+                    const isAllowed = decodeBool(callResult);
+                    if (!isAllowed) {
+                        return res.status(400).json({
+                            ok: false,
+                            error: 'Prepared plan uses adapter not allowlisted in router',
+                            errorCode: 'ADAPTER_NOT_ALLOWED',
+                            details: { index, adapter },
+                            correlationId,
+                        });
+                    }
+                }
+                catch (adapterCheckError) {
+                    return res.status(400).json({
+                        ok: false,
+                        error: 'Failed to verify adapter allowlist status',
+                        errorCode: 'ADAPTER_CHECK_FAILED',
+                        details: { index, adapter, message: adapterCheckError.message },
+                        correlationId,
+                    });
+                }
+            }
+        }
+        let callData;
+        try {
+            if (result?.plan) {
+                const { encodeFunctionData } = await import('viem');
+                const executeBySenderAbi = [
+                    {
+                        name: 'executeBySender',
+                        type: 'function',
+                        stateMutability: 'nonpayable',
+                        inputs: [
+                            {
+                                name: 'plan',
+                                type: 'tuple',
+                                components: [
+                                    { name: 'user', type: 'address' },
+                                    { name: 'nonce', type: 'uint256' },
+                                    { name: 'deadline', type: 'uint256' },
+                                    {
+                                        name: 'actions',
+                                        type: 'tuple[]',
+                                        components: [
+                                            { name: 'actionType', type: 'uint8' },
+                                            { name: 'adapter', type: 'address' },
+                                            { name: 'data', type: 'bytes' },
+                                        ],
+                                    },
+                                ],
+                            },
+                        ],
+                        outputs: [],
+                    },
+                ];
+                callData = encodeFunctionData({
+                    abi: executeBySenderAbi,
+                    functionName: 'executeBySender',
+                    args: [result.plan],
+                });
+            }
+        }
+        catch (encodeErr) {
+            console.warn('[api/execute/prepare] Failed to encode callData:', encodeErr?.message);
+        }
         // Telemetry: log prepare success
         const actionTypes = result.plan?.actions?.map((a) => a.actionType) || [];
         logEvent('prepare_success', {
@@ -1956,7 +2331,8 @@ app.post('/api/execute/prepare', maybeCheckAccess, async (req, res) => {
             plan: result.plan,
             planHash: result.planHash, // V1: Include server-computed planHash
             typedData: result.typedData,
-            call: result.call,
+            call: callData || result.call,
+            callData,
             requirements: result.requirements,
             summary: result.summary,
             warnings: result.warnings,
@@ -2052,9 +2428,19 @@ app.post('/api/setup/approve', maybeCheckAccess, async (req, res) => {
  * Submit transaction hash after execution
  * Returns unified ExecutionResult with receipt confirmation in eth_testnet mode
  */
-app.post('/api/execute/submit', maybeCheckAccess, async (req, res) => {
+app.post('/api/execute/submit', requireAuth, maybeCheckAccess, async (req, res) => {
     const submitStartTime = Date.now();
     try {
+        const parsed = ExecuteSubmitSchema.safeParse(req.body);
+        if (!parsed.success) {
+            return res.status(400).json({
+                ok: false,
+                error: 'Invalid request body',
+                errorCode: 'INVALID_BODY',
+                details: parsed.error.flatten(),
+            });
+        }
+        req.body = parsed.data;
         const { draftId, txHash, userAddress, strategy, executionRequest } = req.body;
         if (!draftId || !txHash) {
             return res.status(400).json({
@@ -2109,6 +2495,30 @@ app.post('/api/execute/submit', maybeCheckAccess, async (req, res) => {
                     success: false,
                 });
             }
+        }
+        // Post execution stats (best-effort)
+        try {
+            const feeBps = Number(process.env.BUSDC_FEE_BPS || 25);
+            const usdEstimate = strategy?.notionalUsd ||
+                strategy?.usdNotional ||
+                executionRequest?.amountUsd ||
+                executionRequest?.stakeUsd ||
+                null;
+            const feeBusdc = usdEstimate ? (Number(usdEstimate) * feeBps) / 10000 : null;
+            await postStatsEvent({
+                type: 'execution',
+                status: receiptStatus,
+                chain: EXECUTION_MODE === 'eth_testnet' ? 'ethereum/sepolia' : EXECUTION_MODE,
+                venue: strategy?.venue || executionRequest?.venue,
+                usdEstimate: usdEstimate ? Number(usdEstimate) : null,
+                feeBps,
+                feeBusdc,
+                txHash,
+                userAddress,
+            });
+        }
+        catch {
+            // Swallow stats errors (non-blocking)
         }
         // Update sim state after successful ProofOfExecution
         if (receiptStatus === 'confirmed' && (strategy || executionRequest)) {
@@ -2249,7 +2659,11 @@ app.get('/api/execute/preflight', async (req, res) => {
         }
         // Check router deployment
         let routerOk = false;
-        if (EXECUTION_ROUTER_ADDRESS && ETH_TESTNET_RPC_URL && rpcOk) {
+        const routerAddressValid = !!EXECUTION_ROUTER_ADDRESS && /^0x[a-fA-F0-9]{40}$/.test(EXECUTION_ROUTER_ADDRESS);
+        if (!routerAddressValid && EXECUTION_ROUTER_ADDRESS) {
+            notes.push(`Router address invalid format: ${EXECUTION_ROUTER_ADDRESS}`);
+        }
+        if (routerAddressValid && ETH_TESTNET_RPC_URL && rpcOk) {
             try {
                 const { eth_getCode } = await import('../executors/evmRpc');
                 const code = await eth_getCode(ETH_TESTNET_RPC_URL, EXECUTION_ROUTER_ADDRESS);
@@ -2263,11 +2677,12 @@ app.get('/api/execute/preflight', async (req, res) => {
             }
         }
         else {
-            notes.push('Cannot check router: missing EXECUTION_ROUTER_ADDRESS or RPC');
+            notes.push('Cannot check router: missing/invalid EXECUTION_ROUTER_ADDRESS or RPC');
         }
         // Check adapter allowlist (if router is deployed)
         let adapterOk = false;
-        if (routerOk && MOCK_SWAP_ADAPTER_ADDRESS && ETH_TESTNET_RPC_URL) {
+        const mockAdapterValid = !!MOCK_SWAP_ADAPTER_ADDRESS && /^0x[a-fA-F0-9]{40}$/.test(MOCK_SWAP_ADAPTER_ADDRESS);
+        if (routerOk && mockAdapterValid && ETH_TESTNET_RPC_URL) {
             try {
                 const { eth_call } = await import('../executors/evmRpc');
                 const { encodeFunctionData } = await import('viem');
@@ -2310,6 +2725,9 @@ app.get('/api/execute/preflight', async (req, res) => {
                 notes.push(`Adapter check error: ${error.message}`);
                 console.error('[preflight] Adapter check failed:', error);
             }
+        }
+        else if (routerOk && MOCK_SWAP_ADAPTER_ADDRESS && !mockAdapterValid) {
+            notes.push(`Adapter address invalid format: ${MOCK_SWAP_ADAPTER_ADDRESS}`);
         }
         // Check nonce fetching capability
         // Use eth_getTransactionCount instead of eth_call for simpler, more reliable check
@@ -2389,6 +2807,9 @@ app.get('/api/execute/preflight', async (req, res) => {
                 notes.push('Live routing: enabled (1inch - API key present but connectivity check failed)');
             }
         }
+        else if (ROUTING_MODE === 'dflow') {
+            notes.push('Live routing: enabled (dFlow)');
+        }
         else {
             notes.push('Live routing: disabled (deterministic fallback)');
         }
@@ -2449,7 +2870,7 @@ app.get('/api/execute/preflight', async (req, res) => {
         const { DFLOW_ENABLED, DFLOW_API_KEY, DFLOW_BASE_URL, DFLOW_EVENTS_MARKETS_PATH, DFLOW_EVENTS_QUOTE_PATH, DFLOW_SWAPS_QUOTE_PATH, DFLOW_REQUIRE, } = await import('../config');
         const dflowStatus = {
             enabled: DFLOW_ENABLED,
-            ok: DFLOW_ENABLED && !!DFLOW_API_KEY && !!DFLOW_BASE_URL,
+            ok: DFLOW_ENABLED && !!DFLOW_API_KEY,
             required: DFLOW_REQUIRE,
             capabilities: {
                 eventsMarkets: DFLOW_ENABLED && !!DFLOW_EVENTS_MARKETS_PATH,
@@ -2457,67 +2878,103 @@ app.get('/api/execute/preflight', async (req, res) => {
                 swapsQuotes: DFLOW_ENABLED && !!DFLOW_SWAPS_QUOTE_PATH,
             },
         };
-        if (DFLOW_ENABLED) {
-            if (dflowStatus.ok) {
-                const caps = [];
-                if (dflowStatus.capabilities.eventsMarkets)
-                    caps.push('events-markets');
-                if (dflowStatus.capabilities.eventsQuotes)
-                    caps.push('events-quotes');
-                if (dflowStatus.capabilities.swapsQuotes)
-                    caps.push('swaps-quotes');
-                notes.push(`dFlow: enabled (${caps.join(', ') || 'no capabilities'})`);
-            }
-            else {
-                notes.push('dFlow: enabled but not configured (missing API_KEY or BASE_URL)');
-                if (DFLOW_REQUIRE) {
-                    ok = false;
-                    notes.push('dFlow is required but not properly configured');
-                }
-            }
+        if (DFLOW_ENABLED && dflowStatus.ok) {
+            const caps = [];
+            if (dflowStatus.capabilities.eventsMarkets)
+                caps.push('events-markets');
+            if (dflowStatus.capabilities.eventsQuotes)
+                caps.push('events-quotes');
+            if (dflowStatus.capabilities.swapsQuotes)
+                caps.push('swaps-quotes');
+            notes.push(`dFlow: enabled (${caps.join(', ') || 'no capabilities'})`);
         }
         else {
-            notes.push('dFlow: disabled');
+            if (DFLOW_ENABLED && !DFLOW_API_KEY) {
+                notes.push('dFlow: enabled but missing API key');
+            }
+            else {
+                notes.push('dFlow: disabled (optional for MVP)');
+            }
         }
-        // Update routing notes based on dFlow
-        if (ROUTING_MODE === 'dflow' && dflowStatus.capabilities.swapsQuotes) {
-            notes.push('Live routing: enabled (dFlow)');
+        if (DFLOW_REQUIRE && !dflowStatus.ok) {
+            notes.push('dFlow: required but not configured (MVP uses deterministic routing)');
         }
+        // Do NOT set ok = false for dFlow; Sepolia execution must not be blocked by missing dFlow
         // Build allowed adapters list for capabilities
         // Note: AAVE_ADAPTER_ADDRESS already imported above at line 2224
         const { PROOF_ADAPTER_ADDRESS, ERC20_PULL_ADAPTER_ADDRESS, UNISWAP_V3_ADAPTER_ADDRESS, WETH_WRAP_ADAPTER_ADDRESS, } = await import('../config');
-        const allowedAdapters = [];
-        if (UNISWAP_V3_ADAPTER_ADDRESS) {
-            allowedAdapters.push(UNISWAP_V3_ADAPTER_ADDRESS.toLowerCase());
-        }
-        if (WETH_WRAP_ADAPTER_ADDRESS) {
-            allowedAdapters.push(WETH_WRAP_ADAPTER_ADDRESS.toLowerCase());
-        }
-        if (MOCK_SWAP_ADAPTER_ADDRESS) {
-            allowedAdapters.push(MOCK_SWAP_ADAPTER_ADDRESS.toLowerCase());
-        }
-        if (PROOF_ADAPTER_ADDRESS) {
-            allowedAdapters.push(PROOF_ADAPTER_ADDRESS.toLowerCase());
-        }
-        if (ERC20_PULL_ADAPTER_ADDRESS) {
-            allowedAdapters.push(ERC20_PULL_ADAPTER_ADDRESS.toLowerCase());
-        }
-        if (DEMO_LEND_ADAPTER_ADDRESS) {
-            allowedAdapters.push(DEMO_LEND_ADAPTER_ADDRESS.toLowerCase());
-        }
-        if (AAVE_ADAPTER_ADDRESS) {
-            allowedAdapters.push(AAVE_ADAPTER_ADDRESS.toLowerCase());
-        }
         // Check perps configuration
         const { DEMO_PERP_ADAPTER_ADDRESS, DEMO_PERP_ENGINE_ADDRESS, DEMO_EVENT_ADAPTER_ADDRESS, DEMO_EVENT_ENGINE_ADDRESS } = await import('../config');
         const perpsEnabled = !!DEMO_PERP_ADAPTER_ADDRESS && routerOk;
         const eventsRealEnabled = !!DEMO_EVENT_ADAPTER_ADDRESS && routerOk;
-        // Add demo perp and event adapters to allowlist for real on-chain execution
-        if (DEMO_PERP_ADAPTER_ADDRESS) {
-            allowedAdapters.push(DEMO_PERP_ADAPTER_ADDRESS.toLowerCase());
+        // Collect all configured adapters to verify on-chain
+        const configuredAdapters = [];
+        if (UNISWAP_V3_ADAPTER_ADDRESS)
+            configuredAdapters.push(UNISWAP_V3_ADAPTER_ADDRESS.toLowerCase());
+        if (WETH_WRAP_ADAPTER_ADDRESS)
+            configuredAdapters.push(WETH_WRAP_ADAPTER_ADDRESS.toLowerCase());
+        if (MOCK_SWAP_ADAPTER_ADDRESS)
+            configuredAdapters.push(MOCK_SWAP_ADAPTER_ADDRESS.toLowerCase());
+        if (PROOF_ADAPTER_ADDRESS)
+            configuredAdapters.push(PROOF_ADAPTER_ADDRESS.toLowerCase());
+        if (ERC20_PULL_ADAPTER_ADDRESS)
+            configuredAdapters.push(ERC20_PULL_ADAPTER_ADDRESS.toLowerCase());
+        if (DEMO_LEND_ADAPTER_ADDRESS)
+            configuredAdapters.push(DEMO_LEND_ADAPTER_ADDRESS.toLowerCase());
+        if (AAVE_ADAPTER_ADDRESS)
+            configuredAdapters.push(AAVE_ADAPTER_ADDRESS.toLowerCase());
+        if (DEMO_PERP_ADAPTER_ADDRESS)
+            configuredAdapters.push(DEMO_PERP_ADAPTER_ADDRESS.toLowerCase());
+        if (DEMO_EVENT_ADAPTER_ADDRESS)
+            configuredAdapters.push(DEMO_EVENT_ADAPTER_ADDRESS.toLowerCase());
+        // Verify each adapter is on-chain allowlisted in the router
+        // This prevents the "Prepared plan uses adapter not allowlisted in router" error
+        const allowedAdapters = [];
+        const notAllowlistedAdapters = [];
+        if (routerOk && ETH_TESTNET_RPC_URL && EXECUTION_ROUTER_ADDRESS) {
+            const { eth_call, decodeBool } = await import('../executors/evmRpc');
+            const { encodeFunctionData } = await import('viem');
+            const isAdapterAllowedAbi = [
+                {
+                    name: 'isAdapterAllowed',
+                    type: 'function',
+                    stateMutability: 'view',
+                    inputs: [{ name: '', type: 'address' }],
+                    outputs: [{ name: '', type: 'bool' }],
+                },
+            ];
+            for (const adapter of configuredAdapters) {
+                try {
+                    const data = encodeFunctionData({
+                        abi: isAdapterAllowedAbi,
+                        functionName: 'isAdapterAllowed',
+                        args: [adapter],
+                    });
+                    const result = await eth_call(ETH_TESTNET_RPC_URL, EXECUTION_ROUTER_ADDRESS, data);
+                    const isAllowed = decodeBool(result);
+                    if (isAllowed) {
+                        allowedAdapters.push(adapter);
+                    }
+                    else {
+                        notAllowlistedAdapters.push(adapter);
+                    }
+                }
+                catch (error) {
+                    console.warn(`[preflight] Failed to check adapter ${adapter}:`, error.message);
+                    // Don't add adapter if we can't verify
+                    notAllowlistedAdapters.push(adapter);
+                }
+            }
+            // Log adapters not allowlisted for debugging
+            if (notAllowlistedAdapters.length > 0) {
+                console.warn('[preflight] Adapters configured but NOT on-chain allowlisted:', notAllowlistedAdapters);
+                notes.push(`${notAllowlistedAdapters.length} adapter(s) configured but not on-chain allowlisted`);
+            }
         }
-        if (DEMO_EVENT_ADAPTER_ADDRESS) {
-            allowedAdapters.push(DEMO_EVENT_ADAPTER_ADDRESS.toLowerCase());
+        else {
+            // If we can't verify on-chain, include all configured adapters (fallback)
+            allowedAdapters.push(...configuredAdapters);
+            notes.push('Could not verify adapter allowlist on-chain (router/RPC unavailable)');
         }
         // Venue availability flags for frontend execution routing
         const swapEnabled = adapterOk && routerOk && rpcOk;
@@ -2535,10 +2992,7 @@ app.get('/api/execute/preflight', async (req, res) => {
             missingEnvVars.push('DEMO_PERP_ADAPTER_ADDRESS');
         if (!DEMO_PERP_ENGINE_ADDRESS)
             missingEnvVars.push('DEMO_PERP_ENGINE_ADDRESS');
-        if (DFLOW_ENABLED && !DFLOW_API_KEY)
-            missingEnvVars.push('DFLOW_API_KEY');
-        if (DFLOW_ENABLED && !DFLOW_EVENTS_MARKETS_PATH)
-            missingEnvVars.push('DFLOW_EVENTS_MARKETS_PATH');
+        // dFlow is optional for MVP; do not add to missingEnvVars
         // Swap token configuration check (can use real OR demo addresses)
         const { REDACTED_ADDRESS_SEPOLIA, WETH_ADDRESS_SEPOLIA, DEMO_REDACTED_ADDRESS, DEMO_WETH_ADDRESS } = await import('../config');
         const swapTokenConfigOk = !!((REDACTED_ADDRESS_SEPOLIA && WETH_ADDRESS_SEPOLIA) ||
@@ -2657,7 +3111,7 @@ app.post('/api/session/prepare', async (req, res) => {
             userHash: hashAddress(userAddress),
             authMode: 'session',
         });
-        const { EXECUTION_ROUTER_ADDRESS, MOCK_SWAP_ADAPTER_ADDRESS, UNISWAP_V3_ADAPTER_ADDRESS, WETH_WRAP_ADAPTER_ADDRESS, ERC20_PULL_ADAPTER_ADDRESS, PROOF_ADAPTER_ADDRESS, DEMO_LEND_ADAPTER_ADDRESS, AAVE_ADAPTER_ADDRESS, RELAYER_PRIVATE_KEY, ETH_TESTNET_RPC_URL, requireRelayerConfig, } = await import('../config');
+        const { EXECUTION_ROUTER_ADDRESS, MOCK_SWAP_ADAPTER_ADDRESS, UNISWAP_V3_ADAPTER_ADDRESS, WETH_WRAP_ADAPTER_ADDRESS, ERC20_PULL_ADAPTER_ADDRESS, PROOF_ADAPTER_ADDRESS, DEMO_LEND_ADAPTER_ADDRESS, AAVE_ADAPTER_ADDRESS, DEMO_PERP_ADAPTER_ADDRESS, DEMO_EVENT_ADAPTER_ADDRESS, RELAYER_PRIVATE_KEY, ETH_TESTNET_RPC_URL, requireRelayerConfig, } = await import('../config');
         requireRelayerConfig();
         // DEV-ONLY: Log router + chain diagnostics
         if (process.env.NODE_ENV !== 'production') {
@@ -2684,9 +3138,13 @@ app.post('/api/session/prepare', async (req, res) => {
                 });
             }
         }
-        // Generate session ID
+        // Generate session ID with cryptographic entropy (SECURITY FIX)
+        // Previous: userAddress + timestamp (predictable)
+        // Now: userAddress + timestamp + crypto random bytes (unpredictable)
         const { keccak256, toBytes, parseUnits } = await import('viem');
-        const sessionId = keccak256(toBytes(userAddress + Date.now().toString()));
+        const { randomBytes } = await import('crypto');
+        const entropy = randomBytes(32).toString('hex');
+        const sessionId = keccak256(toBytes(userAddress + Date.now().toString() + entropy));
         // DEBUG: Log generated sessionId
         console.log('[session/prepare] Generated sessionId:', sessionId);
         console.log('[session/prepare] For userAddress:', userAddress);
@@ -2696,33 +3154,67 @@ app.post('/api/session/prepare', async (req, res) => {
         const executor = relayerAccount.address;
         // Set session parameters
         const expiresAt = BigInt(Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60); // 7 days
-        const maxSpend = BigInt(parseUnits('10', 18)); // 10 ETH max spend (in wei)
-        // Build allowed adapters list (include all configured adapters)
+        // Session spend cap uses token units (bUSDC 6 decimals)
+        const maxSpendBusdc = process.env.SESSION_MAX_SPEND_BUSDC || '10000';
+        const maxSpend = BigInt(parseUnits(maxSpendBusdc, 6));
+        // Build allowed adapters list (include all configured adapters that are globally allowlisted in router)
+        const configuredAdapters = [
+            MOCK_SWAP_ADAPTER_ADDRESS,
+            UNISWAP_V3_ADAPTER_ADDRESS,
+            WETH_WRAP_ADAPTER_ADDRESS,
+            ERC20_PULL_ADAPTER_ADDRESS,
+            PROOF_ADAPTER_ADDRESS,
+            DEMO_LEND_ADAPTER_ADDRESS,
+            AAVE_ADAPTER_ADDRESS,
+            DEMO_PERP_ADAPTER_ADDRESS,
+            DEMO_EVENT_ADAPTER_ADDRESS,
+        ]
+            .filter((addr) => !!addr && /^0x[a-fA-F0-9]{40}$/.test(addr))
+            .map((addr) => addr.toLowerCase());
+        const dedupedConfiguredAdapters = Array.from(new Set(configuredAdapters));
+        const isAdapterAllowedAbi = [
+            {
+                name: 'isAdapterAllowed',
+                type: 'function',
+                stateMutability: 'view',
+                inputs: [{ name: '', type: 'address' }],
+                outputs: [{ name: '', type: 'bool' }],
+            },
+        ];
         const allowedAdapters = [];
-        if (MOCK_SWAP_ADAPTER_ADDRESS) {
-            allowedAdapters.push(MOCK_SWAP_ADAPTER_ADDRESS.toLowerCase());
+        const skippedAdapters = [];
+        if (EXECUTION_ROUTER_ADDRESS && ETH_TESTNET_RPC_URL) {
+            const { eth_call, decodeBool } = await import('../executors/evmRpc');
+            const { encodeFunctionData } = await import('viem');
+            for (const adapter of dedupedConfiguredAdapters) {
+                try {
+                    const data = encodeFunctionData({
+                        abi: isAdapterAllowedAbi,
+                        functionName: 'isAdapterAllowed',
+                        args: [adapter],
+                    });
+                    const result = await eth_call(ETH_TESTNET_RPC_URL, EXECUTION_ROUTER_ADDRESS, data);
+                    const isAllowed = decodeBool(result);
+                    if (isAllowed) {
+                        allowedAdapters.push(adapter);
+                    }
+                    else {
+                        skippedAdapters.push(adapter);
+                    }
+                }
+                catch (adapterCheckError) {
+                    skippedAdapters.push(`${adapter} (check_error: ${adapterCheckError.message})`);
+                }
+            }
         }
-        if (UNISWAP_V3_ADAPTER_ADDRESS) {
-            allowedAdapters.push(UNISWAP_V3_ADAPTER_ADDRESS.toLowerCase());
-        }
-        if (WETH_WRAP_ADAPTER_ADDRESS) {
-            allowedAdapters.push(WETH_WRAP_ADAPTER_ADDRESS.toLowerCase());
-        }
-        if (ERC20_PULL_ADAPTER_ADDRESS) {
-            allowedAdapters.push(ERC20_PULL_ADAPTER_ADDRESS.toLowerCase());
-        }
-        if (PROOF_ADAPTER_ADDRESS) {
-            allowedAdapters.push(PROOF_ADAPTER_ADDRESS.toLowerCase());
-        }
-        if (DEMO_LEND_ADAPTER_ADDRESS) {
-            allowedAdapters.push(DEMO_LEND_ADAPTER_ADDRESS.toLowerCase());
-        }
-        if (AAVE_ADAPTER_ADDRESS) {
-            allowedAdapters.push(AAVE_ADAPTER_ADDRESS.toLowerCase());
+        else {
+            // If we cannot verify on-chain allowlist, keep existing configured adapters (best effort).
+            allowedAdapters.push(...dedupedConfiguredAdapters);
         }
         if (allowedAdapters.length === 0) {
             return res.status(400).json({
-                error: 'No adapters configured. At least one adapter must be configured.',
+                error: 'No globally allowlisted adapters are configured for session creation.',
+                notes: skippedAdapters,
             });
         }
         // Encode createSession call
@@ -2763,7 +3255,7 @@ app.post('/api/session/prepare', async (req, res) => {
             sessionId,
             caps: {
                 maxSpend: maxSpend.toString(),
-                maxSpendUsd: '10000', // Approximate USD value of 10 ETH
+                maxSpendUsd: maxSpendBusdc, // bUSDC is USD-pegged in demo
                 expiresAt: expiresAt.toString(),
                 expiresAtIso: new Date(Number(expiresAt) * 1000).toISOString(),
             },
@@ -2821,6 +3313,7 @@ app.post('/api/session/prepare', async (req, res) => {
                 value: '0x0',
                 summary: `Create session for ${userAddress.substring(0, 10)}... with executor ${executor.substring(0, 10)}...`,
                 capabilitySnapshot, // V1: Include capability snapshot
+                skippedAdapters,
             },
             correlationId, // Include correlationId for client tracing
             cooldownMs: SESSION_COOLDOWN_MS,
@@ -2875,7 +3368,7 @@ app.post('/api/session/prepare', async (req, res) => {
  * POST /api/execute/relayed
  * Execute a plan using session permissions (relayed by backend)
  */
-app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
+app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res) => {
     console.log('[api/execute/relayed] Handler invoked - DEBUG MARKER V2');
     const correlationId = req.correlationId || generateCorrelationId();
     const relayedStartTime = Date.now();
@@ -2887,6 +3380,17 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
         planActions: plan?.actions?.length,
     });
     try {
+        const parsed = ExecuteRelayedSchema.safeParse(req.body);
+        if (!parsed.success) {
+            return res.status(400).json({
+                ok: false,
+                error: 'Invalid request body',
+                errorCode: 'INVALID_BODY',
+                details: parsed.error.flatten(),
+                correlationId,
+            });
+        }
+        req.body = parsed.data;
         const { EXECUTION_MODE, EXECUTION_AUTH_MODE, EXECUTION_DISABLED, V1_DEMO } = await import('../config');
         // V1: Emergency kill switch
         if (EXECUTION_DISABLED) {
@@ -2896,12 +3400,12 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
                 message: 'Execution has been temporarily disabled. Please try again later.',
             });
         }
-        // V1_DEMO: Enforce single-action plans for canonical flows
-        if (V1_DEMO && req.body.plan && req.body.plan.actions && req.body.plan.actions.length !== 1) {
+        // V1_DEMO: Enforce small action counts (allow PULL + SWAP/LEND as 2-step flows)
+        if (V1_DEMO && req.body.plan && req.body.plan.actions && req.body.plan.actions.length > 2) {
             return res.status(400).json({
-                error: 'V1_DEMO mode requires single-action plans',
+                error: 'V1_DEMO mode only allows 1-2 action plans',
                 errorCode: 'V1_DEMO_MULTI_ACTION_REJECTED',
-                message: `Plan has ${req.body.plan.actions.length} actions. V1_DEMO mode only allows single-action plans.`,
+                message: `Plan has ${req.body.plan.actions.length} actions. V1_DEMO allows up to 2 actions (e.g. PULL + SWAP/LEND).`,
             });
         }
         // Check if session is actually enabled (server-side check)
@@ -2943,26 +3447,30 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
                 sessionEnabled = false;
             }
         }
-        // If session is disabled, force direct execution path (return success with notes)
+        // If session is disabled, return clear error (not silent success)
         if (!sessionEnabled) {
-            const portfolioAfter = buildPortfolioSnapshot();
-            return res.json({
-                success: true,
-                status: 'success',
-                notes: ['session_disabled_fell_back_to_direct'],
-                portfolio: portfolioAfter,
-                chainId: 11155111,
+            if (process.env.DEBUG_DIAGNOSTICS === 'true') {
+                console.log('[DEBUG_DIAGNOSTICS] session unauthorized: session execution not configured (router/relayer/RPC check)');
+            }
+            return res.status(503).json({
+                ok: false,
+                success: false,
+                error: 'Session execution not available. Please use manual signing or check backend configuration.',
+                errorCode: 'SESSION_NOT_CONFIGURED',
+                notes: ['Session mode requires EXECUTION_MODE=eth_testnet, EXECUTION_AUTH_MODE=session, and valid router contract'],
             });
         }
         const { draftId, userAddress, plan, sessionId } = req.body;
         if (!draftId || !userAddress || !plan || !sessionId) {
-            // Missing required fields - fall back to direct mode
-            const portfolioAfter = buildPortfolioSnapshot();
-            return res.json({
-                success: true,
-                status: 'success',
-                notes: ['session_disabled_fell_back_to_direct', 'missing_required_fields'],
-                portfolio: portfolioAfter,
+            if (process.env.DEBUG_DIAGNOSTICS === 'true') {
+                console.log('[DEBUG_DIAGNOSTICS] session unauthorized: missing required fields (draftId, userAddress, plan, sessionId)');
+            }
+            return res.status(400).json({
+                ok: false,
+                success: false,
+                error: 'Missing required fields for session execution',
+                errorCode: 'MISSING_FIELDS',
+                notes: ['Required: draftId, userAddress, plan, sessionId'],
                 chainId: 11155111,
             });
         }
@@ -2971,6 +3479,11 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
         // ================================================================
         // The frontend sends a simplified intent format. We need to convert it
         // to the on-chain ExecutionPlan format before validation and execution.
+        // Import config values BEFORE action normalization (fixes TDZ error)
+        const configModule = await import('../config');
+        const DEMO_REDACTED_ADDRESS = configModule.DEMO_REDACTED_ADDRESS || configModule.DEMO_BUSDC_ADDRESS;
+        const REDACTED_ADDRESS_SEPOLIA = configModule.REDACTED_ADDRESS_SEPOLIA;
+        const WETH_ADDRESS_SEPOLIA = configModule.WETH_ADDRESS_SEPOLIA;
         // Add missing plan fields
         if (!plan.user) {
             plan.user = userAddress;
@@ -2994,9 +3507,10 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
             'defi': 3,
             'borrow': 4,
             'repay': 5,
+            'event_buy': 5,
             'proof': 6,
-            'event': 6, // Event markets use proof adapter
             'perp': 7,
+            'event': 8,
         };
         // Normalize actions
         for (const action of plan.actions) {
@@ -3010,56 +3524,86 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
                 const { encodeAbiParameters } = await import('viem');
                 // Get action type for encoding
                 const actionType = action.actionType ?? actionTypeMap[action.type] ?? 0;
-                if (actionType === 6) { // Proof/Event action
-                    // Encode event market data: (bytes32 marketId, uint8 outcome, uint256 amount)
+                if (actionType === 8) { // EVENT action (DemoEventAdapter)
+                    const { keccak256, stringToBytes, parseUnits } = await import('viem');
                     const eventData = action.data;
-                    const marketId = eventData.eventId || eventData.marketId ||
-                        `0x${Buffer.from(eventData.market || 'unknown').toString('hex').padStart(64, '0')}`;
-                    const outcome = eventData.outcome === 'yes' || eventData.outcome === true ? 1 : 0;
-                    const amount = BigInt(Math.floor((eventData.amount || 10) * 1e6)); // Convert to REDACTED decimals
+                    const marketIdRaw = eventData.eventId || eventData.marketId || eventData.market || 'demo-market';
+                    const marketId = marketIdRaw.startsWith('0x') && marketIdRaw.length === 66
+                        ? marketIdRaw
+                        : keccak256(stringToBytes(marketIdRaw));
+                    const outcome = String(eventData.outcome || 'yes').toLowerCase() === 'no' || eventData.outcome === false ? 2 : 1;
+                    const stakeAmount = parseUnits(String(eventData.stakeUsd || eventData.amount || 5), 6);
+                    const user = (plan.user || userAddress);
+                    const stakeToken = (DEMO_REDACTED_ADDRESS || REDACTED_ADDRESS_SEPOLIA || '0x0000000000000000000000000000000000000000');
                     try {
-                        action.data = encodeAbiParameters([
+                        const adapterData = encodeAbiParameters([
+                            { type: 'uint8', name: 'action' },
+                            { type: 'address', name: 'user' },
                             { type: 'bytes32', name: 'marketId' },
-                            { type: 'uint8', name: 'outcome' },
                             { type: 'uint256', name: 'amount' },
-                        ], [marketId, outcome, amount]);
+                        ], [outcome, user, marketId, stakeAmount]);
+                        const routerData = encodeAbiParameters([
+                            { type: 'address', name: 'stakeToken' },
+                            { type: 'uint256', name: 'amount' },
+                            { type: 'bytes', name: 'adapterData' },
+                        ], [stakeToken, stakeAmount, adapterData]);
+                        const maxSpendUnits = stakeAmount;
+                        action.data = encodeAbiParameters([{ type: 'uint256' }, { type: 'bytes' }], [maxSpendUnits, routerData]);
                     }
                     catch (encodeError) {
                         console.warn('[relayed] Failed to encode event data, using fallback:', encodeError.message);
-                        // Fallback: encode as simple bytes
                         action.data = '0x' + Buffer.from(JSON.stringify(eventData)).toString('hex');
                     }
                 }
-                else if (actionType === 7) { // Perp action
-                    // Encode perp data: (bytes32 market, bool isLong, uint256 size, uint256 leverage)
+                else if (actionType === 7) { // PERP action (DemoPerpAdapter)
+                    const { parseUnits } = await import('viem');
                     const perpData = action.data;
-                    const market = `0x${Buffer.from(perpData.token || perpData.asset || 'ETH').toString('hex').padStart(64, '0')}`;
-                    const isLong = perpData.direction === 'long' || perpData.isLong === true;
-                    const size = BigInt(Math.floor((perpData.depositUsd || perpData.amount || 100) * 1e6));
-                    const leverage = BigInt(perpData.leverage || perpData.leverageX || 10);
+                    const marketRaw = (perpData.market || perpData.asset || perpData.token || 'ETH').toString().toUpperCase();
+                    const marketMap = { 'BTC': 0, 'BTC-USD': 0, 'ETH': 1, 'ETH-USD': 1, 'SOL': 2, 'SOL-USD': 2 };
+                    const marketEnum = marketMap[marketRaw] ?? 1;
+                    const sideEnum = String(perpData.direction || 'long').toLowerCase() === 'short' || perpData.isLong === false ? 1 : 0;
+                    const leverage = BigInt(perpData.leverage || perpData.leverageX || 5);
+                    const marginAmount = parseUnits(String(perpData.marginUsd || perpData.depositUsd || perpData.amount || 100), 6);
+                    const user = (plan.user || userAddress);
+                    const marginToken = (DEMO_REDACTED_ADDRESS || REDACTED_ADDRESS_SEPOLIA || '0x0000000000000000000000000000000000000000');
                     try {
-                        action.data = encodeAbiParameters([
-                            { type: 'bytes32', name: 'market' },
-                            { type: 'bool', name: 'isLong' },
-                            { type: 'uint256', name: 'size' },
+                        const adapterData = encodeAbiParameters([
+                            { type: 'uint8', name: 'action' },
+                            { type: 'address', name: 'user' },
+                            { type: 'uint8', name: 'market' },
+                            { type: 'uint8', name: 'side' },
+                            { type: 'uint256', name: 'margin' },
                             { type: 'uint256', name: 'leverage' },
-                        ], [market, isLong, size, leverage]);
+                        ], [1, user, marketEnum, sideEnum, marginAmount, leverage]);
+                        const routerData = encodeAbiParameters([
+                            { type: 'address', name: 'marginToken' },
+                            { type: 'uint256', name: 'margin' },
+                            { type: 'bytes', name: 'adapterData' },
+                        ], [marginToken, marginAmount, adapterData]);
+                        const maxSpendUnits = marginAmount;
+                        action.data = encodeAbiParameters([{ type: 'uint256' }, { type: 'bytes' }], [maxSpendUnits, routerData]);
                     }
                     catch (encodeError) {
                         console.warn('[relayed] Failed to encode perp data, using fallback:', encodeError.message);
                         action.data = '0x' + Buffer.from(JSON.stringify(perpData)).toString('hex');
                     }
                 }
-                else if (actionType === 3) { // Lend action
-                    // Encode lend data: (address token, uint256 amount)
+                else if (actionType === 3) { // Lend action (DemoLend/Aave)
+                    const { parseUnits } = await import('viem');
                     const lendData = action.data;
-                    const token = lendData.token || lendData.asset || '0x0000000000000000000000000000000000000000';
-                    const amount = BigInt(Math.floor((lendData.amount || 100) * 1e6));
+                    const asset = lendData.asset || lendData.token || DEMO_REDACTED_ADDRESS || REDACTED_ADDRESS_SEPOLIA || '0x0000000000000000000000000000000000000000';
+                    const vault = lendData.vault || lendData.vaultAddress || lendData.pool || '0x0000000000000000000000000000000000000000';
+                    const amount = parseUnits(String(lendData.amount || 100), asset?.toLowerCase() === (WETH_ADDRESS_SEPOLIA || '').toLowerCase() ? 18 : 6);
+                    const user = (plan.user || userAddress);
                     try {
-                        action.data = encodeAbiParameters([
-                            { type: 'address', name: 'token' },
+                        const innerData = encodeAbiParameters([
+                            { type: 'address', name: 'asset' },
+                            { type: 'address', name: 'vault' },
                             { type: 'uint256', name: 'amount' },
-                        ], [token, amount]);
+                            { type: 'address', name: 'onBehalfOf' },
+                        ], [asset, vault, amount, user]);
+                        // Session wrapper with maxSpendUnits equal to amount (in token units)
+                        action.data = encodeAbiParameters([{ type: 'uint256' }, { type: 'bytes' }], [amount, innerData]);
                     }
                     catch (encodeError) {
                         console.warn('[relayed] Failed to encode lend data, using fallback:', encodeError.message);
@@ -3080,13 +3624,12 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
             firstActionType: plan.actions?.[0]?.actionType,
         });
         // STRICT SERVER-SIDE GUARDS
-        const guardConfig = await import('../config');
-        const EXECUTION_ROUTER_ADDRESS = guardConfig.EXECUTION_ROUTER_ADDRESS;
-        const UNISWAP_V3_ADAPTER_ADDRESS = guardConfig.UNISWAP_V3_ADAPTER_ADDRESS;
-        const WETH_WRAP_ADAPTER_ADDRESS = guardConfig.WETH_WRAP_ADAPTER_ADDRESS;
-        const MOCK_SWAP_ADAPTER_ADDRESS = guardConfig.MOCK_SWAP_ADAPTER_ADDRESS;
-        const REDACTED_ADDRESS_SEPOLIA = guardConfig.REDACTED_ADDRESS_SEPOLIA;
-        const WETH_ADDRESS_SEPOLIA = guardConfig.WETH_ADDRESS_SEPOLIA;
+        // Note: DEMO_REDACTED_ADDRESS, REDACTED_ADDRESS_SEPOLIA, WETH_ADDRESS_SEPOLIA already imported above
+        const EXECUTION_ROUTER_ADDRESS = configModule.EXECUTION_ROUTER_ADDRESS;
+        const ETH_TESTNET_RPC_URL = configModule.ETH_TESTNET_RPC_URL;
+        const UNISWAP_V3_ADAPTER_ADDRESS = configModule.UNISWAP_V3_ADAPTER_ADDRESS;
+        const WETH_WRAP_ADAPTER_ADDRESS = configModule.WETH_WRAP_ADAPTER_ADDRESS;
+        const MOCK_SWAP_ADAPTER_ADDRESS = configModule.MOCK_SWAP_ADAPTER_ADDRESS;
         // Guard 1: Validate action count (max 4 for MVP)
         if (!plan.actions || !Array.isArray(plan.actions)) {
             return res.status(400).json({
@@ -3186,6 +3729,55 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
                         adapter,
                         allowedAdapters: Array.from(allowedAdapters),
                         message: `Adapter ${adapter} not allowed. Allowed adapters: ${Array.from(allowedAdapters).join(', ')}`,
+                    },
+                    correlationId,
+                });
+            }
+        }
+        // Guard 2b: Verify adapters are actually allowlisted on-chain (prevents on-chain revert)
+        if (EXECUTION_ROUTER_ADDRESS && ETH_TESTNET_RPC_URL) {
+            try {
+                const { eth_call, decodeBool } = await import('../executors/evmRpc');
+                const { encodeFunctionData } = await import('viem');
+                const isAdapterAllowedAbi = [
+                    {
+                        name: 'isAdapterAllowed',
+                        type: 'function',
+                        stateMutability: 'view',
+                        inputs: [{ name: '', type: 'address' }],
+                        outputs: [{ name: '', type: 'bool' }],
+                    },
+                ];
+                const uniqueAdapters = Array.from(new Set(plan.actions.map(a => a.adapter?.toLowerCase())));
+                for (const adapter of uniqueAdapters) {
+                    if (!adapter)
+                        continue;
+                    const data = encodeFunctionData({
+                        abi: isAdapterAllowedAbi,
+                        functionName: 'isAdapterAllowed',
+                        args: [adapter],
+                    });
+                    const result = await eth_call(ETH_TESTNET_RPC_URL, EXECUTION_ROUTER_ADDRESS, data);
+                    const isAllowed = decodeBool(result);
+                    if (!isAllowed) {
+                        return res.status(400).json({
+                            ok: false,
+                            error: {
+                                code: 'ADAPTER_NOT_ALLOWED',
+                                adapter,
+                                message: `Adapter ${adapter} is not allowlisted in router`,
+                            },
+                            correlationId,
+                        });
+                    }
+                }
+            }
+            catch (error) {
+                return res.status(400).json({
+                    ok: false,
+                    error: {
+                        code: 'ADAPTER_CHECK_FAILED',
+                        message: `Failed to verify adapter allowlist status: ${error.message}`,
                     },
                     correlationId,
                 });
@@ -3369,12 +3961,16 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
         let instrumentType;
         if (plan.actions.length > 0) {
             const firstAction = plan.actions[0];
-            if (firstAction.actionType === 0)
+            if (firstAction.actionType === 0 || firstAction.actionType === 2)
                 instrumentType = 'swap';
+            else if (firstAction.actionType === 3)
+                instrumentType = 'defi';
+            else if (firstAction.actionType === 7)
+                instrumentType = 'perp';
+            else if (firstAction.actionType === 8)
+                instrumentType = 'event';
             else if (firstAction.actionType === 6)
-                instrumentType = 'perp'; // PROOF could be perp or event
-            else if (firstAction.actionType === 2)
-                instrumentType = 'swap'; // PULL is usually for swaps
+                instrumentType = 'event'; // PROOF fallback
         }
         instrumentType = instrumentType || spendEstimate.instrumentType;
         if (process.env.NODE_ENV !== 'production') {
@@ -3639,7 +4235,7 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
             });
         }
         // V1: Wait for receipt confirmation (receipt.status === 1)
-        const { ETH_TESTNET_RPC_URL } = await import('../config');
+        // ETH_TESTNET_RPC_URL already imported at line 3932 via guardConfig
         let receiptStatus = 'pending';
         let blockNumber;
         let receiptError;
@@ -3652,6 +4248,96 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
             receiptStatus = receiptResult.status;
             blockNumber = receiptResult.blockNumber;
             receiptError = receiptResult.error;
+        }
+        // CRITICAL FIX: Record position to ledger when confirmed
+        if (receiptStatus === 'confirmed' && txHash) {
+            try {
+                const { createPosition, createExecution, updateExecution } = await import('../../execution-ledger/db');
+                // Extract position details from plan
+                const action = plan.actions[0];
+                const actionData = action?.data || {};
+                const metadata = plan.metadata || {};
+                // Determine instrument type and market
+                const actionType = action?.actionType;
+                let venue = 'swap_demo';
+                let market = 'ETH';
+                let side = 'long';
+                let leverage = 1;
+                let kind = 'swap';
+                if (actionType === 7) { // Perp
+                    venue = 'perp_demo';
+                    kind = 'perp';
+                    market = actionData.asset || actionData.token || 'ETH';
+                    side = actionData.direction === 'short' || actionData.isLong === false ? 'short' : 'long';
+                    leverage = actionData.leverage || actionData.leverageX || 10;
+                }
+                else if (actionType === 6) { // Event/Proof
+                    venue = 'perp_demo'; // Use perp_demo for events too
+                    kind = 'proof';
+                    market = actionData.market || actionData.eventId || 'EVENT';
+                    side = actionData.outcome === 'no' || actionData.outcome === false ? 'short' : 'long';
+                }
+                else if (actionType === 3) { // Lend/DeFi
+                    venue = 'deposit_demo';
+                    kind = 'deposit';
+                    market = actionData.asset || actionData.token || 'REDACTED';
+                    side = 'long'; // Deposits are always "long"
+                }
+                else if (actionType === 0) { // Swap
+                    venue = 'swap_demo';
+                    kind = 'swap';
+                    market = actionData.tokenOut || 'ETH';
+                    side = 'long';
+                }
+                // Record execution first
+                const execution = createExecution({
+                    chain: 'ethereum',
+                    network: 'sepolia',
+                    fromAddress: userAddress,
+                    toAddress: EXECUTION_ROUTER_ADDRESS || '',
+                    token: market,
+                    amountUnits: actionData.amount?.toString() || actionData.size?.toString() || '0',
+                    amountDisplay: `${actionData.amount || actionData.depositUsd || 100} USD`,
+                    usdEstimate: actionData.depositUsd || actionData.amount || 100,
+                    kind,
+                    venue,
+                    intent: metadata.executionIntent || metadata.draftId || 'relayed_execution',
+                    action: `${kind}_${market}`.toLowerCase(),
+                    relayerAddress: RELAYER_PRIVATE_KEY ? 'relayer' : undefined,
+                    sessionId: sessionId,
+                });
+                // Update execution with txHash
+                updateExecution(execution.id, {
+                    txHash,
+                    explorerUrl: `https://sepolia.etherscan.io/tx/${txHash}`,
+                    status: 'confirmed',
+                });
+                // Record position (except for swaps which don't create persistent positions)
+                if (actionType !== 0) {
+                    createPosition({
+                        chain: 'ethereum',
+                        network: 'sepolia',
+                        venue,
+                        market,
+                        side,
+                        leverage,
+                        margin_units: actionData.amount?.toString() || actionData.depositUsd?.toString(),
+                        margin_display: `${actionData.amount || actionData.depositUsd || 100} REDACTED`,
+                        size_units: actionData.size?.toString(),
+                        entry_price: actionData.entryPrice?.toString(),
+                        user_address: userAddress.toLowerCase(),
+                        open_tx_hash: txHash,
+                        open_explorer_url: `https://sepolia.etherscan.io/tx/${txHash}`,
+                        intent_id: metadata.draftId,
+                        execution_id: execution.id,
+                    });
+                    console.log(`[relayed] Recorded position for ${userAddress.toLowerCase()}: ${market} ${side} on ${venue}`);
+                }
+            }
+            catch (ledgerError) {
+                // Don't fail the execution, just log the ledger error
+                console.error('[relayed] Failed to record to ledger:', ledgerError.message);
+            }
         }
         // V1: Only update portfolio if receipt.status === 1 (confirmed)
         const portfolioAfter = receiptStatus === 'confirmed'
@@ -3705,16 +4391,19 @@ app.post('/api/execute/relayed', maybeCheckAccess, async (req, res) => {
             latencyMs: Date.now() - relayedStartTime,
         });
         // Task 4: Add execution path proof
-        // Task 4: Add execution path proof
         res.json({
             ...result,
             chainId: 11155111, // Sepolia
             explorerUrl: `https://sepolia.etherscan.io/tx/${txHash}`,
             correlationId, // Include correlationId for client tracing
+            userAddress: userAddress.toLowerCase(), // Include userAddress for wallet scoping
             notes: ['execution_path:relayed'], // Task 4: Unambiguous evidence of execution path
         });
     }
     catch (error) {
+        if (process.env.DEBUG_DIAGNOSTICS === 'true') {
+            console.log('[DEBUG_DIAGNOSTICS] execution failed after session:', error?.message || String(error));
+        }
         console.error('[api/execute/relayed] Error:', error);
         // Trace log: relayed error
         logExecuteTrace(correlationId, 'relayed:error', {
@@ -4239,6 +4928,87 @@ app.post('/api/session/status', async (req, res) => {
         });
     }
 });
+/**
+ * GET /api/debug/session (read-only, gated by DEBUG_DIAGNOSTICS=true)
+ * Returns session config and optional on-chain session presence. No secrets; only boolean flags and prefixes.
+ * Session state (enabledKey, authorizedKey, sessionId) lives in client localStorage; server cannot see it unless
+ * caller passes ?sessionId=...&userAddress=... for a redacted on-chain check.
+ */
+if (process.env.DEBUG_DIAGNOSTICS === 'true') {
+    app.get('/api/debug/session', async (req, res) => {
+        try {
+            const { EXECUTION_MODE, EXECUTION_AUTH_MODE, EXECUTION_ROUTER_ADDRESS, ETH_TESTNET_RPC_URL } = await import('../config');
+            const sessionEnabled = EXECUTION_MODE === 'eth_testnet' && EXECUTION_AUTH_MODE === 'session';
+            const sessionId = typeof req.query?.sessionId === 'string' ? req.query.sessionId.trim() : null;
+            const userAddress = typeof req.query?.userAddress === 'string' ? req.query.userAddress.trim().toLowerCase() : null;
+            const base = {
+                ok: true,
+                executionMode: EXECUTION_MODE,
+                authMode: EXECUTION_AUTH_MODE,
+                sessionEnabled,
+                serverSeesSession: false,
+                note: 'Session state is client-side (localStorage). Server cannot see it. Pass ?sessionId=0x...&userAddress=0x... for redacted on-chain check.',
+            };
+            if (!sessionId && !userAddress) {
+                return res.json(base);
+            }
+            const sessionIdPrefix = sessionId ? sessionId.slice(0, 8) : null;
+            const addressPrefix = userAddress ? userAddress.slice(0, 8) : null;
+            base.enabledKeyPrefix = userAddress ? `blossom_oneclick_${userAddress.slice(0, 8)}` : null;
+            base.authorizedKeyPrefix = userAddress ? `blossom_oneclick_auth_${userAddress.slice(0, 8)}` : null;
+            base.sessionIdPrefix = sessionIdPrefix;
+            if (!sessionId || sessionId.length !== 66 || !sessionId.startsWith('0x')) {
+                base.hasSession = null;
+                base.sessionCheckNote = 'sessionId missing or invalid format (need 0x + 64 hex).';
+                return res.json(base);
+            }
+            if (!ETH_TESTNET_RPC_URL || !EXECUTION_ROUTER_ADDRESS) {
+                base.hasSession = null;
+                base.sessionCheckNote = 'RPC or router not configured; cannot check on-chain.';
+                return res.json(base);
+            }
+            try {
+                const { createPublicClient, http } = await import('viem');
+                const { sepolia } = await import('viem/chains');
+                const publicClient = createPublicClient({
+                    chain: sepolia,
+                    transport: http(ETH_TESTNET_RPC_URL),
+                });
+                const sessionAbi = [
+                    { name: 'sessions', type: 'function', stateMutability: 'view', inputs: [{ name: '', type: 'bytes32' }], outputs: [
+                            { name: 'owner', type: 'address' }, { name: 'executor', type: 'address' }, { name: 'expiresAt', type: 'uint64' },
+                            { name: 'maxSpend', type: 'uint256' }, { name: 'spent', type: 'uint256' }, { name: 'active', type: 'bool' },
+                        ] },
+                ];
+                const normalizedSessionId = sessionId.startsWith('0x') ? sessionId : `0x${sessionId}`;
+                const sessionResult = await Promise.race([
+                    publicClient.readContract({
+                        address: EXECUTION_ROUTER_ADDRESS,
+                        abi: sessionAbi,
+                        functionName: 'sessions',
+                        args: [normalizedSessionId],
+                    }),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000)),
+                ]);
+                const [, , expiresAt, , , active] = sessionResult;
+                const now = BigInt(Math.floor(Date.now() / 1000));
+                const hasSession = active && expiresAt > now;
+                base.hasSession = hasSession;
+                base.serverSeesSession = hasSession;
+                base.sessionCheckNote = hasSession ? 'on-chain session active and not expired' : (active ? 'on-chain session expired' : 'no on-chain session for this sessionId');
+            }
+            catch (onChainErr) {
+                base.hasSession = null;
+                base.serverSeesSession = false;
+                base.sessionCheckNote = `on-chain check failed: ${onChainErr?.message || String(onChainErr)}`;
+            }
+            return res.json(base);
+        }
+        catch (e) {
+            return res.status(500).json({ ok: false, error: String(e.message) });
+        }
+    });
+}
 /**
  * POST /api/session/revoke/prepare
  * Prepare session revocation transaction
@@ -4809,10 +5579,11 @@ app.get('/api/wallet/balances', maybeCheckAccess, async (req, res) => {
  */
 app.get('/api/demo/config', async (req, res) => {
     try {
-        const { EXECUTION_MODE, DEMO_REDACTED_ADDRESS, DEMO_WETH_ADDRESS } = await import('../config');
+        const { EXECUTION_MODE, DEMO_BUSDC_ADDRESS, DEMO_REDACTED_ADDRESS, DEMO_WETH_ADDRESS } = await import('../config');
+        const stableAddress = DEMO_BUSDC_ADDRESS || DEMO_REDACTED_ADDRESS;
         const missing = [];
-        if (!DEMO_REDACTED_ADDRESS)
-            missing.push('DEMO_REDACTED_ADDRESS');
+        if (!stableAddress)
+            missing.push('DEMO_BUSDC_ADDRESS');
         if (!DEMO_WETH_ADDRESS)
             missing.push('DEMO_WETH_ADDRESS');
         res.json({
@@ -4832,12 +5603,13 @@ app.get('/api/demo/config', async (req, res) => {
 });
 /**
  * POST /api/demo/faucet
- * Mints demo tokens (REDACTED and WETH) to a user address
+ * Mints demo tokens (bUSDC and WETH) to a user address
  * Only available in eth_testnet mode
  */
 app.post('/api/demo/faucet', maybeCheckAccess, async (req, res) => {
     try {
-        const { EXECUTION_MODE, DEMO_REDACTED_ADDRESS, DEMO_WETH_ADDRESS } = await import('../config');
+        const { EXECUTION_MODE, DEMO_BUSDC_ADDRESS, DEMO_REDACTED_ADDRESS, DEMO_WETH_ADDRESS } = await import('../config');
+        const stableAddress = DEMO_BUSDC_ADDRESS || DEMO_REDACTED_ADDRESS;
         // Only allow in testnet mode
         if (EXECUTION_MODE !== 'eth_testnet') {
             return res.status(400).json({
@@ -4846,10 +5618,10 @@ app.post('/api/demo/faucet', maybeCheckAccess, async (req, res) => {
             });
         }
         // Validate demo token addresses are configured
-        if (!DEMO_REDACTED_ADDRESS || !DEMO_WETH_ADDRESS) {
+        if (!stableAddress || !DEMO_WETH_ADDRESS) {
             const missing = [];
-            if (!DEMO_REDACTED_ADDRESS)
-                missing.push('DEMO_REDACTED_ADDRESS');
+            if (!stableAddress)
+                missing.push('DEMO_BUSDC_ADDRESS');
             if (!DEMO_WETH_ADDRESS)
                 missing.push('DEMO_WETH_ADDRESS');
             return res.status(503).json({
@@ -4889,6 +5661,67 @@ app.post('/api/demo/faucet', maybeCheckAccess, async (req, res) => {
         res.status(500).json({
             ok: false,
             error: 'Failed to mint demo tokens',
+            details: error.message
+        });
+    }
+});
+/**
+ * POST /api/mint
+ * Mint bUSDC for testnet use with a daily cap (default 1000/day)
+ */
+app.post('/api/mint', mintRateLimit, maybeCheckAccess, async (req, res) => {
+    try {
+        const { EXECUTION_MODE } = await import('../config');
+        if (EXECUTION_MODE !== 'eth_testnet') {
+            return res.status(400).json({
+                ok: false,
+                error: 'Mint only available in eth_testnet mode'
+            });
+        }
+        const { userAddress, amount } = req.body || {};
+        if (!userAddress || typeof userAddress !== 'string') {
+            return res.status(400).json({
+                ok: false,
+                error: 'userAddress is required'
+            });
+        }
+        if (!/^0x[a-fA-F0-9]{40}$/i.test(userAddress)) {
+            return res.status(400).json({
+                ok: false,
+                error: 'Invalid userAddress format'
+            });
+        }
+        const amountNum = Number(amount ?? 1000);
+        if (!Number.isFinite(amountNum) || amountNum <= 0) {
+            return res.status(400).json({
+                ok: false,
+                error: 'Invalid amount'
+            });
+        }
+        const limitCheck = await checkAndRecordMint(userAddress, amountNum);
+        if (!limitCheck.ok) {
+            return res.status(429).json({
+                ok: false,
+                error: 'Daily mint limit exceeded',
+                remaining: limitCheck.remaining,
+                cap: limitCheck.cap
+            });
+        }
+        const { mintBusdc } = await import('../utils/demoTokenMinter');
+        const result = await mintBusdc(userAddress, amountNum);
+        res.json({
+            ok: true,
+            success: true,
+            txHash: result.txHash,
+            amount: result.amount,
+            remaining: limitCheck.remaining
+        });
+    }
+    catch (error) {
+        console.error('[api/mint] Error:', error);
+        res.status(500).json({
+            ok: false,
+            error: 'Failed to mint bUSDC',
             details: error.message
         });
     }
@@ -7089,20 +7922,26 @@ app.get('/api/stats/public', async (req, res) => {
         // Sanitize recent executions (include txHash, chain, network for explorer links, and USD estimate)
         // Count executions with missing USD estimates for debugging
         const missingUsdCount = recentExecutions.filter(exec => exec.status === 'confirmed' && (exec.usd_estimate === null || exec.usd_estimate === undefined)).length;
-        const safeExecutions = recentExecutions.map(exec => ({
-            id: exec.id,
-            chain: exec.chain,
-            network: exec.network,
-            kind: exec.kind,
-            venue: exec.venue,
-            status: exec.status,
-            tx_hash: exec.tx_hash,
-            explorer_url: exec.explorer_url,
-            created_at: exec.created_at,
-            intent_id: exec.intent_id,
-            usd_estimate: exec.usd_estimate || null,
-            amount_display: exec.amount_display || null,
-        }));
+        const safeExecutions = recentExecutions.map(exec => {
+            const feeBps = summary.feeBps || 25;
+            const isSuccessful = exec.status === 'confirmed' || exec.status === 'finalized';
+            const feeBlsmUsdc = isSuccessful && exec.usd_estimate ? Number(exec.usd_estimate) * (feeBps / 10000) : 0;
+            return ({
+                id: exec.id,
+                chain: exec.chain,
+                network: exec.network,
+                kind: exec.kind,
+                venue: exec.venue,
+                status: exec.status,
+                tx_hash: exec.tx_hash,
+                explorer_url: exec.explorer_url,
+                created_at: exec.created_at,
+                intent_id: exec.intent_id,
+                usd_estimate: exec.usd_estimate || null,
+                amount_display: (exec.amount_display || null)?.replace?.(/\bREDACTED\b/g, 'bUSDC') ?? null,
+                fee_blsm_usdc: Math.round(feeBlsmUsdc * 10000) / 10000,
+            });
+        });
         res.json({
             ok: true,
             data: {
@@ -7112,6 +7951,10 @@ app.get('/api/stats/public', async (req, res) => {
                 successfulExecutions: summary.successfulExecutions || 0,
                 successRate: summary.successRate || 0,
                 totalUsdRouted: summary.totalUsdRouted || 0,
+                totalFeeBlsmUsdc: summary.totalFeeBlsmUsdc || 0,
+                feeBps: summary.feeBps || 25,
+                feeTokenSymbol: summary.feeTokenSymbol || 'bUSDC',
+                feeTreasuryAddress: summary.feeTreasuryAddress || null,
                 uniqueWallets: summary.uniqueWallets || 0,
                 chainsActive: summary.chainsActive || [],
                 recentIntents: safeIntents || [],
@@ -7134,6 +7977,10 @@ app.get('/api/stats/public', async (req, res) => {
                 successfulExecutions: 0,
                 successRate: 0,
                 totalUsdRouted: 0,
+                totalFeeBlsmUsdc: 0,
+                feeBps: 25,
+                feeTokenSymbol: 'bUSDC',
+                feeTreasuryAddress: null,
                 chainsActive: [],
                 recentIntents: [],
                 recentExecutions: [],
@@ -7142,6 +7989,392 @@ app.get('/api/stats/public', async (req, res) => {
         });
     }
 });
+// ============================================
+// ERC-8004 TRUSTLESS AI AGENTS ENDPOINTS
+// ============================================
+/**
+ * GET /api/erc8004/identity
+ * Returns the agent's ERC-8004 identity information
+ */
+app.get('/api/erc8004/identity', asyncHandler(async (req, res) => {
+    try {
+        const { ERC8004_ENABLED, getAgentIdentity, isAgentRegistered, } = await import('../erc8004/index.js');
+        if (!ERC8004_ENABLED) {
+            return res.json({
+                ok: false,
+                error: 'ERC-8004 integration is disabled',
+                enabled: false,
+            });
+        }
+        const identity = getAgentIdentity();
+        const registered = isAgentRegistered();
+        res.json({
+            ok: true,
+            enabled: true,
+            registered,
+            identity: identity
+                ? {
+                    agentId: identity.agentId.toString(),
+                    owner: identity.owner,
+                    agentURI: identity.agentURI,
+                    chainId: identity.chainId,
+                    registryAddress: identity.registryAddress,
+                    fullyQualifiedId: identity.fullyQualifiedId,
+                }
+                : null,
+        });
+    }
+    catch (error) {
+        console.error('[erc8004] Identity endpoint error:', error.message);
+        res.status(500).json({
+            ok: false,
+            error: 'Failed to get agent identity',
+            details: error.message,
+        });
+    }
+}));
+/**
+ * GET /api/erc8004/reputation
+ * Returns the agent's reputation score derived from execution stats
+ */
+app.get('/api/erc8004/reputation', asyncHandler(async (req, res) => {
+    try {
+        const { ERC8004_ENABLED, getReputationSummary, formatReputationScore, getReputationTier, } = await import('../erc8004/index.js');
+        if (!ERC8004_ENABLED) {
+            return res.json({
+                ok: false,
+                error: 'ERC-8004 integration is disabled',
+                enabled: false,
+            });
+        }
+        const reputation = await getReputationSummary();
+        if (!reputation) {
+            return res.json({
+                ok: true,
+                enabled: true,
+                reputation: null,
+                message: 'No reputation data available',
+            });
+        }
+        res.json({
+            ok: true,
+            enabled: true,
+            reputation: {
+                agentId: reputation.agentId.toString(),
+                score: reputation.averageScore,
+                scoreFormatted: formatReputationScore(reputation.averageScore),
+                tier: getReputationTier(reputation.averageScore),
+                winRate: Math.round(reputation.winRate * 100) / 100,
+                executionCount: reputation.executionCount,
+                totalVolumeUsd: Math.round(reputation.totalVolumeUsd * 100) / 100,
+                avgLatencyMs: reputation.avgLatencyMs,
+                totalFeedbackCount: reputation.totalFeedbackCount,
+                byCategory: reputation.byCategory,
+                updatedAt: reputation.updatedAt,
+            },
+        });
+    }
+    catch (error) {
+        console.error('[erc8004] Reputation endpoint error:', error.message);
+        res.status(500).json({
+            ok: false,
+            error: 'Failed to get reputation summary',
+            details: error.message,
+        });
+    }
+}));
+/**
+ * GET /api/erc8004/capabilities
+ * Returns the agent's declared capabilities
+ */
+app.get('/api/erc8004/capabilities', asyncHandler(async (req, res) => {
+    try {
+        const { ERC8004_ENABLED, getBlossomCapabilities, getCapabilitySummary, } = await import('../erc8004/index.js');
+        if (!ERC8004_ENABLED) {
+            return res.json({
+                ok: false,
+                error: 'ERC-8004 integration is disabled',
+                enabled: false,
+            });
+        }
+        const capabilities = getBlossomCapabilities();
+        const summary = getCapabilitySummary();
+        res.json({
+            ok: true,
+            enabled: true,
+            capabilities,
+            summary,
+            count: capabilities.length,
+        });
+    }
+    catch (error) {
+        console.error('[erc8004] Capabilities endpoint error:', error.message);
+        res.status(500).json({
+            ok: false,
+            error: 'Failed to get capabilities',
+            details: error.message,
+        });
+    }
+}));
+/**
+ * POST /api/erc8004/validate
+ * Validates an action against declared capabilities
+ */
+app.post('/api/erc8004/validate', asyncHandler(async (req, res) => {
+    try {
+        const { ERC8004_ENABLED, validateActionAgainstCapabilities, } = await import('../erc8004/index.js');
+        if (!ERC8004_ENABLED) {
+            return res.json({
+                ok: false,
+                error: 'ERC-8004 integration is disabled',
+                enabled: false,
+            });
+        }
+        const { kind, chain, venue, asset, leverage, amountUsd } = req.body;
+        if (!kind) {
+            return res.status(400).json({
+                ok: false,
+                error: 'Missing required field: kind',
+            });
+        }
+        const result = validateActionAgainstCapabilities({
+            kind,
+            chain,
+            venue,
+            asset,
+            leverage,
+            amountUsd,
+        });
+        res.json({
+            ok: true,
+            validation: result,
+        });
+    }
+    catch (error) {
+        console.error('[erc8004] Validate endpoint error:', error.message);
+        res.status(500).json({
+            ok: false,
+            error: 'Failed to validate action',
+            details: error.message,
+        });
+    }
+}));
+/**
+ * GET /.well-known/agent-registration.json
+ * ERC-8004 standard discovery endpoint for agent registration
+ */
+app.get('/.well-known/agent-registration.json', asyncHandler(async (req, res) => {
+    try {
+        const { buildBlossomRegistrationFile } = await import('../erc8004/index.js');
+        const registrationFile = buildBlossomRegistrationFile();
+        res.setHeader('Content-Type', 'application/json');
+        res.setHeader('Cache-Control', 'public, max-age=3600'); // Cache for 1 hour
+        res.json(registrationFile);
+    }
+    catch (error) {
+        console.error('[erc8004] Registration file error:', error.message);
+        res.status(500).json({
+            error: 'Failed to generate registration file',
+            details: error.message,
+        });
+    }
+}));
+/**
+ * GET /api/erc8004/feedback
+ * Returns ERC-8004 feedback statistics
+ */
+app.get('/api/erc8004/feedback', asyncHandler(async (req, res) => {
+    try {
+        const { ERC8004_ENABLED, ERC8004_AGENT_ID, } = await import('../erc8004/index.js');
+        if (!ERC8004_ENABLED) {
+            return res.json({
+                ok: false,
+                error: 'ERC-8004 integration is disabled',
+                enabled: false,
+            });
+        }
+        const { getERC8004FeedbackStats, getERC8004Feedback } = await import('../../execution-ledger/db.js');
+        const agentId = ERC8004_AGENT_ID?.toString() || '0';
+        const stats = getERC8004FeedbackStats(agentId);
+        const recentFeedback = getERC8004Feedback({ agentId, limit: 10 });
+        res.json({
+            ok: true,
+            enabled: true,
+            agentId,
+            stats,
+            recentFeedback: recentFeedback.map((f) => ({
+                id: f.id,
+                category: f.category,
+                score: f.score,
+                amountUsd: f.amount_usd,
+                submittedOnchain: f.submitted_onchain === 1,
+                createdAt: f.created_at,
+            })),
+        });
+    }
+    catch (error) {
+        console.error('[erc8004] Feedback endpoint error:', error.message);
+        res.status(500).json({
+            ok: false,
+            error: 'Failed to get feedback stats',
+            details: error.message,
+        });
+    }
+}));
+// ============================================
+// SECURITY MONITORING ENDPOINTS
+// ============================================
+/**
+ * GET /api/security/alerts
+ * Returns security alerts for monitoring dashboard
+ */
+app.get('/api/security/alerts', asyncHandler(async (req, res) => {
+    try {
+        const { getAlerts, getAlertMetrics, getSecurityHealth } = await import('../security/index.js');
+        const category = req.query.category;
+        const severity = req.query.severity;
+        const unacknowledgedOnly = req.query.unacknowledged === 'true';
+        const limit = parseInt(req.query.limit) || 50;
+        const alerts = getAlerts({
+            category: category,
+            severity: severity,
+            unacknowledgedOnly,
+            limit,
+        });
+        const metrics = getAlertMetrics();
+        const health = getSecurityHealth();
+        res.json({
+            ok: true,
+            alerts,
+            metrics,
+            health,
+        });
+    }
+    catch (error) {
+        console.error('[security] Alerts endpoint error:', error.message);
+        res.status(500).json({
+            ok: false,
+            error: 'Failed to get security alerts',
+        });
+    }
+}));
+/**
+ * POST /api/security/alerts/:id/acknowledge
+ * Acknowledge a security alert
+ */
+app.post('/api/security/alerts/:id/acknowledge', asyncHandler(async (req, res) => {
+    try {
+        const { acknowledgeAlert } = await import('../security/index.js');
+        const alertId = req.params.id;
+        const acknowledgedBy = req.body.acknowledgedBy || 'admin';
+        const success = acknowledgeAlert(alertId, acknowledgedBy);
+        res.json({
+            ok: success,
+            message: success ? 'Alert acknowledged' : 'Alert not found',
+        });
+    }
+    catch (error) {
+        console.error('[security] Acknowledge error:', error.message);
+        res.status(500).json({
+            ok: false,
+            error: 'Failed to acknowledge alert',
+        });
+    }
+}));
+/**
+ * GET /api/security/path-violations
+ * Returns path violation summary for monitoring
+ */
+app.get('/api/security/path-violations', asyncHandler(async (req, res) => {
+    try {
+        const { getPathViolations, getViolationSummary } = await import('../security/index.js');
+        const limit = parseInt(req.query.limit) || 50;
+        const since = req.query.since ? parseInt(req.query.since) : undefined;
+        const violations = getPathViolations({ limit, since });
+        const summary = getViolationSummary();
+        res.json({
+            ok: true,
+            violations,
+            summary,
+        });
+    }
+    catch (error) {
+        console.error('[security] Path violations endpoint error:', error.message);
+        res.status(500).json({
+            ok: false,
+            error: 'Failed to get path violations',
+        });
+    }
+}));
+/**
+ * GET /api/security/signing-audit
+ * Returns signing decision audit log
+ */
+app.get('/api/security/signing-audit', asyncHandler(async (req, res) => {
+    try {
+        const { getSigningAudit, getSigningAuditSummary } = await import('../security/index.js');
+        const limit = parseInt(req.query.limit) || 50;
+        const operation = req.query.operation;
+        const entries = getSigningAudit({
+            limit,
+            operation: operation,
+        });
+        const summary = getSigningAuditSummary();
+        res.json({
+            ok: true,
+            entries,
+            summary,
+        });
+    }
+    catch (error) {
+        console.error('[security] Signing audit endpoint error:', error.message);
+        res.status(500).json({
+            ok: false,
+            error: 'Failed to get signing audit',
+        });
+    }
+}));
+/**
+ * POST /api/security/fuzz-test
+ * Run fuzz tests against intent parser (dev/staging only)
+ */
+app.post('/api/security/fuzz-test', asyncHandler(async (req, res) => {
+    try {
+        // Only allow in non-production environments
+        if (process.env.NODE_ENV === 'production' && !req.query.force) {
+            return res.status(403).json({
+                ok: false,
+                error: 'Fuzz testing disabled in production',
+            });
+        }
+        const { runFuzzSuite } = await import('../security/index.js');
+        // Mock parser for testing
+        const mockParser = async (input) => {
+            // This would be replaced with actual intent parsing in real tests
+            return { kind: 'swap', rawInput: input };
+        };
+        const categories = req.body.categories;
+        const results = await runFuzzSuite(mockParser, categories);
+        res.json({
+            ok: true,
+            results: {
+                total: results.total,
+                passed: results.passed,
+                failed: results.failed,
+                passRate: Math.round((results.passed / results.total) * 100),
+                details: results.results.filter(r => !r.passed),
+            },
+        });
+    }
+    catch (error) {
+        console.error('[security] Fuzz test endpoint error:', error.message);
+        res.status(500).json({
+            ok: false,
+            error: 'Fuzz test failed',
+            details: error.message,
+        });
+    }
+}));
 // ============================================
 // OBSERVABILITY: Central Error Handler
 // ============================================
@@ -7153,6 +8386,15 @@ app.get('/api/stats/public', async (req, res) => {
  */
 app.use((err, req, res, next) => {
     const correlationId = req.correlationId || 'unknown';
+    if (SENTRY_ENABLED) {
+        Sentry.captureException(err, {
+            tags: {
+                correlationId,
+                path: req.path,
+                method: req.method,
+            },
+        });
+    }
     // Log error details (dev only for full stack)
     const errorLog = {
         correlationId,

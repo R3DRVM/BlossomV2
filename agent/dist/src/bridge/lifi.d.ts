@@ -85,4 +85,81 @@ export declare function getLiFiChains(): Promise<{
     name: string;
     key: string;
 }[]>;
+/**
+ * LiFi transaction request from quote
+ */
+export interface LiFiTransactionRequest {
+    to: string;
+    data: string;
+    value: string;
+    gasLimit?: string;
+    gasPrice?: string;
+    chainId: number;
+}
+/**
+ * Execute result from LiFi bridge
+ */
+export interface LiFiExecuteResult {
+    ok: boolean;
+    txHash?: string;
+    status?: 'pending' | 'success' | 'failed';
+    error?: {
+        code: string;
+        message: string;
+    };
+}
+/**
+ * Bridge execution status
+ */
+export interface LiFiStatus {
+    status: 'NOT_FOUND' | 'PENDING' | 'DONE' | 'FAILED';
+    substatus?: string;
+    sending?: {
+        txHash: string;
+        amount: string;
+        token: string;
+    };
+    receiving?: {
+        txHash: string;
+        amount: string;
+        token: string;
+    };
+    tool?: string;
+    lifiExplorerLink?: string;
+}
+/**
+ * Get route from LiFi with transaction data
+ * Returns full transaction data for execution
+ *
+ * SECURITY NOTE: This returns unsigned transaction data.
+ * The frontend must sign this with the user's wallet (non-custodial).
+ * DO NOT sign or submit transactions on behalf of users without explicit delegation.
+ */
+export declare function getLiFiRoute(params: LiFiQuoteParams & {
+    fromAddress: string;
+    toAddress?: string;
+}): Promise<{
+    ok: boolean;
+    transactionRequest?: LiFiTransactionRequest;
+    quote?: LiFiQuoteResult['quote'];
+    error?: {
+        code: string;
+        message: string;
+    };
+}>;
+/**
+ * Track LiFi bridge status
+ * Polls the LiFi API for transaction status
+ */
+export declare function trackLiFiStatus(txHash: string, fromChainId: number): Promise<LiFiStatus>;
+/**
+ * Poll for bridge completion
+ * Returns when bridge is complete or timeout reached
+ *
+ * @param txHash Source chain transaction hash
+ * @param fromChainId Source chain ID
+ * @param maxWaitMs Maximum wait time (default 5 minutes)
+ * @param pollIntervalMs Poll interval (default 10 seconds)
+ */
+export declare function waitForBridgeCompletion(txHash: string, fromChainId: number, maxWaitMs?: number, pollIntervalMs?: number): Promise<LiFiStatus>;
 //# sourceMappingURL=lifi.d.ts.map

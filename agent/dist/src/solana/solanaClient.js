@@ -15,6 +15,7 @@ export class SolanaClient {
     }
     /**
      * Make an RPC call to Solana
+     * Public for advanced use cases (token accounts, etc.)
      */
     async rpcCall(method, params = []) {
         const response = await fetch(this.rpcUrl, {

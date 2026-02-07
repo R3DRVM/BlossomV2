@@ -6,7 +6,7 @@ export type PriceSymbol = 'ETH' | 'BTC' | 'SOL' | 'REDACTED' | 'AVAX' | 'LINK';
 export interface PriceSnapshot {
     symbol: PriceSymbol;
     priceUsd: number;
-    source: 'coingecko' | 'static';
+    source: 'coingecko' | 'static' | 'pyth' | 'jupiter';
     fetchedAt: number;
 }
 /**

@@ -17,6 +17,9 @@ export declare const UNISWAP_V3_ADAPTER_ADDRESS: string | undefined;
 export declare const WETH_WRAP_ADAPTER_ADDRESS: string | undefined;
 export declare const REDACTED_ADDRESS_SEPOLIA: string | undefined;
 export declare const WETH_ADDRESS_SEPOLIA: string | undefined;
+export declare const SOLANA_RPC_URL: string;
+export declare const SOLANA_PROGRAM_ID: string | undefined;
+export declare const DEMO_BUSDC_ADDRESS: string | undefined;
 export declare const DEMO_REDACTED_ADDRESS: string | undefined;
 export declare const DEMO_WETH_ADDRESS: string | undefined;
 export declare const DEMO_SWAP_ROUTER_ADDRESS: string | undefined;
@@ -74,4 +77,48 @@ export declare function requireRelayerConfig(): void;
  * Throws clear errors if configuration is invalid
  */
 export declare function validateEthTestnetConfig(): Promise<void>;
+export declare const HYPERLIQUID_ENABLED: boolean;
+export declare const HYPERLIQUID_TESTNET_RPC_URL: string;
+export declare const HYPERLIQUID_TESTNET_CHAIN_ID: number;
+export declare const HYPERLIQUID_EXCHANGE_URL: string;
+export declare const HYPERLIQUID_INFO_URL: string;
+export declare const HYPERLIQUID_BUILDER_ADDRESS: Address | undefined;
+export declare const HYPERLIQUID_BUILDER_PRIVATE_KEY: string | undefined;
+export declare const HYPERLIQUID_MOCK_HYPE_ADDRESS: Address | undefined;
+export declare const HYPERLIQUID_RATE_LIMIT_MARKET_CREATION: number;
+export declare const HYPERLIQUID_RATE_LIMIT_POSITION: number;
+export declare const HYPERLIQUID_RATE_LIMIT_QUOTE: number;
+export declare const HYPERLIQUID_DEFAULT_MAX_LEVERAGE: number;
+export declare const HYPERLIQUID_DEFAULT_MAKER_FEE_BPS: number;
+export declare const HYPERLIQUID_DEFAULT_TAKER_FEE_BPS: number;
+export declare const HYPERLIQUID_MIN_BOND_HYPE: bigint;
+/**
+ * Require Hyperliquid configuration when using HIP-3 features
+ * Throws a clear error if required variables are missing
+ */
+export declare function requireHyperliquidConfig(): void;
+/**
+ * Validate Hyperliquid configuration
+ * Checks builder address format and API connectivity
+ */
+export declare function validateHyperliquidConfig(): Promise<void>;
+export declare const ERC8004_ENABLED: boolean;
+export declare const ERC8004_IDENTITY_REGISTRY_SEPOLIA: Address | undefined;
+export declare const ERC8004_REPUTATION_REGISTRY_SEPOLIA: Address | undefined;
+export declare const ERC8004_VALIDATION_REGISTRY_SEPOLIA: Address | undefined;
+export declare const ERC8004_AGENT_ID: bigint | undefined;
+export declare const ERC8004_AGENT_URI: string;
+export declare const ERC8004_AUTO_FEEDBACK: boolean;
+export declare const ERC8004_FEEDBACK_MIN_USD: number;
+export declare const ERC8004_REQUIRE_VALIDATION: boolean;
+/**
+ * Require ERC-8004 configuration when using ERC-8004 features
+ * Throws a clear error if required variables are missing
+ */
+export declare function requireERC8004Config(): void;
+/**
+ * Validate ERC-8004 configuration
+ * Checks address formats and configuration values
+ */
+export declare function validateERC8004Config(): Promise<void>;
 //# sourceMappingURL=config.d.ts.map

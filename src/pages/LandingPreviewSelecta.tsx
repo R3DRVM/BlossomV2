@@ -1,14 +1,14 @@
 /**
  * Landing Preview — Selecta-style layout.
- * Hero: FlowerAsciiDither (flower silhouette only, dither + scroll-driven bloom).
- * Engine: SVG diagram with step-by-step reveal. Dev slider for bloom tuning.
+ * Hero: FlowerAsciiBloom (ASCII + dither + motion warp from blossomascii.jpg only).
+ * Engine: SVG diagram with step-by-step reveal. Dev-only bloom progress override.
  */
 
 import { useRef, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
 import { BlossomLogo } from '@/components/BlossomLogo';
-import { FlowerAsciiDither } from '@/components/hero/FlowerAsciiDither';
+import { FlowerAsciiBloom } from '@/components/hero/FlowerAsciiBloom';
 import { ExecutionEngineDiagram } from '@/components/engine/ExecutionEngineDiagram';
 
 const SCROLL_RANGE_VH = 60;
@@ -64,6 +64,7 @@ export default function LandingPreviewSelecta() {
   const [devSlider, setDevSlider] = useState(false);
   const [devProgress, setDevProgress] = useState(0.5);
   const bloomProgress = devSlider ? devProgress : scrollProgress;
+  const setProgressToStill = (i: number) => setDevProgress((i - 1) / 8);
 
   const engineSectionRef = useRef<HTMLElement>(null);
   const stepRef0 = useRef<HTMLDivElement>(null);
@@ -125,13 +126,22 @@ export default function LandingPreviewSelecta() {
         </div>
       </nav>
 
-      {/* Hero: full-width flower silhouette behind headline (Selecta layout) */}
-      <section className="relative min-h-[90vh] flex flex-col overflow-hidden">
+      {/* Hero: full-bleed bloom behind headline (blossomstill1..9 progression, ref only) */}
+      <section
+        className="relative flex flex-col overflow-hidden"
+        style={{ minHeight: 'clamp(680px, 90vh, 980px)' }}
+      >
         <div className="absolute inset-0 z-0" aria-hidden>
-          <FlowerAsciiDither scrollProgress={bloomProgress} className="absolute inset-0 w-full h-full" />
+          <FlowerAsciiBloom
+            progress={devSlider ? bloomProgress : undefined}
+            mode="auto"
+            loopSeconds={7}
+            scale={0.86}
+            className="absolute inset-0 w-full h-full pointer-events-none"
+          />
         </div>
         <div className="container mx-auto px-6 max-w-4xl relative z-10 flex flex-col items-center justify-center text-center flex-1 pt-28 pb-16">
-          <div className="bg-[var(--blossom-bg)]/80 backdrop-blur-sm rounded-2xl px-6 py-4 md:px-8 md:py-6 shadow-[0_0_40px_rgba(0,0,0,0.06)]">
+          <div className="bg-[var(--blossom-bg)]/75 backdrop-blur-sm rounded-2xl px-6 py-4 md:px-8 md:py-6 shadow-[0_0_40px_rgba(0,0,0,0.06)]">
             <h1
               className="text-4xl md:text-6xl font-medium leading-[1.15] tracking-tight mb-4 text-[var(--blossom-text)]"
               style={{ fontFamily: '"Playfair Display", Georgia, serif', textShadow: '0 1px 2px rgba(0,0,0,0.04)' }}
@@ -212,10 +222,10 @@ export default function LandingPreviewSelecta() {
         </div>
       </footer>
 
-      {/* Dev-only: Bloom Progress slider (bottom-left) */}
+      {/* Dev-only: Bloom Progress override (compare to blossomstill1..9) */}
       {import.meta.env.DEV && (
-        <div className="fixed bottom-4 left-4 z-50 flex flex-col gap-1 rounded-lg border bg-black/80 p-3 text-white shadow-lg">
-          <label className="flex items-center gap-2 text-xs">
+        <div className="fixed bottom-4 left-4 z-50 flex flex-col gap-2 rounded-lg border bg-black/85 p-3 text-white shadow-lg">
+          <label className="flex items-center gap-2 text-xs font-medium">
             <input type="checkbox" checked={devSlider} onChange={(e) => setDevSlider(e.target.checked)} />
             Bloom Progress override
           </label>
@@ -227,9 +237,22 @@ export default function LandingPreviewSelecta() {
                 max={100}
                 value={devProgress * 100}
                 onChange={(e) => setDevProgress(Number(e.target.value) / 100)}
-                className="w-32"
+                className="w-36"
               />
               <span className="text-xs">{(devProgress * 100).toFixed(0)}%</span>
+              <div className="flex flex-wrap gap-1">
+                {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => { setDevSlider(true); setProgressToStill(i); }}
+                    className="w-7 h-7 rounded text-xs bg-white/20 hover:bg-white/40"
+                    title={`Still ${i}`}
+                  >
+                    {i}
+                  </button>
+                ))}
+              </div>
             </>
           )}
         </div>
