@@ -494,3 +494,167 @@ export function anonymizeForLogging(data: Record<string, any>): Record<string, a
 
   return anonymized;
 }
+
+// ============================================
+// Phase 2: Cross-Chain Validation
+// ============================================
+
+/**
+ * Asset-to-chain defaults for native asset inference
+ * Used when validating whether an asset is on the expected chain
+ */
+const ASSET_NATIVE_CHAINS: Record<string, string> = {
+  // Solana native assets
+  'SOL': 'solana',
+  'WSOL': 'solana',
+  'BONK': 'solana',
+  'JTO': 'solana',
+  'WIF': 'solana',
+  'PYTH': 'solana',
+  'JUP': 'solana',
+  'ORCA': 'solana',
+  'RAY': 'solana',
+  'MNGO': 'solana',
+  'MSOL': 'solana',
+  'JITOSOL': 'solana',
+
+  // Ethereum native assets
+  'ETH': 'ethereum',
+  'WETH': 'ethereum',
+  'STETH': 'ethereum',
+  'RETH': 'ethereum',
+  'CBETH': 'ethereum',
+  'LDO': 'ethereum',
+  'RPL': 'ethereum',
+  'ENS': 'ethereum',
+
+  // Chain-specific tokens
+  'MATIC': 'polygon',
+  'AVAX': 'avalanche',
+  'OP': 'optimism',
+  'ARB': 'arbitrum',
+  'BNB': 'bsc',
+  'CAKE': 'bsc',
+};
+
+/**
+ * Chain validation result
+ */
+export interface ChainValidationResult {
+  valid: boolean;
+  warning?: string;
+  expectedChain?: string;
+  requiresBridge?: boolean;
+}
+
+/**
+ * Validate that an asset is on the expected chain
+ * Returns warning if bridging may be required
+ */
+export function validateChainForAsset(
+  asset: string,
+  targetChain: string
+): ChainValidationResult {
+  const normalizedAsset = asset.toUpperCase().trim();
+  const normalizedChain = targetChain.toLowerCase().trim();
+
+  // Get expected chain for this asset
+  const expectedChain = ASSET_NATIVE_CHAINS[normalizedAsset];
+
+  // If asset has no native chain preference (multi-chain like USDC), it's valid
+  if (!expectedChain) {
+    return { valid: true };
+  }
+
+  // Check if target chain matches expected chain
+  if (normalizedChain === expectedChain) {
+    return { valid: true };
+  }
+
+  // Normalize chain names for comparison
+  const chainAliases: Record<string, string> = {
+    'eth': 'ethereum',
+    'sol': 'solana',
+    'arb': 'arbitrum',
+    'op': 'optimism',
+    'matic': 'polygon',
+    'avax': 'avalanche',
+    'sepolia': 'ethereum',
+    'devnet': 'solana',
+  };
+
+  const normalizedTargetChain = chainAliases[normalizedChain] || normalizedChain;
+
+  if (normalizedTargetChain === expectedChain) {
+    return { valid: true };
+  }
+
+  // Asset is on a different chain than target - bridging may be required
+  return {
+    valid: true, // Still valid, just needs attention
+    warning: `${asset} is native to ${expectedChain}, bridging may be required to use on ${targetChain}`,
+    expectedChain,
+    requiresBridge: true,
+  };
+}
+
+/**
+ * Validate bridge parameters
+ */
+export function validateBridgeParams(params: {
+  asset: string;
+  sourceChain: string;
+  destChain: string;
+  amount: number;
+}): { valid: boolean; errors: string[]; warnings: string[] } {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const { asset, sourceChain, destChain, amount } = params;
+
+  // Validate chains are different
+  const normalizedSource = sourceChain.toLowerCase();
+  const normalizedDest = destChain.toLowerCase();
+
+  if (normalizedSource === normalizedDest) {
+    errors.push(`Source and destination chains are the same (${sourceChain}). Use a swap instead.`);
+  }
+
+  // Validate amount
+  if (amount <= 0) {
+    errors.push('Bridge amount must be positive');
+  }
+  if (amount < 1) {
+    warnings.push('Very small bridge amounts may result in high relative fees');
+  }
+
+  // Validate asset exists on source chain
+  const sourceValidation = validateChainForAsset(asset, sourceChain);
+  if (sourceValidation.requiresBridge) {
+    warnings.push(`${asset} may not be native to ${sourceChain} - verify you have the correct token`);
+  }
+
+  // Validate route is supported (basic check)
+  const supportedRoutes = [
+    'ethereum:solana',
+    'solana:ethereum',
+    'ethereum:arbitrum',
+    'arbitrum:ethereum',
+    'ethereum:optimism',
+    'optimism:ethereum',
+    'ethereum:base',
+    'base:ethereum',
+    'ethereum:polygon',
+    'polygon:ethereum',
+  ];
+
+  const route = `${normalizedSource}:${normalizedDest}`;
+  if (!supportedRoutes.includes(route)) {
+    warnings.push(`Bridge route ${sourceChain} → ${destChain} may have limited support`);
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+    warnings,
+  };
+}

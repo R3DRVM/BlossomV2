@@ -2266,3 +2266,159 @@ export function getDatabaseIdentityHash(): string {
   // SQLite: return fixed identifier
   return 'sqlite-local';
 }
+
+// ============================================
+// ERC-8004 Feedback Operations
+// ============================================
+
+export type ERC8004FeedbackCategory =
+  | 'swap_execution'
+  | 'perp_execution'
+  | 'lend_execution'
+  | 'bridge_execution'
+  | 'event_execution'
+  | 'general';
+
+export interface ERC8004Feedback {
+  id: string;
+  agent_id: string;
+  category: ERC8004FeedbackCategory;
+  score: number;
+  execution_id?: string;
+  intent_id?: string;
+  amount_usd?: number;
+  submitted_onchain: number;
+  onchain_tx_hash?: string;
+  metadata_json?: string;
+  created_at: number;
+}
+
+/**
+ * Track ERC-8004 feedback locally
+ * Returns the feedback ID
+ */
+export function trackERC8004Feedback(params: {
+  agentId: string;
+  category: ERC8004FeedbackCategory;
+  score: number;
+  executionId?: string;
+  intentId?: string;
+  amountUsd?: number;
+  metadata?: Record<string, any>;
+}): string {
+  const db = getDatabase();
+  const id = randomUUID();
+  const now = Math.floor(Date.now() / 1000);
+
+  db.prepare(`
+    INSERT INTO erc8004_feedback (
+      id, agent_id, category, score, execution_id, intent_id,
+      amount_usd, submitted_onchain, metadata_json, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+  `).run(
+    id,
+    params.agentId,
+    params.category,
+    params.score,
+    params.executionId ?? null,
+    params.intentId ?? null,
+    params.amountUsd ?? null,
+    params.metadata ? JSON.stringify(params.metadata) : null,
+    now
+  );
+
+  return id;
+}
+
+/**
+ * Mark feedback as submitted on-chain
+ */
+export function markERC8004FeedbackSubmitted(
+  id: string,
+  txHash: string
+): void {
+  const db = getDatabase();
+  db.prepare(`
+    UPDATE erc8004_feedback
+    SET submitted_onchain = 1, onchain_tx_hash = ?
+    WHERE id = ?
+  `).run(txHash, id);
+}
+
+/**
+ * Get feedback entries for an agent
+ */
+export function getERC8004Feedback(params?: {
+  agentId?: string;
+  category?: ERC8004FeedbackCategory;
+  limit?: number;
+}): ERC8004Feedback[] {
+  const db = getDatabase();
+  const limit = params?.limit ?? 100;
+
+  let query = 'SELECT * FROM erc8004_feedback WHERE 1=1';
+  const values: any[] = [];
+
+  if (params?.agentId) {
+    query += ' AND agent_id = ?';
+    values.push(params.agentId);
+  }
+  if (params?.category) {
+    query += ' AND category = ?';
+    values.push(params.category);
+  }
+
+  query += ' ORDER BY created_at DESC LIMIT ?';
+  values.push(limit);
+
+  return db.prepare(query).all(...values) as ERC8004Feedback[];
+}
+
+/**
+ * Get aggregated feedback stats for an agent
+ */
+export function getERC8004FeedbackStats(agentId: string): {
+  totalCount: number;
+  averageScore: number;
+  byCategory: Record<string, { count: number; avgScore: number }>;
+  submittedOnchain: number;
+} {
+  const db = getDatabase();
+
+  // Total count and average
+  const totals = db.prepare(`
+    SELECT COUNT(*) as count, AVG(score) as avgScore
+    FROM erc8004_feedback
+    WHERE agent_id = ?
+  `).get(agentId) as { count: number; avgScore: number | null };
+
+  // By category
+  const byCategoryRows = db.prepare(`
+    SELECT category, COUNT(*) as count, AVG(score) as avgScore
+    FROM erc8004_feedback
+    WHERE agent_id = ?
+    GROUP BY category
+  `).all(agentId) as { category: string; count: number; avgScore: number }[];
+
+  const byCategory: Record<string, { count: number; avgScore: number }> = {};
+  for (const row of byCategoryRows) {
+    byCategory[row.category] = {
+      count: row.count,
+      avgScore: Math.round(row.avgScore * 100) / 100,
+    };
+  }
+
+  // Submitted on-chain count
+  const submitted = db.prepare(`
+    SELECT COUNT(*) as count
+    FROM erc8004_feedback
+    WHERE agent_id = ? AND submitted_onchain = 1
+  `).get(agentId) as { count: number };
+
+  return {
+    totalCount: totals.count,
+    averageScore: totals.avgScore !== null ? Math.round(totals.avgScore * 100) / 100 : 0,
+    byCategory,
+    submittedOnchain: submitted.count,
+  };
+}

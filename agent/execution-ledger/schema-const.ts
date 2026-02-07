@@ -236,6 +236,104 @@ CREATE TABLE IF NOT EXISTS indexer_state (
 );
 
 -- ============================================
+-- erc8004_feedback table
+-- Tracks ERC-8004 reputation feedback attestations
+-- ============================================
+CREATE TABLE IF NOT EXISTS erc8004_feedback (
+    id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL,                     -- ERC-8004 agent ID (string for bigint compat)
+    category TEXT NOT NULL,                     -- swap_execution | perp_execution | lend_execution | bridge_execution | event_execution | general
+    score INTEGER NOT NULL,                     -- Score from -100 to +100
+    execution_id TEXT,                          -- References executions.id (optional)
+    intent_id TEXT,                             -- References intents.id (optional)
+    amount_usd REAL,                            -- USD amount of related transaction
+    submitted_onchain INTEGER DEFAULT 0,        -- 1 if submitted to reputation registry
+    onchain_tx_hash TEXT,                       -- Transaction hash of on-chain submission
+    metadata_json TEXT,                         -- Additional metadata as JSON
+    created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_erc8004_agent ON erc8004_feedback(agent_id);
+CREATE INDEX IF NOT EXISTS idx_erc8004_category ON erc8004_feedback(category);
+CREATE INDEX IF NOT EXISTS idx_erc8004_created ON erc8004_feedback(created_at);
+CREATE INDEX IF NOT EXISTS idx_erc8004_exec ON erc8004_feedback(execution_id);
+
+-- ============================================
+-- conversations table (Phase 3)
+-- Tracks multi-turn conversation context for agentic interactions
+-- ============================================
+CREATE TABLE IF NOT EXISTS conversations (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    wallet_address TEXT,
+    messages TEXT NOT NULL,                   -- JSON array of ConversationMessage[]
+    current_path TEXT DEFAULT 'research',     -- IntentPath: research | planning | execution | creation | event
+    active_intent TEXT,                       -- JSON: Current pending ParsedIntent
+    confirmed_intents TEXT,                   -- JSON array of confirmed intent IDs
+    context_window INTEGER DEFAULT 10,        -- Number of messages to retain
+    created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+    updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_conv_session ON conversations(session_id);
+CREATE INDEX IF NOT EXISTS idx_conv_wallet ON conversations(wallet_address);
+CREATE INDEX IF NOT EXISTS idx_conv_updated ON conversations(updated_at);
+
+-- ============================================
+-- bridge_transactions table (Phase 4)
+-- Tracks multi-step bridge execution progress
+-- ============================================
+CREATE TABLE IF NOT EXISTS bridge_transactions (
+    id TEXT PRIMARY KEY,
+    intent_id TEXT,                           -- References intents.id
+    execution_id TEXT,                        -- References executions.id
+    bridge_provider TEXT NOT NULL,            -- 'lifi' | 'wormhole' | 'layerzero'
+    source_chain TEXT NOT NULL,
+    dest_chain TEXT NOT NULL,
+    asset TEXT NOT NULL,
+    amount_units TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',   -- pending | source_submitted | source_confirmed | bridging | dest_confirmed | completed | failed
+    source_tx_hash TEXT,
+    dest_tx_hash TEXT,
+    bridge_stage TEXT,                        -- Current stage in bridge process
+    vaa TEXT,                                 -- Wormhole VAA (if applicable)
+    error_code TEXT,
+    error_message TEXT,
+    estimated_completion INTEGER,             -- Unix timestamp
+    actual_completion INTEGER,                -- Unix timestamp
+    created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+    updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_bridge_intent ON bridge_transactions(intent_id);
+CREATE INDEX IF NOT EXISTS idx_bridge_status ON bridge_transactions(status);
+CREATE INDEX IF NOT EXISTS idx_bridge_provider ON bridge_transactions(bridge_provider);
+CREATE INDEX IF NOT EXISTS idx_bridge_created ON bridge_transactions(created_at);
+
+-- ============================================
+-- sub_agents table (Phase 5)
+-- Tracks ERC-8004 sub-agent delegations
+-- ============================================
+CREATE TABLE IF NOT EXISTS sub_agents (
+    id TEXT PRIMARY KEY,
+    parent_agent_id TEXT NOT NULL,            -- Parent ERC-8004 agent ID
+    sub_agent_id TEXT NOT NULL,               -- Sub-agent ERC-8004 ID
+    delegated_capabilities TEXT NOT NULL,     -- JSON array of CapabilityKind
+    spend_limit_usd REAL,                     -- Max spend per delegation
+    tasks_delegated INTEGER DEFAULT 0,
+    tasks_completed INTEGER DEFAULT 0,
+    tasks_failed INTEGER DEFAULT 0,
+    total_spend_usd REAL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'active',    -- active | revoked | expired
+    expires_at INTEGER,
+    created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+    updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_subagent_parent ON sub_agents(parent_agent_id);
+CREATE INDEX IF NOT EXISTS idx_subagent_status ON sub_agents(status);
+
+-- ============================================
 -- Migrations for existing databases
 -- SQLite ALTER TABLE ADD COLUMN (safe for existing tables)
 -- These are idempotent - they'll fail silently if column exists

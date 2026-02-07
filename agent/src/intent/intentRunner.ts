@@ -55,6 +55,102 @@ import {
   type RetryConfig,
 } from '../utils/retryHandler';
 
+// State machine imports for path isolation
+import {
+  IntentPath,
+  IntentState,
+  classifyParsedIntentPath,
+  evaluatePathPolicy,
+  getContext,
+  updateContext,
+  transitionPath,
+  markExecutionComplete,
+  logTransition,
+  type IntentContext,
+  type PathPolicyResult,
+} from './intentStateMachine';
+
+// Security imports for monitoring and guards
+import {
+  recordPathViolation,
+  alertPathViolation,
+  sanitizeIntentInput,
+  alertInjectionAttempt,
+} from '../security/index';
+
+// ============================================
+// ERC-8004 Feedback Integration
+// ============================================
+
+/**
+ * Submit ERC-8004 feedback after successful execution
+ * Only submits if ERC-8004 is enabled and trade meets threshold
+ */
+async function maybeSubmitERC8004Feedback(params: {
+  intentId: string;
+  executionId: string;
+  kind: IntentKind;
+  chain: string;
+  success: boolean;
+  amountUsd?: number;
+  latencyMs?: number;
+  errorCode?: string;
+}): Promise<void> {
+  try {
+    // Dynamic import to avoid circular dependencies
+    const { ERC8004_ENABLED, ERC8004_AGENT_ID } = await import('../erc8004/config.js');
+
+    if (!ERC8004_ENABLED || ERC8004_AGENT_ID === undefined) {
+      return;
+    }
+
+    const {
+      shouldSubmitFeedback,
+      deriveCategory,
+      calculateFeedbackScore,
+      submitExecutionFeedback,
+    } = await import('../erc8004/reputationRegistry.js');
+
+    // Check if this trade should trigger feedback
+    const amountUsd = params.amountUsd || 0;
+    if (!shouldSubmitFeedback(amountUsd)) {
+      return;
+    }
+
+    // Calculate feedback score
+    const score = calculateFeedbackScore(
+      params.success,
+      params.latencyMs,
+      params.errorCode
+    );
+
+    // Derive category from intent kind
+    const category = deriveCategory(params.kind);
+
+    // Submit feedback (tracks locally, may submit on-chain)
+    await submitExecutionFeedback({
+      agentId: ERC8004_AGENT_ID,
+      category,
+      score,
+      executionId: params.executionId,
+      intentId: params.intentId,
+      amountUsd,
+      metadata: {
+        chain: params.chain,
+        latencyMs: params.latencyMs,
+        success: params.success,
+      },
+    });
+
+    console.log(
+      `[erc8004] Submitted feedback: kind=${params.kind}, score=${score}, amount=$${amountUsd}`
+    );
+  } catch (error) {
+    // Don't fail execution because of feedback error
+    console.warn(`[erc8004] Failed to submit feedback: ${error}`);
+  }
+}
+
 /**
  * Helper to merge new metadata with existing metadata, preserving caller info (source, domain, runId).
  * This ensures that source tracking persists through all status updates.
@@ -78,10 +174,10 @@ function mergeMetadata(existingJson: string | undefined, newData: Record<string,
 }
 
 // Type definitions (duplicated to avoid rootDir issues)
-type IntentKind = 'perp' | 'deposit' | 'swap' | 'bridge' | 'event' | 'unknown';
+type IntentKind = 'perp' | 'perp_create' | 'deposit' | 'swap' | 'bridge' | 'event' | 'unknown';
 type IntentStatus = 'queued' | 'planned' | 'routed' | 'executing' | 'confirmed' | 'failed';
 type IntentFailureStage = 'plan' | 'route' | 'execute' | 'confirm' | 'quote';
-type ExecutionKind = 'perp' | 'deposit' | 'bridge' | 'swap' | 'proof' | 'relay' | 'transfer';
+type ExecutionKind = 'perp' | 'perp_create' | 'deposit' | 'bridge' | 'swap' | 'proof' | 'relay' | 'transfer';
 
 // Chain type for clarity
 export type ChainTarget = 'ethereum' | 'solana' | 'both';
@@ -133,6 +229,7 @@ const IMPLEMENTED_VENUES: Record<string, Record<string, string[]>> = {
     swap: ['demo_dex', 'uniswap'],
     bridge: ['bridge_proof'],  // Proof only, not real bridging
     perp: ['demo_perp'],       // Proof only
+    perp_create: ['hyperliquid'],  // HIP-3 market creation on Hyperliquid
     event: ['native'],         // Event/prediction market - proof only
     proof: ['native'],
     unknown: ['native'],
@@ -142,9 +239,14 @@ const IMPLEMENTED_VENUES: Record<string, Record<string, string[]>> = {
     swap: ['jupiter', 'demo_dex'], // Jupiter for real swaps, demo_dex for proof_only
     bridge: ['bridge_proof'],
     perp: ['demo_perp'],
+    perp_create: [],           // Not supported on Solana yet
     event: ['native'],         // Event/prediction market - proof only
     proof: ['native'],
     unknown: ['native'],
+  },
+  hyperliquid: {
+    perp_create: ['hip3'],     // HIP-3 market creation
+    perp: ['native'],          // Native perp trading
   },
 };
 
@@ -210,6 +312,19 @@ const INTENT_PATTERNS = {
     risk: /(?:show|check|get|view)\s+(?:me\s+)?(?:my\s+)?(?:current\s+)?risk/i,
     topProtocols: /(?:show|get|find)\s+(?:me\s+)?(?:the\s+)?(?:top|best)\s+(?:\d+\s+)?(?:defi\s+)?protocols?/i,
     topMarkets: /(?:show|get|find)\s+(?:me\s+)?(?:the\s+)?(?:top|best)\s+(?:\d+\s+)?prediction\s+markets?/i,
+  },
+  // HIP-3 Perp Market Creation patterns (Hyperliquid)
+  perp_create: {
+    // "launch perp market for DOGE", "launch DOGE perpetual"
+    launch: /(?:launch|create|deploy)\s+(?:a\s+)?(?:perp|perpetual|futures?)\s+(?:market\s+)?(?:for\s+)?(\w+)/i,
+    // "new perp for PEPE", "list perp market for WIF"
+    newMarket: /(?:new|list)\s+(?:perp|perpetual)\s+(?:market\s+)?(?:for\s+)?(\w+)/i,
+    // "hip-3 market for DOGE", "hip3 perp PEPE"
+    hip3: /hip-?3\s+(?:market|perp)\s+(?:for\s+)?(\w+)/i,
+    // "create futures market BONK", "deploy perp SHIB"
+    createFutures: /(?:create|deploy)\s+(?:futures?|perp)\s+(?:market\s+)?(\w+)/i,
+    // "register asset DOGE", "register new perp WIF"
+    register: /register\s+(?:new\s+)?(?:asset|perp|market)\s+(\w+)/i,
   },
 };
 
@@ -466,6 +581,10 @@ export function parseIntent(intentText: string): ParsedIntent {
     };
   }
 
+  // Check for HIP-3 perp market creation intent (Hyperliquid)
+  const perpCreateResult = tryParsePerpCreate(text, rawParams);
+  if (perpCreateResult) return perpCreateResult;
+
   // Enhanced perp patterns with better matching
   const perpResult = tryParsePerp(text, rawParams);
   if (perpResult) return perpResult;
@@ -496,6 +615,66 @@ export function parseIntent(intentText: string): ParsedIntent {
     action: 'proof',
     rawParams,
   };
+}
+
+/**
+ * Try to parse HIP-3 perp market creation intent (Hyperliquid)
+ * Matches patterns like: "launch perp market for DOGE", "create futures PEPE", "hip-3 market WIF"
+ */
+function tryParsePerpCreate(text: string, rawParams: Record<string, any>): ParsedIntent | null {
+  // Try each perp_create pattern
+  for (const [name, pattern] of Object.entries(INTENT_PATTERNS.perp_create)) {
+    const match = text.match(pattern);
+    if (match && match[1]) {
+      const assetSymbol = normalizeAssetSymbol(match[1]);
+
+      // Extract optional parameters from the text
+      const leverageMatch = text.match(/(\d+)\s*x\s*(?:max\s+)?(?:leverage|lev)/i);
+      const maxLeverage = leverageMatch ? parseInt(leverageMatch[1]) : 20;
+
+      // Check for fee mentions
+      const feeMatch = text.match(/(\d+(?:\.\d+)?)\s*%?\s*(?:maker|taker)?\s*fee/i);
+      const takerFeeBps = feeMatch ? Math.round(parseFloat(feeMatch[1]) * 100) : 5;
+
+      // Check for bond amount
+      const bondMatch = text.match(/(\d+(?:\.\d+)?)\s*([km])?\s*hype\s*bond/i);
+      let bondAmount: string | undefined;
+      if (bondMatch) {
+        let amount = parseFloat(bondMatch[1]);
+        const suffix = bondMatch[2]?.toLowerCase();
+        if (suffix === 'k') amount *= 1000;
+        else if (suffix === 'm') amount *= 1000000;
+        // Convert to wei (18 decimals)
+        bondAmount = (BigInt(Math.floor(amount)) * BigInt(10 ** 18)).toString();
+      }
+
+      console.log(`[parseIntent] Detected perp_create intent via pattern '${name}':`, {
+        asset: assetSymbol,
+        maxLeverage,
+        takerFeeBps,
+        bondAmount: bondAmount ? 'custom' : 'default',
+      });
+
+      return {
+        kind: 'perp_create',
+        action: 'create_market',
+        targetAsset: assetSymbol,
+        leverage: maxLeverage,
+        rawParams: {
+          ...rawParams,
+          intentType: 'perp_create',
+          assetSymbol: assetSymbol.endsWith('-USD') ? assetSymbol : `${assetSymbol}-USD`,
+          maxLeverage,
+          takerFeeBps,
+          bondAmount,
+          venue: 'hyperliquid',
+          chain: 'hyperliquid_testnet',
+        },
+      };
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -797,17 +976,33 @@ function tryParseDeposit(text: string, rawParams: Record<string, any>): ParsedIn
 }
 
 /**
- * Try to parse bridge intent with enhanced patterns
+ * Try to parse bridge intent with enhanced patterns (Phase 2 Enhanced)
+ * Now supports:
+ * - Explicit chain specification: "bridge SOL from solana to ethereum"
+ * - Asset-based chain inference: "send SOL to ethereum" (infers solana as source)
+ * - Same-chain warning detection
  */
 function tryParseBridge(text: string, rawParams: Record<string, any>): ParsedIntent | null {
-  // Standard bridge patterns
+  // Standard bridge patterns with explicit chains
   for (const [name, pattern] of Object.entries(INTENT_PATTERNS.bridge)) {
     const match = text.match(pattern);
     if (match) {
       const amount = parseAmount(match[1]);
       const asset = normalizeAssetSymbol(match[2]);
-      const sourceChain = normalizeChainName(match[3]);
-      const destChain = normalizeChainName(match[4]);
+      let sourceChain = normalizeChainName(match[3]);
+      let destChain = normalizeChainName(match[4]);
+
+      // Phase 2: Infer source chain from asset if not specified
+      if (!sourceChain || sourceChain === 'undefined') {
+        const inferredSource = inferChainFromAsset(asset);
+        sourceChain = inferredSource || 'ethereum';
+      }
+
+      // Validate: warn if source === dest
+      const warnings: string[] = [];
+      if (sourceChain === destChain) {
+        warnings.push(`Source and destination chains are the same (${sourceChain}). This is not a cross-chain bridge.`);
+      }
 
       return {
         kind: 'bridge',
@@ -816,7 +1011,7 @@ function tryParseBridge(text: string, rawParams: Record<string, any>): ParsedInt
         amountUnit: asset,
         sourceChain,
         destChain,
-        rawParams: { ...rawParams, amount, asset, sourceChain, destChain },
+        rawParams: { ...rawParams, amount, asset, sourceChain, destChain, warnings },
       };
     }
   }
@@ -830,8 +1025,24 @@ function tryParseBridge(text: string, rawParams: Record<string, any>): ParsedInt
     else if (suffix === 'm') amount = (parseFloat(amount) * 1000000).toString();
 
     const asset = normalizeAssetSymbol(moveMatch[3]);
-    const sourceChain = moveMatch[4] ? normalizeChainName(moveMatch[4]) : 'ethereum';
+
+    // Phase 2: Smart chain inference
+    let sourceChain: string;
+    if (moveMatch[4]) {
+      sourceChain = normalizeChainName(moveMatch[4]);
+    } else {
+      // Infer source from asset
+      const inferred = inferChainFromAsset(asset);
+      sourceChain = inferred || 'ethereum';
+    }
+
     const destChain = normalizeChainName(moveMatch[5]);
+
+    // Validate: warn if source === dest
+    const warnings: string[] = [];
+    if (sourceChain === destChain) {
+      warnings.push(`Source and destination chains are the same (${sourceChain}). This is not a cross-chain bridge.`);
+    }
 
     if (isChainName(destChain)) {
       return {
@@ -841,12 +1052,134 @@ function tryParseBridge(text: string, rawParams: Record<string, any>): ParsedInt
         amountUnit: asset,
         sourceChain,
         destChain,
-        rawParams: { ...rawParams, amount, asset, sourceChain, destChain },
+        rawParams: { ...rawParams, amount, asset, sourceChain, destChain, warnings },
       };
     }
   }
 
+  // New pattern: "send SOL to ethereum" (no source chain, infer from asset)
+  const simpleToChainMatch = text.match(/(?:send|bridge|move)\s+(?:\$?([\d,]+(?:\.\d+)?)\s*([km])?\s*)?(\w+)\s+to\s+(\w+)/i);
+  if (simpleToChainMatch && isChainName(simpleToChainMatch[4])) {
+    let amount = '1000';
+    if (simpleToChainMatch[1]) {
+      amount = simpleToChainMatch[1].replace(/,/g, '');
+      const suffix = simpleToChainMatch[2]?.toLowerCase();
+      if (suffix === 'k') amount = (parseFloat(amount) * 1000).toString();
+      else if (suffix === 'm') amount = (parseFloat(amount) * 1000000).toString();
+    }
+
+    const asset = normalizeAssetSymbol(simpleToChainMatch[3]);
+    const destChain = normalizeChainName(simpleToChainMatch[4]);
+
+    // Infer source chain from asset
+    const inferredSource = inferChainFromAsset(asset);
+    const sourceChain = inferredSource || 'ethereum';
+
+    // Validate: warn if source === dest
+    const warnings: string[] = [];
+    if (sourceChain === destChain) {
+      warnings.push(`Source and destination chains are the same (${sourceChain}). This is not a cross-chain bridge.`);
+    }
+
+    return {
+      kind: 'bridge',
+      action: 'bridge',
+      amount,
+      amountUnit: asset,
+      sourceChain,
+      destChain,
+      rawParams: { ...rawParams, amount, asset, sourceChain, destChain, inferredSourceChain: inferredSource, warnings },
+    };
+  }
+
   return null;
+}
+
+/**
+ * Expanded chain aliases for cross-chain detection (Phase 2)
+ */
+const CHAIN_ALIASES: Record<string, string> = {
+  // Ethereum variants
+  'eth': 'ethereum',
+  'ether': 'ethereum',
+  'mainnet': 'ethereum',
+  'sepolia': 'ethereum', // Testnet maps to ethereum
+  'goerli': 'ethereum',
+
+  // Solana variants
+  'sol': 'solana',
+  'devnet': 'solana', // Testnet maps to solana
+
+  // L2s
+  'arb': 'arbitrum',
+  'arb-one': 'arbitrum',
+  'arbitrum-one': 'arbitrum',
+  'op': 'optimism',
+  'op-mainnet': 'optimism',
+  'optimism-mainnet': 'optimism',
+  'base': 'base',
+  'l2': 'arbitrum', // Default L2 for ambiguous references
+
+  // Other chains
+  'bnb': 'bsc',
+  'binance': 'bsc',
+  'bsc': 'bsc',
+  'matic': 'polygon',
+  'poly': 'polygon',
+  'polygon': 'polygon',
+  'avax': 'avalanche',
+  'avalanche': 'avalanche',
+};
+
+/**
+ * Asset-to-chain defaults for native asset inference (Phase 2)
+ * Used when chain is not explicitly specified to infer from asset
+ */
+const ASSET_CHAIN_DEFAULTS: Record<string, string> = {
+  // Solana native assets
+  'SOL': 'solana',
+  'WSOL': 'solana',
+  'BONK': 'solana',
+  'JTO': 'solana',
+  'WIF': 'solana',
+  'PYTH': 'solana',
+  'JUP': 'solana',
+  'ORCA': 'solana',
+  'RAY': 'solana',
+  'MNGO': 'solana',
+  'MSOL': 'solana',
+  'JITOSOL': 'solana',
+
+  // Ethereum native assets
+  'ETH': 'ethereum',
+  'WETH': 'ethereum',
+  'STETH': 'ethereum',
+  'RETH': 'ethereum',
+  'CBETH': 'ethereum',
+  'LDO': 'ethereum',
+  'RPL': 'ethereum',
+  'ENS': 'ethereum',
+
+  // Chain-specific tokens
+  'MATIC': 'polygon',
+  'AVAX': 'avalanche',
+  'OP': 'optimism',
+  'ARB': 'arbitrum',
+  'BNB': 'bsc',
+  'CAKE': 'bsc',
+
+  // Stablecoins are multi-chain, no default
+  // 'USDC', 'USDT', 'DAI' - intentionally omitted
+};
+
+/**
+ * Infer chain from asset symbol
+ * Returns undefined if asset is multi-chain (e.g., USDC) or unknown
+ */
+export function inferChainFromAsset(asset: string): string | undefined {
+  if (!asset) return undefined;
+  const normalized = asset.toUpperCase().trim();
+  return ASSET_CHAIN_DEFAULTS[normalized];
 }
 
 /**
@@ -854,22 +1187,6 @@ function tryParseBridge(text: string, rawParams: Record<string, any>): ParsedInt
  */
 function normalizeChainName(chain: string): string {
   const normalized = chain.toLowerCase().trim();
-
-  const CHAIN_ALIASES: Record<string, string> = {
-    'eth': 'ethereum',
-    'ether': 'ethereum',
-    'mainnet': 'ethereum',
-    'sol': 'solana',
-    'arb': 'arbitrum',
-    'op': 'optimism',
-    'base': 'base',
-    'bnb': 'bsc',
-    'binance': 'bsc',
-    'matic': 'polygon',
-    'poly': 'polygon',
-    'avax': 'avalanche',
-  };
-
   return CHAIN_ALIASES[normalized] || normalized;
 }
 
@@ -877,8 +1194,11 @@ function normalizeChainName(chain: string): string {
  * Check if a string is a known chain name
  */
 function isChainName(str: string): boolean {
-  const chains = ['ethereum', 'eth', 'solana', 'sol', 'arbitrum', 'arb', 'optimism', 'op',
-                  'base', 'polygon', 'matic', 'avalanche', 'avax', 'bsc', 'bnb'];
+  const chains = [
+    'ethereum', 'eth', 'solana', 'sol', 'arbitrum', 'arb', 'optimism', 'op',
+    'base', 'polygon', 'matic', 'avalanche', 'avax', 'bsc', 'bnb',
+    'sepolia', 'devnet', 'goerli', 'arb-one', 'op-mainnet', 'l2',
+  ];
   return chains.includes(str.toLowerCase());
 }
 
@@ -1308,6 +1628,9 @@ export async function runIntent(
     intentId?: string;  // For executing a previously planned intent
     dryRun?: boolean;   // Legacy, use planOnly instead
     metadata?: Record<string, any>;  // Caller-provided metadata (e.g., torture_suite tagging)
+    sessionId?: string; // Session ID for state machine context
+    skipPathValidation?: boolean; // Skip path validation (for internal use only)
+    confirmedIntentId?: string; // Intent ID that has been confirmed by user
   } = {}
 ): Promise<IntentExecutionResult> {
   // Dynamic imports for ledger (avoids path issues)
@@ -1324,9 +1647,126 @@ export async function runIntent(
 
   const now = Math.floor(Date.now() / 1000);
 
-  // Step 1: Parse intent
-  const parsed = parseIntent(intentText);
+  // Step 0.5: Sanitize input for security
+  const { sanitized: sanitizedText, warnings: sanitizationWarnings } = sanitizeIntentInput(intentText);
+
+  // If injection attempt detected, log alert
+  if (sanitizationWarnings.some(w => w.includes('injection'))) {
+    alertInjectionAttempt({
+      sessionId: options.sessionId,
+      input: intentText.substring(0, 100),
+      injectionType: sanitizationWarnings.find(w => w.includes('injection')) || 'unknown',
+      blocked: true,
+    });
+  }
+
+  // Step 1: Parse intent (using sanitized input)
+  const parsed = parseIntent(sanitizedText);
   const usdEstimate = estimateIntentUsd(parsed);
+
+  // Step 1.5: State Machine - Classify intent path and validate transition
+  const sessionId = options.sessionId || 'default';
+  const intentPath = classifyParsedIntentPath(parsed);
+
+  logTransition(sessionId, 'INTENT_PARSED', {
+    kind: parsed.kind,
+    action: parsed.action,
+    classifiedPath: intentPath,
+    usdEstimate,
+  });
+
+  // Check path policy unless explicitly skipped or intent is already confirmed
+  if (!options.skipPathValidation && !options.confirmedIntentId) {
+    const pathPolicy = evaluatePathPolicy(sessionId, intentPath, {
+      parsed,
+      usdEstimate,
+    });
+
+    if (!pathPolicy.allowed) {
+      // If confirmation is required, return without executing
+      if (pathPolicy.requiresConfirmation) {
+        // Transition to CONFIRMING state
+        const { context, transitionResult } = transitionPath(sessionId, intentPath, {
+          parsed,
+          usdEstimate,
+        });
+
+        logTransition(sessionId, 'CONFIRMATION_REQUIRED', {
+          confirmationType: pathPolicy.confirmationType,
+          currentPath: context.currentPath,
+          targetPath: intentPath,
+        });
+
+        // Return a special response indicating confirmation is needed
+        // The caller (http.ts) should handle this and prompt the user
+        return {
+          ok: false,
+          intentId: '', // No intent created yet
+          status: 'pending_confirmation',
+          error: {
+            stage: 'route' as IntentFailureStage,
+            code: 'CONFIRMATION_REQUIRED',
+            message: pathPolicy.message || 'This action requires explicit confirmation.',
+          },
+          metadata: {
+            requiresConfirmation: true,
+            confirmationType: pathPolicy.confirmationType,
+            pendingIntent: {
+              kind: parsed.kind,
+              action: parsed.action,
+              amount: parsed.amount,
+              amountUnit: parsed.amountUnit,
+              targetAsset: parsed.targetAsset,
+              leverage: parsed.leverage,
+            },
+            intentPath,
+            usdEstimate,
+          },
+        };
+      }
+
+      // Path not allowed and no confirmation option
+      // Record violation for security monitoring
+      const context = getContext(sessionId);
+      recordPathViolation({
+        sessionId,
+        currentPath: context.currentPath,
+        attemptedPath: intentPath,
+        input: params.text.substring(0, 100),
+        blocked: true,
+        reason: pathPolicy.message || 'Path transition blocked',
+      });
+
+      // Create security alert
+      alertPathViolation({
+        sessionId,
+        currentPath: context.currentPath,
+        attemptedPath: intentPath,
+        input: params.text.substring(0, 100),
+        blocked: true,
+      });
+
+      return {
+        ok: false,
+        intentId: '',
+        status: 'failed',
+        error: {
+          stage: 'route' as IntentFailureStage,
+          code: pathPolicy.code || 'PATH_NOT_ALLOWED',
+          message: pathPolicy.message || 'This action is not allowed from the current context.',
+        },
+      };
+    }
+  }
+
+  // Update context with successful path transition
+  if (options.sessionId) {
+    transitionPath(sessionId, intentPath, {
+      parsed,
+      usdEstimate,
+      force: !!options.confirmedIntentId, // Force transition if already confirmed
+    });
+  }
 
   // Merge caller-provided metadata with internal metadata
   // callerMeta is preserved and passed through ALL status updates
@@ -1382,6 +1822,54 @@ export async function runIntent(
       metadataJson: buildMetadata({ route, options: { ...options, metadata: undefined } }),
     });
 
+    // ERC-8004: Validate action against declared capabilities
+    try {
+      const { ERC8004_ENABLED, ERC8004_REQUIRE_VALIDATION } = await import('../erc8004/config.js');
+
+      if (ERC8004_ENABLED && ERC8004_REQUIRE_VALIDATION) {
+        const { validateActionAgainstCapabilities } = await import('../erc8004/validationRegistry.js');
+
+        const validationResult = validateActionAgainstCapabilities({
+          kind: parsed.kind as any,
+          chain: route.chain,
+          venue: route.venue,
+          asset: parsed.targetAsset,
+          amountUsd: usdEstimate,
+        });
+
+        if (!validationResult.valid) {
+          const errorMsg = `ERC-8004 capability validation failed: ${validationResult.errors?.join('; ')}`;
+          console.warn(`[erc8004] ${errorMsg}`);
+
+          await updateIntentStatus(intent.id, {
+            status: 'failed',
+            failureStage: 'route',
+            errorCode: 'ERC8004_VALIDATION_FAILED',
+            errorMessage: errorMsg,
+          });
+
+          return {
+            ok: false,
+            intentId: intent.id,
+            status: 'failed',
+            error: {
+              code: 'ERC8004_VALIDATION_FAILED',
+              stage: 'route',
+              message: errorMsg,
+            },
+          };
+        }
+
+        // Log warnings but continue
+        if (validationResult.warnings && validationResult.warnings.length > 0) {
+          console.warn(`[erc8004] Validation warnings: ${validationResult.warnings.join('; ')}`);
+        }
+      }
+    } catch (validationError) {
+      // Don't fail on validation errors if validation is optional
+      console.warn(`[erc8004] Capability validation error (non-blocking): ${validationError}`);
+    }
+
     // Step 4: Handle bridge intents with LiFi
     if (parsed.kind === 'bridge' && route.venue === 'lifi') {
       const bridgeResult = await handleBridgeIntent(intent.id, parsed, route);
@@ -1434,9 +1922,28 @@ export async function runIntent(
 
     // Execute on appropriate chain
     const execResult = await executeOnChain(intent.id, parsed, route);
+
+    // State Machine: Mark execution complete
+    if (options.sessionId) {
+      markExecutionComplete(options.sessionId, execResult.ok);
+      logTransition(options.sessionId, execResult.ok ? 'EXECUTION_SUCCESS' : 'EXECUTION_FAILED', {
+        intentId: intent.id,
+        txHash: execResult.txHash,
+      });
+    }
+
     return execResult;
 
   } catch (error: any) {
+    // State Machine: Mark execution failed
+    if (options.sessionId) {
+      markExecutionComplete(options.sessionId, false);
+      logTransition(options.sessionId, 'EXECUTION_ERROR', {
+        intentId: intent.id,
+        error: error.message,
+      });
+    }
+
     // Catch-all error handler
     await updateIntentStatus(intent.id, {
       status: 'failed',
@@ -1692,27 +2199,54 @@ async function executeOnChain(
   } = await import('../../execution-ledger/db');
 
   const now = Math.floor(Date.now() / 1000);
+  const startTime = Date.now();
+
+  // Execute and capture result for ERC-8004 feedback
+  const executeAndTrackFeedback = async (
+    executor: () => Promise<IntentExecutionResult>
+  ): Promise<IntentExecutionResult> => {
+    const result = await executor();
+    const latencyMs = Date.now() - startTime;
+
+    // Submit ERC-8004 feedback if enabled
+    const usdEstimate = parsed.amount
+      ? parseFloat(parsed.amount) * (parsed.amountUnit?.toUpperCase() === 'USDC' ? 1 : 1000)
+      : undefined;
+
+    maybeSubmitERC8004Feedback({
+      intentId,
+      executionId: result.executionId || intentId,
+      kind: parsed.kind,
+      chain: route.chain,
+      success: result.ok,
+      amountUsd: usdEstimate,
+      latencyMs,
+      errorCode: result.error?.code,
+    }).catch(() => {}); // Fire and forget, don't block
+
+    return result;
+  };
 
   // For offchain analytics executions (no on-chain tx needed)
   if ((route.executionType as string) === 'offchain') {
-    return await executeOffchain(intentId, parsed, route);
+    return await executeAndTrackFeedback(() => executeOffchain(intentId, parsed, route));
   }
 
   // For proof-only executions (perp, unrecognized)
   if (route.executionType === 'proof_only') {
-    return await executeProofOnly(intentId, parsed, route);
+    return await executeAndTrackFeedback(() => executeProofOnly(intentId, parsed, route));
   }
 
   // Real perp execution via DemoPerpAdapter
   if (parsed.kind === 'perp' && route.executionType === 'real' && route.chain === 'ethereum') {
-    return await executePerpEthereum(intentId, parsed, route);
+    return await executeAndTrackFeedback(() => executePerpEthereum(intentId, parsed, route));
   }
 
   // Real execution based on chain
   if (route.chain === 'ethereum') {
-    return await executeEthereum(intentId, parsed, route);
+    return await executeAndTrackFeedback(() => executeEthereum(intentId, parsed, route));
   } else {
-    return await executeSolana(intentId, parsed, route);
+    return await executeAndTrackFeedback(() => executeSolana(intentId, parsed, route));
   }
 }
 

@@ -351,3 +351,292 @@ export async function evaluateSessionPolicy(
     allowed: true,
   };
 }
+
+// ============================================
+// Hyperliquid Session Limits (HIP-3)
+// ============================================
+
+/**
+ * Hyperliquid-specific session limits for HIP-3 market creation and perp trading
+ */
+export interface HyperliquidSessionLimits {
+  /** Maximum open interest per session (in USD) */
+  maxOpenInterestUsd: number;
+
+  /** Maximum leverage allowed per position */
+  maxLeveragePerPosition: number;
+
+  /** Maximum positions per session */
+  maxPositions: number;
+
+  /** Maximum bond spend per session (in HYPE) */
+  maxBondSpendHype: bigint;
+
+  /** Maximum market creations per session */
+  maxMarketCreations: number;
+
+  /** Leverage bounds by market type */
+  leverageBounds: {
+    major: number;     // BTC, ETH (higher leverage allowed)
+    altcoin: number;   // SOL, AVAX, etc.
+    meme: number;      // DOGE, PEPE, WIF (lower leverage for safety)
+  };
+}
+
+/**
+ * Default Hyperliquid session limits
+ */
+export const DEFAULT_HYPERLIQUID_LIMITS: HyperliquidSessionLimits = {
+  maxOpenInterestUsd: 100000,     // $100k max OI per session
+  maxLeveragePerPosition: 25,     // 25x max even if market allows more
+  maxPositions: 10,               // 10 concurrent positions
+  maxBondSpendHype: BigInt('5000000000000000000000000'), // 5M HYPE max bond
+  maxMarketCreations: 3,          // 3 market creations per session
+  leverageBounds: {
+    major: 50,    // Full leverage for majors
+    altcoin: 25,  // Reduced for altcoins
+    meme: 10,     // Very limited for memes
+  },
+};
+
+/**
+ * Classify asset for leverage bounds
+ */
+export function classifyAssetForLeverage(
+  assetSymbol: string
+): 'major' | 'altcoin' | 'meme' {
+  const symbol = assetSymbol.toUpperCase().replace('-USD', '').replace('-PERP', '');
+
+  const majors = ['BTC', 'ETH'];
+  const memes = ['DOGE', 'SHIB', 'PEPE', 'WIF', 'BONK', 'FLOKI', 'MEME'];
+
+  if (majors.includes(symbol)) return 'major';
+  if (memes.includes(symbol)) return 'meme';
+  return 'altcoin';
+}
+
+/**
+ * Get effective max leverage for an asset based on session limits
+ */
+export function getEffectiveMaxLeverage(
+  assetSymbol: string,
+  marketMaxLeverage: number,
+  limits: HyperliquidSessionLimits = DEFAULT_HYPERLIQUID_LIMITS
+): number {
+  const assetClass = classifyAssetForLeverage(assetSymbol);
+  const classLimit = limits.leverageBounds[assetClass];
+
+  return Math.min(
+    marketMaxLeverage,
+    limits.maxLeveragePerPosition,
+    classLimit
+  );
+}
+
+/**
+ * Hyperliquid session state tracking
+ */
+export interface HyperliquidSessionState {
+  /** Session ID */
+  sessionId: string;
+
+  /** User address */
+  userAddress: string;
+
+  /** Current open interest in USD */
+  currentOpenInterestUsd: number;
+
+  /** Number of open positions */
+  openPositions: number;
+
+  /** Bond spent in HYPE this session */
+  bondSpentHype: bigint;
+
+  /** Markets created this session */
+  marketsCreated: number;
+
+  /** Positions by market ID */
+  positionsByMarket: Map<string, {
+    side: 'long' | 'short';
+    size: number;
+    leverage: number;
+    entryPrice: number;
+  }>;
+}
+
+/**
+ * Evaluate Hyperliquid session policy for a perp operation
+ */
+export async function evaluateHyperliquidPolicy(
+  state: HyperliquidSessionState,
+  operation: {
+    type: 'open_position' | 'close_position' | 'create_market';
+    market?: string;
+    side?: 'long' | 'short';
+    size?: number;
+    leverage?: number;
+    bondAmount?: bigint;
+  },
+  limits: HyperliquidSessionLimits = DEFAULT_HYPERLIQUID_LIMITS
+): Promise<SessionPolicyResult> {
+  // Check 1: Market creation limits
+  if (operation.type === 'create_market') {
+    if (state.marketsCreated >= limits.maxMarketCreations) {
+      return {
+        allowed: false,
+        code: 'HL_MAX_MARKET_CREATIONS',
+        message: `Maximum market creations reached (${limits.maxMarketCreations})`,
+        details: {
+          current: state.marketsCreated,
+          max: limits.maxMarketCreations,
+        },
+      };
+    }
+
+    // Check bond spend limit
+    const bondAmount = operation.bondAmount || 0n;
+    const newTotalBond = state.bondSpentHype + bondAmount;
+    if (newTotalBond > limits.maxBondSpendHype) {
+      return {
+        allowed: false,
+        code: 'HL_MAX_BOND_SPEND',
+        message: `Bond spend would exceed session limit`,
+        details: {
+          attemptedBond: bondAmount.toString(),
+          currentSpent: state.bondSpentHype.toString(),
+          maxAllowed: limits.maxBondSpendHype.toString(),
+        },
+      };
+    }
+
+    return { allowed: true };
+  }
+
+  // Check 2: Position limits for open_position
+  if (operation.type === 'open_position') {
+    // Check max positions
+    if (state.openPositions >= limits.maxPositions) {
+      return {
+        allowed: false,
+        code: 'HL_MAX_POSITIONS',
+        message: `Maximum positions reached (${limits.maxPositions})`,
+        details: {
+          current: state.openPositions,
+          max: limits.maxPositions,
+        },
+      };
+    }
+
+    // Check leverage bounds
+    if (operation.market && operation.leverage) {
+      const effectiveLeverage = getEffectiveMaxLeverage(
+        operation.market,
+        operation.leverage,
+        limits
+      );
+
+      if (operation.leverage > effectiveLeverage) {
+        return {
+          allowed: false,
+          code: 'HL_LEVERAGE_EXCEEDED',
+          message: `Requested leverage (${operation.leverage}x) exceeds allowed (${effectiveLeverage}x) for ${operation.market}`,
+          details: {
+            requested: operation.leverage,
+            allowed: effectiveLeverage,
+            assetClass: classifyAssetForLeverage(operation.market),
+          },
+        };
+      }
+    }
+
+    // Check OI limits
+    const positionOI = (operation.size || 0) * (operation.leverage || 1);
+    const newTotalOI = state.currentOpenInterestUsd + positionOI;
+
+    if (newTotalOI > limits.maxOpenInterestUsd) {
+      return {
+        allowed: false,
+        code: 'HL_MAX_OI_EXCEEDED',
+        message: `Position would exceed open interest limit`,
+        details: {
+          currentOI: state.currentOpenInterestUsd,
+          positionOI,
+          newTotalOI,
+          maxOI: limits.maxOpenInterestUsd,
+        },
+      };
+    }
+
+    return { allowed: true };
+  }
+
+  // Check 3: Close position always allowed
+  if (operation.type === 'close_position') {
+    return { allowed: true };
+  }
+
+  return {
+    allowed: false,
+    code: 'HL_UNKNOWN_OPERATION',
+    message: `Unknown Hyperliquid operation type: ${operation.type}`,
+  };
+}
+
+/**
+ * Estimate spend for Hyperliquid plan actions
+ */
+export async function estimateHyperliquidSpend(plan: {
+  actions: Array<{ actionType: number; data: string }>;
+  value?: string;
+}): Promise<{
+  bondSpend: bigint;
+  marginSpend: bigint;
+  determinable: boolean;
+  operationType?: 'market_creation' | 'position_open' | 'position_close';
+}> {
+  let bondSpend = 0n;
+  let marginSpend = 0n;
+  let determinable = true;
+  let operationType: 'market_creation' | 'position_open' | 'position_close' | undefined;
+
+  const { decodeAbiParameters } = await import('viem');
+
+  for (const action of plan.actions) {
+    try {
+      // Hyperliquid action types (from hyperliquidExecutor.ts)
+      const HL_ACTION_REGISTER_ASSET = 1;
+      const HL_ACTION_OPEN_POSITION = 2;
+      const HL_ACTION_CLOSE_POSITION = 3;
+
+      if (action.actionType === HL_ACTION_REGISTER_ASSET) {
+        operationType = 'market_creation';
+        // Bond is in plan.value for HIP-3 creation
+        bondSpend += BigInt(plan.value || '0x0');
+      } else if (action.actionType === HL_ACTION_OPEN_POSITION) {
+        operationType = 'position_open';
+        try {
+          // Session-wrapped: (maxSpendUnits, innerData)
+          const decoded = decodeAbiParameters(
+            [{ type: 'uint256' }, { type: 'bytes' }],
+            action.data as `0x${string}`
+          );
+          marginSpend += decoded[0];
+        } catch {
+          determinable = false;
+        }
+      } else if (action.actionType === HL_ACTION_CLOSE_POSITION) {
+        operationType = 'position_close';
+        // Close positions don't add spend
+      }
+    } catch {
+      determinable = false;
+    }
+  }
+
+  return {
+    bondSpend,
+    marginSpend,
+    determinable,
+    operationType,
+  };
+}

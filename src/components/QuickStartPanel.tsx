@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
-import { Star, X } from 'lucide-react';
+import { Star, X, Shield, CheckCircle2, Activity } from 'lucide-react';
 import { QUICK_START_CATEGORIES, QuickStartCategoryId } from '../config/quickStartConfig';
 import { useBlossomContext, Venue } from '../context/BlossomContext';
 import { getSavedPrompts, savePrompt, deletePrompt, isPromptSaved, SavedPrompt } from '../lib/savedPrompts';
+import { useERC8004Identity, useERC8004Reputation, useERC8004Capabilities } from '../hooks/useERC8004';
 
 interface QuickStartPanelProps {
   onSelectPrompt: (prompt: string) => void;
@@ -66,6 +67,11 @@ export default function QuickStartPanel({ onSelectPrompt }: QuickStartPanelProps
   const [savedPrompts, setSavedPrompts] = useState<SavedPrompt[]>([]);
   const [showSaved, setShowSaved] = useState(false);
 
+  // ERC-8004 Agent info
+  const { isEnabled, isRegistered, agentId } = useERC8004Identity();
+  const { tier, executionCount, totalVolumeUsd, formattedScore } = useERC8004Reputation();
+  const { hasSwap, hasPerp, hasLend, hasEvent } = useERC8004Capabilities();
+
   // Load saved prompts
   useEffect(() => {
     setSavedPrompts(getSavedPrompts());
@@ -101,9 +107,79 @@ export default function QuickStartPanel({ onSelectPrompt }: QuickStartPanelProps
   // Root view: show venue-specific quick actions + saved prompts
   if (selectedCategoryId === null) {
     const quickActions = getQuickActionsForVenue(venue);
-    
+
+    // Format volume nicely
+    const formatVolume = (usd: number) => {
+      if (usd >= 1_000_000) return `$${(usd / 1_000_000).toFixed(1)}M`;
+      if (usd >= 1_000) return `$${(usd / 1_000).toFixed(1)}K`;
+      return `$${usd.toFixed(0)}`;
+    };
+
+    // Build capability pills
+    const capabilityPills: string[] = [
+      hasSwap && 'Swap',
+      hasPerp && 'Perps',
+      hasLend && 'Lending',
+      hasEvent && 'Events',
+    ].filter((cap): cap is string => typeof cap === 'string');
+
     return (
       <div className="mt-3 px-4 pb-4 space-y-3">
+        {/* ERC-8004 Agent Credentials */}
+        {isEnabled && (
+          <div className="rounded-2xl border border-slate-100 bg-white/90 shadow-sm px-3 py-2.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                {isRegistered ? (
+                  <div className="flex items-center gap-1.5">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                    <span className="text-[11px] font-medium text-slate-700">
+                      Verified Agent #{agentId}
+                    </span>
+                    <span className="text-[10px] text-slate-400">|</span>
+                    <span className={`text-[10px] font-medium ${
+                      tier === 'excellent' || tier === 'good'
+                        ? 'text-emerald-600'
+                        : tier === 'fair' || tier === 'neutral'
+                        ? 'text-amber-600'
+                        : 'text-slate-500'
+                    }`}>
+                      {formattedScore}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1.5">
+                    <Shield className="w-4 h-4 text-slate-400" />
+                    <span className="text-[11px] text-slate-500">Unverified Agent</span>
+                  </div>
+                )}
+              </div>
+              {isRegistered && (
+                <div className="flex items-center gap-2 text-[10px] text-slate-400">
+                  <span className="flex items-center gap-1">
+                    <Activity className="w-3 h-3" />
+                    {executionCount} txs
+                  </span>
+                  <span>|</span>
+                  <span>{formatVolume(totalVolumeUsd)} routed</span>
+                </div>
+              )}
+            </div>
+            {capabilityPills.length > 0 && (
+              <div className="flex items-center gap-1 mt-1.5">
+                {capabilityPills.map((cap) => (
+                  <span
+                    key={cap}
+                    className="px-1.5 py-0.5 text-[9px] font-medium bg-slate-100 text-slate-600 rounded"
+                  >
+                    {cap}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Saved Prompts Section */}
         {savedPrompts.length > 0 && (
           <div className="rounded-2xl border border-slate-100 bg-white/90 shadow-sm px-3 py-2.5">

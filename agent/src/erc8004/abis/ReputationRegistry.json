@@ -1,0 +1,107 @@
+{
+  "abi": [
+    {
+      "type": "function",
+      "name": "submitFeedback",
+      "inputs": [
+        { "name": "agentId", "type": "uint256" },
+        { "name": "category", "type": "uint8" },
+        { "name": "score", "type": "int16" },
+        { "name": "executionHash", "type": "bytes32" },
+        { "name": "amountUsd", "type": "uint256" }
+      ],
+      "outputs": [{ "name": "feedbackId", "type": "uint256" }],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "getAgentReputation",
+      "inputs": [{ "name": "agentId", "type": "uint256" }],
+      "outputs": [
+        { "name": "totalFeedbackCount", "type": "uint256" },
+        { "name": "averageScore", "type": "int256" },
+        { "name": "totalVolumeUsd", "type": "uint256" },
+        { "name": "lastUpdated", "type": "uint256" }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "getCategoryReputation",
+      "inputs": [
+        { "name": "agentId", "type": "uint256" },
+        { "name": "category", "type": "uint8" }
+      ],
+      "outputs": [
+        { "name": "count", "type": "uint256" },
+        { "name": "avgScore", "type": "int256" }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "getFeedback",
+      "inputs": [{ "name": "feedbackId", "type": "uint256" }],
+      "outputs": [
+        { "name": "agentId", "type": "uint256" },
+        { "name": "submitter", "type": "address" },
+        { "name": "category", "type": "uint8" },
+        { "name": "score", "type": "int16" },
+        { "name": "executionHash", "type": "bytes32" },
+        { "name": "amountUsd", "type": "uint256" },
+        { "name": "timestamp", "type": "uint256" }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "getFeedbackCount",
+      "inputs": [{ "name": "agentId", "type": "uint256" }],
+      "outputs": [{ "name": "", "type": "uint256" }],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "identityRegistry",
+      "inputs": [],
+      "outputs": [{ "name": "", "type": "address" }],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "categoryToEnum",
+      "inputs": [{ "name": "category", "type": "string" }],
+      "outputs": [{ "name": "", "type": "uint8" }],
+      "stateMutability": "pure"
+    },
+    {
+      "type": "event",
+      "name": "FeedbackSubmitted",
+      "inputs": [
+        { "name": "feedbackId", "type": "uint256", "indexed": true },
+        { "name": "agentId", "type": "uint256", "indexed": true },
+        { "name": "submitter", "type": "address", "indexed": true },
+        { "name": "category", "type": "uint8", "indexed": false },
+        { "name": "score", "type": "int16", "indexed": false },
+        { "name": "amountUsd", "type": "uint256", "indexed": false }
+      ]
+    },
+    {
+      "type": "event",
+      "name": "ReputationUpdated",
+      "inputs": [
+        { "name": "agentId", "type": "uint256", "indexed": true },
+        { "name": "newAverageScore", "type": "int256", "indexed": false },
+        { "name": "totalFeedbackCount", "type": "uint256", "indexed": false }
+      ]
+    }
+  ],
+  "categoryEnum": {
+    "GENERAL": 0,
+    "SWAP_EXECUTION": 1,
+    "PERP_EXECUTION": 2,
+    "LEND_EXECUTION": 3,
+    "BRIDGE_EXECUTION": 4,
+    "EVENT_EXECUTION": 5
+  }
+}

@@ -95,6 +95,22 @@ import { waitForReceipt } from '../executors/evmReceipt';
 import { checkAndRecordMint } from '../utils/mintLimiter';
 import { postStatsEvent } from '../stats';
 
+// State machine imports for intent path isolation
+import {
+  IntentPath,
+  IntentState,
+  classifyIntentPath,
+  getContext,
+  updateContext,
+  transitionPath,
+  processConfirmation,
+  isConfirmation,
+  isCancellation,
+  resetContextState,
+  logTransition,
+  ConfirmationType,
+} from '../intent/intentStateMachine';
+
 /**
  * JSON-RPC Response type
  */
@@ -1364,6 +1380,84 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
         executionResults: [],
       });
     }
+
+    // =============================================================================
+    // STATE MACHINE: Intent Path Isolation (Phase 1)
+    // =============================================================================
+    // Get or create session context for state machine tracking
+    const walletAddress = req.headers['x-wallet-address'] as string;
+    const chatSessionId = walletAddress
+      ? `chat:${walletAddress.toLowerCase()}`
+      : `chat:anonymous:${req.ip || 'unknown'}`;
+
+    const stateContext = getContext(chatSessionId);
+    if (walletAddress && !stateContext.walletAddress) {
+      updateContext(chatSessionId, { walletAddress: walletAddress.toLowerCase() });
+    }
+
+    // Check if this is a confirmation/cancellation response
+    if (stateContext.currentState === IntentState.CONFIRMING) {
+      // User is responding to a confirmation request
+      if (isConfirmation(normalizedUserMessage) || isCancellation(normalizedUserMessage)) {
+        const confirmResult = processConfirmation(chatSessionId, normalizedUserMessage);
+
+        if (confirmResult.confirmed) {
+          // User confirmed - proceed with execution
+          // The pendingIntent will be executed below with confirmedIntentId set
+          logTransition(chatSessionId, 'USER_CONFIRMED', {
+            pendingIntentId: stateContext.pendingIntentId,
+          });
+
+          // If there's a pending execution request, return it with confirmation status
+          if (stateContext.pendingIntent) {
+            const portfolioAfter = buildPortfolioSnapshot();
+            return res.json({
+              ok: true,
+              assistantMessage: "Confirmed. Executing your request...",
+              actions: [],
+              executionRequest: null, // Frontend will handle re-triggering execution
+              modelOk: true,
+              portfolio: portfolioAfter,
+              executionResults: [],
+              confirmationStatus: {
+                confirmed: true,
+                pendingIntent: stateContext.pendingIntent,
+                sessionId: chatSessionId,
+              },
+            });
+          }
+        } else {
+          // User cancelled or response didn't match
+          logTransition(chatSessionId, isCancellation(normalizedUserMessage) ? 'USER_CANCELLED' : 'CONFIRMATION_RETRY', {});
+
+          const portfolioAfter = buildPortfolioSnapshot();
+          return res.json({
+            ok: true,
+            assistantMessage: confirmResult.message || "Action cancelled. What else can I help you with?",
+            actions: [],
+            executionRequest: null,
+            modelOk: true,
+            portfolio: portfolioAfter,
+            executionResults: [],
+            confirmationStatus: {
+              confirmed: false,
+              cancelled: isCancellation(normalizedUserMessage),
+            },
+          });
+        }
+      }
+      // If not a confirmation/cancellation, reset state and process as new intent
+      resetContextState(chatSessionId);
+    }
+
+    // Classify the intent path early for state machine tracking
+    const intentPath = classifyIntentPath(normalizedUserMessage);
+    logTransition(chatSessionId, 'INTENT_CLASSIFIED', {
+      intentPath,
+      currentPath: stateContext.currentPath,
+      userMessage: normalizedUserMessage.substring(0, 50),
+    });
+
     // =============================================================================
 
     // CRITICAL: Detect DeFi TVL query FIRST (before LLM call)
@@ -8841,6 +8935,451 @@ app.get('/api/stats/public', async (req, res) => {
     });
   }
 });
+
+// ============================================
+// ERC-8004 TRUSTLESS AI AGENTS ENDPOINTS
+// ============================================
+
+/**
+ * GET /api/erc8004/identity
+ * Returns the agent's ERC-8004 identity information
+ */
+app.get('/api/erc8004/identity', asyncHandler(async (req, res) => {
+  try {
+    const {
+      ERC8004_ENABLED,
+      getAgentIdentity,
+      isAgentRegistered,
+    } = await import('../erc8004/index.js');
+
+    if (!ERC8004_ENABLED) {
+      return res.json({
+        ok: false,
+        error: 'ERC-8004 integration is disabled',
+        enabled: false,
+      });
+    }
+
+    const identity = getAgentIdentity();
+    const registered = isAgentRegistered();
+
+    res.json({
+      ok: true,
+      enabled: true,
+      registered,
+      identity: identity
+        ? {
+            agentId: identity.agentId.toString(),
+            owner: identity.owner,
+            agentURI: identity.agentURI,
+            chainId: identity.chainId,
+            registryAddress: identity.registryAddress,
+            fullyQualifiedId: identity.fullyQualifiedId,
+          }
+        : null,
+    });
+  } catch (error: any) {
+    console.error('[erc8004] Identity endpoint error:', error.message);
+    res.status(500).json({
+      ok: false,
+      error: 'Failed to get agent identity',
+      details: error.message,
+    });
+  }
+}));
+
+/**
+ * GET /api/erc8004/reputation
+ * Returns the agent's reputation score derived from execution stats
+ */
+app.get('/api/erc8004/reputation', asyncHandler(async (req, res) => {
+  try {
+    const {
+      ERC8004_ENABLED,
+      getReputationSummary,
+      formatReputationScore,
+      getReputationTier,
+    } = await import('../erc8004/index.js');
+
+    if (!ERC8004_ENABLED) {
+      return res.json({
+        ok: false,
+        error: 'ERC-8004 integration is disabled',
+        enabled: false,
+      });
+    }
+
+    const reputation = await getReputationSummary();
+
+    if (!reputation) {
+      return res.json({
+        ok: true,
+        enabled: true,
+        reputation: null,
+        message: 'No reputation data available',
+      });
+    }
+
+    res.json({
+      ok: true,
+      enabled: true,
+      reputation: {
+        agentId: reputation.agentId.toString(),
+        score: reputation.averageScore,
+        scoreFormatted: formatReputationScore(reputation.averageScore),
+        tier: getReputationTier(reputation.averageScore),
+        winRate: Math.round(reputation.winRate * 100) / 100,
+        executionCount: reputation.executionCount,
+        totalVolumeUsd: Math.round(reputation.totalVolumeUsd * 100) / 100,
+        avgLatencyMs: reputation.avgLatencyMs,
+        totalFeedbackCount: reputation.totalFeedbackCount,
+        byCategory: reputation.byCategory,
+        updatedAt: reputation.updatedAt,
+      },
+    });
+  } catch (error: any) {
+    console.error('[erc8004] Reputation endpoint error:', error.message);
+    res.status(500).json({
+      ok: false,
+      error: 'Failed to get reputation summary',
+      details: error.message,
+    });
+  }
+}));
+
+/**
+ * GET /api/erc8004/capabilities
+ * Returns the agent's declared capabilities
+ */
+app.get('/api/erc8004/capabilities', asyncHandler(async (req, res) => {
+  try {
+    const {
+      ERC8004_ENABLED,
+      getBlossomCapabilities,
+      getCapabilitySummary,
+    } = await import('../erc8004/index.js');
+
+    if (!ERC8004_ENABLED) {
+      return res.json({
+        ok: false,
+        error: 'ERC-8004 integration is disabled',
+        enabled: false,
+      });
+    }
+
+    const capabilities = getBlossomCapabilities();
+    const summary = getCapabilitySummary();
+
+    res.json({
+      ok: true,
+      enabled: true,
+      capabilities,
+      summary,
+      count: capabilities.length,
+    });
+  } catch (error: any) {
+    console.error('[erc8004] Capabilities endpoint error:', error.message);
+    res.status(500).json({
+      ok: false,
+      error: 'Failed to get capabilities',
+      details: error.message,
+    });
+  }
+}));
+
+/**
+ * POST /api/erc8004/validate
+ * Validates an action against declared capabilities
+ */
+app.post('/api/erc8004/validate', asyncHandler(async (req, res) => {
+  try {
+    const {
+      ERC8004_ENABLED,
+      validateActionAgainstCapabilities,
+    } = await import('../erc8004/index.js');
+
+    if (!ERC8004_ENABLED) {
+      return res.json({
+        ok: false,
+        error: 'ERC-8004 integration is disabled',
+        enabled: false,
+      });
+    }
+
+    const { kind, chain, venue, asset, leverage, amountUsd } = req.body;
+
+    if (!kind) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Missing required field: kind',
+      });
+    }
+
+    const result = validateActionAgainstCapabilities({
+      kind,
+      chain,
+      venue,
+      asset,
+      leverage,
+      amountUsd,
+    });
+
+    res.json({
+      ok: true,
+      validation: result,
+    });
+  } catch (error: any) {
+    console.error('[erc8004] Validate endpoint error:', error.message);
+    res.status(500).json({
+      ok: false,
+      error: 'Failed to validate action',
+      details: error.message,
+    });
+  }
+}));
+
+/**
+ * GET /.well-known/agent-registration.json
+ * ERC-8004 standard discovery endpoint for agent registration
+ */
+app.get('/.well-known/agent-registration.json', asyncHandler(async (req, res) => {
+  try {
+    const { buildBlossomRegistrationFile } = await import('../erc8004/index.js');
+
+    const registrationFile = buildBlossomRegistrationFile();
+
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Cache-Control', 'public, max-age=3600'); // Cache for 1 hour
+    res.json(registrationFile);
+  } catch (error: any) {
+    console.error('[erc8004] Registration file error:', error.message);
+    res.status(500).json({
+      error: 'Failed to generate registration file',
+      details: error.message,
+    });
+  }
+}));
+
+/**
+ * GET /api/erc8004/feedback
+ * Returns ERC-8004 feedback statistics
+ */
+app.get('/api/erc8004/feedback', asyncHandler(async (req, res) => {
+  try {
+    const {
+      ERC8004_ENABLED,
+      ERC8004_AGENT_ID,
+    } = await import('../erc8004/index.js');
+
+    if (!ERC8004_ENABLED) {
+      return res.json({
+        ok: false,
+        error: 'ERC-8004 integration is disabled',
+        enabled: false,
+      });
+    }
+
+    const { getERC8004FeedbackStats, getERC8004Feedback } = await import('../../execution-ledger/db.js');
+
+    const agentId = ERC8004_AGENT_ID?.toString() || '0';
+    const stats = getERC8004FeedbackStats(agentId);
+    const recentFeedback = getERC8004Feedback({ agentId, limit: 10 });
+
+    res.json({
+      ok: true,
+      enabled: true,
+      agentId,
+      stats,
+      recentFeedback: recentFeedback.map((f) => ({
+        id: f.id,
+        category: f.category,
+        score: f.score,
+        amountUsd: f.amount_usd,
+        submittedOnchain: f.submitted_onchain === 1,
+        createdAt: f.created_at,
+      })),
+    });
+  } catch (error: any) {
+    console.error('[erc8004] Feedback endpoint error:', error.message);
+    res.status(500).json({
+      ok: false,
+      error: 'Failed to get feedback stats',
+      details: error.message,
+    });
+  }
+}));
+
+// ============================================
+// SECURITY MONITORING ENDPOINTS
+// ============================================
+
+/**
+ * GET /api/security/alerts
+ * Returns security alerts for monitoring dashboard
+ */
+app.get('/api/security/alerts', asyncHandler(async (req, res) => {
+  try {
+    const { getAlerts, getAlertMetrics, getSecurityHealth } = await import('../security/index.js');
+
+    const category = req.query.category as string | undefined;
+    const severity = req.query.severity as string | undefined;
+    const unacknowledgedOnly = req.query.unacknowledged === 'true';
+    const limit = parseInt(req.query.limit as string) || 50;
+
+    const alerts = getAlerts({
+      category: category as any,
+      severity: severity as any,
+      unacknowledgedOnly,
+      limit,
+    });
+
+    const metrics = getAlertMetrics();
+    const health = getSecurityHealth();
+
+    res.json({
+      ok: true,
+      alerts,
+      metrics,
+      health,
+    });
+  } catch (error: any) {
+    console.error('[security] Alerts endpoint error:', error.message);
+    res.status(500).json({
+      ok: false,
+      error: 'Failed to get security alerts',
+    });
+  }
+}));
+
+/**
+ * POST /api/security/alerts/:id/acknowledge
+ * Acknowledge a security alert
+ */
+app.post('/api/security/alerts/:id/acknowledge', asyncHandler(async (req, res) => {
+  try {
+    const { acknowledgeAlert } = await import('../security/index.js');
+
+    const alertId = req.params.id;
+    const acknowledgedBy = req.body.acknowledgedBy || 'admin';
+
+    const success = acknowledgeAlert(alertId, acknowledgedBy);
+
+    res.json({
+      ok: success,
+      message: success ? 'Alert acknowledged' : 'Alert not found',
+    });
+  } catch (error: any) {
+    console.error('[security] Acknowledge error:', error.message);
+    res.status(500).json({
+      ok: false,
+      error: 'Failed to acknowledge alert',
+    });
+  }
+}));
+
+/**
+ * GET /api/security/path-violations
+ * Returns path violation summary for monitoring
+ */
+app.get('/api/security/path-violations', asyncHandler(async (req, res) => {
+  try {
+    const { getPathViolations, getViolationSummary } = await import('../security/index.js');
+
+    const limit = parseInt(req.query.limit as string) || 50;
+    const since = req.query.since ? parseInt(req.query.since as string) : undefined;
+
+    const violations = getPathViolations({ limit, since });
+    const summary = getViolationSummary();
+
+    res.json({
+      ok: true,
+      violations,
+      summary,
+    });
+  } catch (error: any) {
+    console.error('[security] Path violations endpoint error:', error.message);
+    res.status(500).json({
+      ok: false,
+      error: 'Failed to get path violations',
+    });
+  }
+}));
+
+/**
+ * GET /api/security/signing-audit
+ * Returns signing decision audit log
+ */
+app.get('/api/security/signing-audit', asyncHandler(async (req, res) => {
+  try {
+    const { getSigningAudit, getSigningAuditSummary } = await import('../security/index.js');
+
+    const limit = parseInt(req.query.limit as string) || 50;
+    const operation = req.query.operation as string | undefined;
+
+    const entries = getSigningAudit({
+      limit,
+      operation: operation as any,
+    });
+    const summary = getSigningAuditSummary();
+
+    res.json({
+      ok: true,
+      entries,
+      summary,
+    });
+  } catch (error: any) {
+    console.error('[security] Signing audit endpoint error:', error.message);
+    res.status(500).json({
+      ok: false,
+      error: 'Failed to get signing audit',
+    });
+  }
+}));
+
+/**
+ * POST /api/security/fuzz-test
+ * Run fuzz tests against intent parser (dev/staging only)
+ */
+app.post('/api/security/fuzz-test', asyncHandler(async (req, res) => {
+  try {
+    // Only allow in non-production environments
+    if (process.env.NODE_ENV === 'production' && !req.query.force) {
+      return res.status(403).json({
+        ok: false,
+        error: 'Fuzz testing disabled in production',
+      });
+    }
+
+    const { runFuzzSuite } = await import('../security/index.js');
+
+    // Mock parser for testing
+    const mockParser = async (input: string) => {
+      // This would be replaced with actual intent parsing in real tests
+      return { kind: 'swap', rawInput: input } as any;
+    };
+
+    const categories = req.body.categories as string[] | undefined;
+    const results = await runFuzzSuite(mockParser, categories as any);
+
+    res.json({
+      ok: true,
+      results: {
+        total: results.total,
+        passed: results.passed,
+        failed: results.failed,
+        passRate: Math.round((results.passed / results.total) * 100),
+        details: results.results.filter(r => !r.passed),
+      },
+    });
+  } catch (error: any) {
+    console.error('[security] Fuzz test endpoint error:', error.message);
+    res.status(500).json({
+      ok: false,
+      error: 'Fuzz test failed',
+      details: error.message,
+    });
+  }
+}));
 
 // ============================================
 // OBSERVABILITY: Central Error Handler
