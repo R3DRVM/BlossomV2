@@ -7,11 +7,48 @@
  */
 
 import * as esbuild from 'esbuild';
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
+import { resolve, dirname, join } from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 console.log('🌸 Building Blossom Agent server bundle for Vercel...\n');
 
 const startTime = Date.now();
+
+// Plugin to resolve relative imports in agent/dist
+const resolvePlugin = {
+  name: 'resolve-agent-paths',
+  setup(build) {
+    // Resolve relative imports from execution-ledger
+    build.onResolve({ filter: /^\.\/.*\.js$/ }, args => {
+      if (args.importer.includes('execution-ledger')) {
+        const resolved = resolve(dirname(args.importer), args.path);
+        if (existsSync(resolved)) {
+          return { path: resolved };
+        }
+      }
+      return null;
+    });
+
+    // Resolve imports to execution-ledger from other modules
+    build.onResolve({ filter: /execution-ledger/ }, args => {
+      const basePath = resolve(__dirname, 'agent/dist/execution-ledger');
+      const fileName = args.path.split('/').pop() + '.js';
+      const resolved = join(basePath, fileName);
+      if (existsSync(resolved)) {
+        return { path: resolved };
+      }
+      // Try without .js
+      const resolved2 = join(basePath, args.path.split('/').pop() + '.js');
+      if (existsSync(resolved2)) {
+        return { path: resolved2 };
+      }
+      return null;
+    });
+  }
+};
 
 try {
   const result = await esbuild.build({
@@ -33,6 +70,9 @@ try {
     },
     logLevel: 'info',
     metafile: true,
+    plugins: [resolvePlugin],
+    // Ensure we resolve from the correct base directory
+    absWorkingDir: __dirname,
   });
 
   // Log bundle stats
