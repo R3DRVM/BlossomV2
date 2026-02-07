@@ -49,23 +49,23 @@ interface ExecutionTemplate {
 }
 
 const EXECUTION_TEMPLATES: ExecutionTemplate[] = [
-  // Swaps
-  { name: 'swap_usdc_eth', intent: 'swap 10 USDC for ETH', category: 'swap', expectedSuccess: true },
-  { name: 'swap_eth_usdc', intent: 'swap 0.01 ETH for USDC', category: 'swap', expectedSuccess: true },
-  { name: 'swap_weth_buy', intent: 'buy $25 worth of WETH', category: 'swap', expectedSuccess: true },
+  // Swaps - use clear swap syntax recognized by the LLM
+  { name: 'swap_usdc_weth', intent: 'swap 10 USDC to WETH', category: 'swap', expectedSuccess: true },
+  { name: 'swap_weth_usdc', intent: 'swap 0.01 WETH to USDC', category: 'swap', expectedSuccess: true },
+  { name: 'swap_usdc_weth_2', intent: 'swap 25 USDC for WETH', category: 'swap', expectedSuccess: true },
 
-  // Perps
-  { name: 'perp_long_btc', intent: 'long BTC with $50', category: 'perp', expectedSuccess: true },
-  { name: 'perp_short_eth', intent: 'short ETH 3x with $30', category: 'perp', expectedSuccess: true },
-  { name: 'perp_long_sol', intent: 'open 5x long on SOL $20', category: 'perp', expectedSuccess: true },
+  // Perps - clear perp syntax
+  { name: 'perp_long_btc', intent: 'long BTC 5x with $50 margin', category: 'perp', expectedSuccess: true },
+  { name: 'perp_short_eth', intent: 'short ETH 3x $30', category: 'perp', expectedSuccess: true },
+  { name: 'perp_long_sol', intent: 'long SOL 2x $20', category: 'perp', expectedSuccess: true },
 
-  // Lending
-  { name: 'lend_usdc', intent: 'deposit 50 USDC to lending', category: 'lend', expectedSuccess: true },
-  { name: 'lend_aave', intent: 'supply 25 USDC to aave', category: 'lend', expectedSuccess: true },
+  // Lending - use REDACTED token name
+  { name: 'lend_usdc', intent: 'deposit 50 USDC for yield', category: 'lend', expectedSuccess: true },
+  { name: 'lend_supply', intent: 'supply 25 USDC to lending', category: 'lend', expectedSuccess: true },
 
-  // Events
-  { name: 'event_btc_above', intent: 'bet $20 on BTC above 70000', category: 'event', expectedSuccess: true },
-  { name: 'event_eth_target', intent: 'wager $15 ETH hits 4000 by Friday', category: 'event', expectedSuccess: true },
+  // Events - clear betting syntax
+  { name: 'event_btc_yes', intent: 'bet $20 YES on BTC above 70000', category: 'event', expectedSuccess: true },
+  { name: 'event_eth_no', intent: 'bet $15 NO on ETH hitting 5000', category: 'event', expectedSuccess: true },
 ];
 
 // ============================================
@@ -98,15 +98,48 @@ async function checkHealth(): Promise<boolean> {
   }
 }
 
-async function prepareExecution(intent: string): Promise<any> {
-  // Use a dummy address - the relayer will override with useRelayerAsUser
-  const dummyAddress = '0x1234567890123456789012345678901234567890';
+/**
+ * Get the relayer address from the backend
+ */
+async function getRelayerAddress(): Promise<string | null> {
+  try {
+    const result = await fetchJson(`${BASE_URL}/api/demo/relayer`);
+    if (result.ok && result.relayerAddress) {
+      return result.relayerAddress;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
 
+/**
+ * Step 1: Parse intent via /api/chat to get structured executionRequest
+ */
+async function parseIntent(intent: string): Promise<any> {
+  const sessionId = `relayer_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+  const result = await fetchJson(`${BASE_URL}/api/chat`, {
+    method: 'POST',
+    body: JSON.stringify({
+      userMessage: intent,
+      sessionId,
+    }),
+  });
+
+  return result;
+}
+
+/**
+ * Step 2: Prepare execution plan with structured executionRequest
+ */
+async function prepareExecution(executionRequest: any, userAddress: string): Promise<any> {
   const result = await fetchJson(`${BASE_URL}/api/execute/prepare`, {
     method: 'POST',
     body: JSON.stringify({
-      intent,
-      userAddress: dummyAddress,
+      executionRequest,
+      userAddress,
+      draftId: `relayer_${Date.now()}`,
     }),
   });
 
@@ -138,22 +171,115 @@ interface ExecutionResult {
   latencyMs: number;
 }
 
-async function runExecution(template: ExecutionTemplate): Promise<ExecutionResult> {
+async function runExecution(template: ExecutionTemplate, relayerAddress: string): Promise<ExecutionResult> {
   const startTime = Date.now();
+  const verboseMode = process.argv.includes('--verbose') || process.argv.includes('-v');
 
   try {
-    // Step 1: Prepare execution plan
-    const prepareResult = await prepareExecution(template.intent);
+    // Step 1: Parse intent via /api/chat to get structured executionRequest
+    const chatResult = await parseIntent(template.intent);
+
+    if (verboseMode) {
+      console.log(`  [VERBOSE] ${template.name} chatResult:`, JSON.stringify(chatResult, null, 2).slice(0, 500));
+    }
+
+    if (!chatResult.ok && !chatResult.executionRequest && !chatResult.strategy) {
+      return {
+        template,
+        prepareSuccess: false,
+        executeSuccess: false,
+        error: chatResult.error || 'Intent parsing failed',
+        latencyMs: Date.now() - startTime,
+      };
+    }
+
+    // Extract executionRequest from chat response
+    // The chat response may have it directly or in strategy.executionRequest
+    let executionRequest = chatResult.executionRequest;
+    if (!executionRequest && chatResult.strategy) {
+      // Build executionRequest from strategy
+      const strategy = chatResult.strategy;
+      if (strategy.type === 'swap' || template.category === 'swap') {
+        executionRequest = {
+          kind: 'swap',
+          tokenIn: strategy.tokenIn || (template.intent.toLowerCase().includes('usdc') ? 'USDC' : 'WETH'),
+          tokenOut: strategy.tokenOut || (template.intent.toLowerCase().includes('weth') || template.intent.toLowerCase().includes('eth') ? 'WETH' : 'USDC'),
+          amountIn: strategy.amountIn || '100',
+        };
+      } else if (strategy.type === 'perp' || strategy.instrumentType === 'perp' || template.category === 'perp') {
+        executionRequest = {
+          kind: 'perp',
+          market: strategy.market || 'ETH-USD',
+          direction: strategy.direction || 'long',
+          leverage: strategy.leverage || 5,
+          marginUsd: strategy.marginUsd || strategy.notionalUsd || 50,
+        };
+      } else if (strategy.type === 'lend' || strategy.instrumentType === 'lend' || template.category === 'lend') {
+        executionRequest = {
+          kind: 'lend',
+          asset: 'USDC',
+          amount: strategy.depositUsd?.toString() || '50',
+        };
+      } else if (strategy.type === 'event' || strategy.instrumentType === 'event' || template.category === 'event') {
+        executionRequest = {
+          kind: 'event',
+          marketId: strategy.market || 'btc-price-target',
+          outcome: strategy.direction || 'YES',
+          stakeUsd: strategy.stakeUsd || 20,
+        };
+      }
+    }
+
+    if (!executionRequest) {
+      return {
+        template,
+        prepareSuccess: false,
+        executeSuccess: false,
+        error: 'Could not extract executionRequest from parsed intent',
+        latencyMs: Date.now() - startTime,
+      };
+    }
+
+    // Normalize token names: USDC -> REDACTED (demo token), ETH stays as-is or becomes WETH
+    if (executionRequest.kind === 'swap') {
+      if (executionRequest.tokenIn === 'USDC') {
+        executionRequest.tokenIn = 'REDACTED';
+      }
+      if (executionRequest.tokenOut === 'USDC') {
+        executionRequest.tokenOut = 'REDACTED';
+      }
+      // For demo swaps, we can only do REDACTED <-> WETH
+      if (executionRequest.tokenIn === 'ETH') {
+        // ETH needs wrap - change to use WETH directly for simplicity
+        executionRequest.tokenIn = 'WETH';
+        executionRequest.fundingPolicy = 'require_tokenIn';
+      }
+      if (executionRequest.tokenOut === 'ETH') {
+        executionRequest.tokenOut = 'WETH';
+      }
+    }
+
+    // Step 2: Prepare execution plan with structured executionRequest
+    // Use the actual relayer address so action data is encoded correctly
+    const prepareResult = await prepareExecution(executionRequest, relayerAddress);
+
+    if (verboseMode) {
+      console.log(`  [VERBOSE] ${template.name} prepareResult:`, JSON.stringify(prepareResult, null, 2).slice(0, 800));
+    }
 
     if (!prepareResult.plan) {
       return {
         template,
         prepareSuccess: false,
         executeSuccess: false,
-        error: prepareResult.error || 'No plan returned',
+        error: prepareResult.error || prepareResult.details || 'No plan returned from prepare',
         latencyMs: Date.now() - startTime,
       };
     }
+
+    // Debug: Log what adapter is being used
+    const adapters = prepareResult.plan.actions?.map((a: any) => a.adapter?.slice(0, 10)) || [];
+    console.log(`  [DEBUG] ${template.name}: Using adapters: ${adapters.join(', ')}`);
 
     if (dryRunMode) {
       return {
@@ -165,7 +291,7 @@ async function runExecution(template: ExecutionTemplate): Promise<ExecutionResul
       };
     }
 
-    // Step 2: Execute via relayer
+    // Step 3: Execute via relayer
     const executeResult = await executeViaRelayer(prepareResult.plan);
 
     if (executeResult.ok && executeResult.txHash) {
@@ -181,7 +307,7 @@ async function runExecution(template: ExecutionTemplate): Promise<ExecutionResul
         template,
         prepareSuccess: true,
         executeSuccess: false,
-        error: executeResult.error || 'Execution failed',
+        error: executeResult.error || executeResult.details || 'Execution failed',
         latencyMs: Date.now() - startTime,
       };
     }
@@ -225,6 +351,17 @@ async function main() {
   console.log(`${colors.green}Backend healthy at ${BASE_URL}${colors.reset}`);
   console.log('');
 
+  // Get relayer address
+  console.log(`${colors.cyan}[live]${colors.reset} Fetching relayer address...`);
+  const relayerAddress = await getRelayerAddress();
+
+  if (!relayerAddress) {
+    console.log(`${colors.red}ERROR: Could not get relayer address${colors.reset}`);
+    process.exit(1);
+  }
+  console.log(`${colors.green}Relayer: ${relayerAddress}${colors.reset}`);
+  console.log('');
+
   // Generate execution list
   const executions: ExecutionTemplate[] = [];
   let templateIndex = 0;
@@ -242,7 +379,7 @@ async function main() {
 
   for (let i = 0; i < executions.length; i++) {
     const template = executions[i];
-    const result = await runExecution(template);
+    const result = await runExecution(template, relayerAddress);
     results.push(result);
 
     // Log progress

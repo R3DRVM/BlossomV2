@@ -6430,6 +6430,38 @@ app.post('/api/mint', mintRateLimit, maybeCheckAccess, async (req, res) => {
 });
 
 /**
+ * GET /api/demo/relayer
+ * Returns the relayer address (for automated testing scripts)
+ */
+app.get('/api/demo/relayer', maybeCheckAccess, async (req, res) => {
+  try {
+    const { RELAYER_PRIVATE_KEY, EXECUTION_ROUTER_ADDRESS } = await import('../config');
+
+    if (!RELAYER_PRIVATE_KEY) {
+      return res.status(503).json({
+        ok: false,
+        error: 'Relayer not configured',
+      });
+    }
+
+    const { privateKeyToAccount } = await import('viem/accounts');
+    const relayerAccount = privateKeyToAccount(RELAYER_PRIVATE_KEY as `0x${string}`);
+
+    res.json({
+      ok: true,
+      relayerAddress: relayerAccount.address.toLowerCase(),
+      routerAddress: EXECUTION_ROUTER_ADDRESS?.toLowerCase(),
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      ok: false,
+      error: 'Failed to get relayer info',
+      details: error.message,
+    });
+  }
+});
+
+/**
  * POST /api/demo/execute-direct
  * Execute a plan directly via executeBySender (for automated testing)
  * This endpoint bypasses session requirements and sends tx directly from relayer
