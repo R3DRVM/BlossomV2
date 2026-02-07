@@ -99,7 +99,7 @@ const healthChecks: HealthCheck[] = [
   // Core API
   {
     name: 'Preflight Check',
-    url: `${API_DOMAIN}/api/preflight`,
+    url: `${API_DOMAIN}/api/execute/preflight`,
     expectedStatus: 200,
     timeout: 10000,
     checkResponse: (data) => data.ok === true,

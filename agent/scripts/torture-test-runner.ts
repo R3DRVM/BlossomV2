@@ -549,7 +549,7 @@ async function sendIntent(intent: string, sessionId: string): Promise<{
     const response = await fetchJson(`${BASE_URL}/api/chat`, {
       method: 'POST',
       body: JSON.stringify({
-        message: intent,
+        userMessage: intent,
         sessionId,
         metadata: {
           source: 'torture_test',
