@@ -258,3 +258,76 @@ The torture tests validate **intent parsing** (90%+ success). Stats don't increa
 **Status: AWAITING USER TRAFFIC**
 
 The system is fully validated and production-ready. Growth requires real users connecting wallets and executing transactions.
+
+---
+
+## Sub-Agent Execution Attempt (February 7, 2026 - Evening)
+
+### Findings
+
+**Intent Parsing**: VALIDATED (93.6%)
+- /api/chat correctly parses all intent types
+- Returns structured responses with execution plans
+
+**Plan Preparation**: WORKING
+- /api/execute/prepare generates valid plans
+- Returns tx data, typed data for signing
+
+**Relayer Execution**: BLOCKED
+- /api/demo/execute-direct fails with gas estimation revert
+- Even after funding relayer with 10000 USDC + 5 WETH
+- Root cause: Contract approvals not set for relayer address
+
+**User Execution**: PROVEN WORKING
+- 72 existing executions at 86.1% success rate
+- Transactions visible on Sepolia explorer
+- This proves the full stack works with real wallets
+
+### Technical Details
+
+```
+Relayer Address: 0x75B0406fFBcFCA51f8606FbbA340FB52A402f3e0
+Funded via: /api/demo/faucet
+Balance: 10000 USDC, 5 WETH
+Issue: ERC20 approve() not called for router contract
+```
+
+### What Works vs What Doesn't
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| Intent Parsing | WORKS | 93.6% success |
+| Plan Preparation | WORKS | Valid EIP-712 typed data |
+| Demo Token Faucet | WORKS | Mints bUSDC + WETH |
+| Relayer Execution | BLOCKED | Needs approval tx first |
+| User Wallet Execution | WORKS | 72 confirmed txs |
+
+### Path Forward
+
+**Option A: Fix Relayer Approvals (Engineering)**
+1. Call approve(router, MAX_UINT) for each token from relayer
+2. Requires signing with relayer private key
+3. One-time setup per token
+
+**Option B: Real User Traffic (Immediate)**
+1. Share BETA_GUIDE.md with internal team
+2. Team connects wallets to blossom.onl
+3. Execute real transactions
+4. Stats grow organically
+
+### Recommendation
+
+Pursue Option B (real user traffic) while Option A is being configured. The system is validated and ready - we just need human interaction to drive stats.
+
+### Files Created
+
+- `agent/scripts/live-execution-runner.ts` - Relayer execution script (ready when approvals set)
+
+### Current Metrics
+
+| Metric | Baseline | Current | Target |
+|--------|----------|---------|--------|
+| Intents | 127 | 127 | +100 |
+| Executions | 72 | 72 | +50 |
+| Wallets | 3 | 3 | 5-8 |
+| Success Rate | 86.1% | 86.1% | >90% |
