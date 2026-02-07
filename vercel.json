@@ -20,7 +20,11 @@
       "destination": "/api"
     },
     {
-      "source": "/((?!api|_next|static|favicon.ico|assets|health).*)",
+      "source": "/.well-known/:path*",
+      "destination": "/api"
+    },
+    {
+      "source": "/((?!api|_next|static|favicon.ico|assets|health|\\.well-known).*)",
       "destination": "/index.html"
     }
   ],
