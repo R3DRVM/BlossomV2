@@ -7,43 +7,39 @@
  */
 
 import * as esbuild from 'esbuild';
-import { readFileSync, existsSync } from 'fs';
-import { resolve, dirname, join } from 'path';
+import { readFileSync, existsSync, readdirSync } from 'fs';
+import { resolve, dirname, join, basename } from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const ledgerPath = resolve(__dirname, 'agent/dist/execution-ledger');
 
 console.log('🌸 Building Blossom Agent server bundle for Vercel...\n');
+console.log(`   Working dir: ${__dirname}`);
+console.log(`   Ledger path: ${ledgerPath}`);
 
 const startTime = Date.now();
 
-// Plugin to resolve relative imports in agent/dist
+// Plugin to resolve relative imports - handles all execution-ledger paths
 const resolvePlugin = {
   name: 'resolve-agent-paths',
   setup(build) {
-    // Resolve relative imports from execution-ledger
+    // Handle all relative .js imports by resolving from the importer's directory
     build.onResolve({ filter: /^\.\/.*\.js$/ }, args => {
-      if (args.importer.includes('execution-ledger')) {
-        const resolved = resolve(dirname(args.importer), args.path);
-        if (existsSync(resolved)) {
-          return { path: resolved };
-        }
+      const dir = dirname(args.importer);
+      const resolved = resolve(dir, args.path);
+      if (existsSync(resolved)) {
+        return { path: resolved };
       }
       return null;
     });
 
-    // Resolve imports to execution-ledger from other modules
-    build.onResolve({ filter: /execution-ledger/ }, args => {
-      const basePath = resolve(__dirname, 'agent/dist/execution-ledger');
-      const fileName = args.path.split('/').pop() + '.js';
-      const resolved = join(basePath, fileName);
+    // Handle imports like '../../execution-ledger/db-pg-client'
+    build.onResolve({ filter: /execution-ledger\/[^/]+$/ }, args => {
+      const moduleName = basename(args.path);
+      const resolved = join(ledgerPath, moduleName + '.js');
       if (existsSync(resolved)) {
         return { path: resolved };
-      }
-      // Try without .js
-      const resolved2 = join(basePath, args.path.split('/').pop() + '.js');
-      if (existsSync(resolved2)) {
-        return { path: resolved2 };
       }
       return null;
     });
@@ -71,8 +67,6 @@ try {
     logLevel: 'info',
     metafile: true,
     plugins: [resolvePlugin],
-    // Ensure we resolve from the correct base directory
-    absWorkingDir: __dirname,
   });
 
   // Log bundle stats
