@@ -1077,8 +1077,13 @@ export async function prepareEthTestnetExecution(
     const useDemoEventAdapter = isEventStrategy && DEMO_EVENT_ADAPTER_ADDRESS && DEMO_REDACTED_ADDRESS;
 
     if (useDemoPerpAdapter) {
-      // Build PERP action using DemoPerpAdapter (real on-chain execution)
+      // Build PULL + PERP actions using DemoPerpAdapter (real on-chain execution)
       const { encodeAbiParameters } = await import('viem');
+
+      // Verify PULL adapter is available
+      if (!ERC20_PULL_ADAPTER_ADDRESS) {
+        throw new Error('ERC20_PULL_ADAPTER_ADDRESS not configured for perp execution');
+      }
 
       // Parse perp parameters
       const market = strategy?.market || (executionRequest as any)?.market || 'ETH-USD';
@@ -1096,6 +1101,28 @@ export async function prepareEthTestnetExecution(
       // Convert margin to REDACTED units (6 decimals)
       const marginAmount = parseUnits(marginUsd.toString(), 6);
 
+      // ============ ACTION 1: PULL - transfer margin from user to router ============
+      const pullInnerData = encodeAbiParameters(
+        [{ type: 'address' }, { type: 'address' }, { type: 'uint256' }],
+        [
+          DEMO_REDACTED_ADDRESS!.toLowerCase() as `0x${string}`,
+          userAddress.toLowerCase() as `0x${string}`,
+          marginAmount,
+        ]
+      );
+
+      // Wrap PULL for session mode if needed
+      let pullActionData: string;
+      if (authMode === 'session') {
+        pullActionData = encodeAbiParameters(
+          [{ type: 'uint256' }, { type: 'bytes' }],
+          [marginAmount, pullInnerData]
+        );
+      } else {
+        pullActionData = pullInnerData;
+      }
+
+      // ============ ACTION 2: PERP - open position via adapter ============
       // Build adapter data: (uint8 action, address user, uint8 market, uint8 side, uint256 margin, uint256 leverage)
       const adapterData = encodeAbiParameters(
         [{ type: 'uint8' }, { type: 'address' }, { type: 'uint8' }, { type: 'uint8' }, { type: 'uint256' }, { type: 'uint256' }],
@@ -1108,23 +1135,28 @@ export async function prepareEthTestnetExecution(
         [DEMO_REDACTED_ADDRESS!.toLowerCase() as `0x${string}`, marginAmount, adapterData]
       );
 
-      // Wrap for session mode if needed
-      let actionData: string;
+      // Wrap PERP for session mode if needed
+      let perpActionData: string;
       if (authMode === 'session') {
-        const maxSpendUnits = marginAmount;
-        actionData = encodeAbiParameters(
+        perpActionData = encodeAbiParameters(
           [{ type: 'uint256' }, { type: 'bytes' }],
-          [maxSpendUnits, routerData]
+          [marginAmount, routerData]
         );
       } else {
-        actionData = routerData;
+        perpActionData = routerData;
       }
 
+      // Build actions array: PULL first, then PERP
       actions = [
+        {
+          actionType: 2, // PULL (from PlanTypes.ActionType enum)
+          adapter: ERC20_PULL_ADAPTER_ADDRESS.toLowerCase(),
+          data: pullActionData,
+        },
         {
           actionType: 7, // PERP (from PlanTypes.ActionType enum)
           adapter: DEMO_PERP_ADAPTER_ADDRESS!.toLowerCase(),
-          data: actionData,
+          data: perpActionData,
         },
       ];
 
@@ -1156,8 +1188,13 @@ export async function prepareEthTestnetExecution(
         }
       }
     } else if (useDemoEventAdapter) {
-      // Build EVENT action using DemoEventAdapter (real on-chain execution)
+      // Build PULL + EVENT actions using DemoEventAdapter (real on-chain execution)
       const { encodeAbiParameters, keccak256, stringToBytes } = await import('viem');
+
+      // Verify PULL adapter is available
+      if (!ERC20_PULL_ADAPTER_ADDRESS) {
+        throw new Error('ERC20_PULL_ADAPTER_ADDRESS not configured for event execution');
+      }
 
       // Parse event parameters
       const marketId = (executionRequest && executionRequest.kind === 'event')
@@ -1179,12 +1216,34 @@ export async function prepareEthTestnetExecution(
       const stakeAmount = parseUnits(stakeUsd.toString(), 6);
 
       // Determine action: 1=BUY_YES, 2=BUY_NO
-      const actionType = outcome.toUpperCase() === 'NO' ? 2 : 1;
+      const eventActionType = outcome.toUpperCase() === 'NO' ? 2 : 1;
 
+      // ============ ACTION 1: PULL - transfer stake from user to router ============
+      const pullInnerData = encodeAbiParameters(
+        [{ type: 'address' }, { type: 'address' }, { type: 'uint256' }],
+        [
+          DEMO_REDACTED_ADDRESS!.toLowerCase() as `0x${string}`,
+          userAddress.toLowerCase() as `0x${string}`,
+          stakeAmount,
+        ]
+      );
+
+      // Wrap PULL for session mode if needed
+      let pullActionData: string;
+      if (authMode === 'session') {
+        pullActionData = encodeAbiParameters(
+          [{ type: 'uint256' }, { type: 'bytes' }],
+          [stakeAmount, pullInnerData]
+        );
+      } else {
+        pullActionData = pullInnerData;
+      }
+
+      // ============ ACTION 2: EVENT - buy shares via adapter ============
       // Build adapter data: (uint8 action, address user, bytes32 marketId, uint256 amount)
       const adapterData = encodeAbiParameters(
         [{ type: 'uint8' }, { type: 'address' }, { type: 'bytes32' }, { type: 'uint256' }],
-        [actionType, userAddress.toLowerCase() as `0x${string}`, marketIdBytes32, stakeAmount]
+        [eventActionType, userAddress.toLowerCase() as `0x${string}`, marketIdBytes32, stakeAmount]
       );
 
       // Build router data: (address stake, uint256 amount, bytes adapterData)
@@ -1193,23 +1252,28 @@ export async function prepareEthTestnetExecution(
         [DEMO_REDACTED_ADDRESS!.toLowerCase() as `0x${string}`, stakeAmount, adapterData]
       );
 
-      // Wrap for session mode if needed
-      let actionData: string;
+      // Wrap EVENT for session mode if needed
+      let eventActionData: string;
       if (authMode === 'session') {
-        const maxSpendUnits = stakeAmount;
-        actionData = encodeAbiParameters(
+        eventActionData = encodeAbiParameters(
           [{ type: 'uint256' }, { type: 'bytes' }],
-          [maxSpendUnits, routerData]
+          [stakeAmount, routerData]
         );
       } else {
-        actionData = routerData;
+        eventActionData = routerData;
       }
 
+      // Build actions array: PULL first, then EVENT
       actions = [
+        {
+          actionType: 2, // PULL (from PlanTypes.ActionType enum)
+          adapter: ERC20_PULL_ADAPTER_ADDRESS.toLowerCase(),
+          data: pullActionData,
+        },
         {
           actionType: 8, // EVENT (from PlanTypes.ActionType enum)
           adapter: DEMO_EVENT_ADAPTER_ADDRESS!.toLowerCase(),
-          data: actionData,
+          data: eventActionData,
         },
       ];
 
