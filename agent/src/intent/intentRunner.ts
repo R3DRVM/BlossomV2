@@ -1129,6 +1129,12 @@ const CHAIN_ALIASES: Record<string, string> = {
   'polygon': 'polygon',
   'avax': 'avalanche',
   'avalanche': 'avalanche',
+
+  // Hyperliquid
+  'hl': 'hyperliquid',
+  'hyperliquid': 'hyperliquid',
+  'hyperliquid_testnet': 'hyperliquid',
+  'hyper': 'hyperliquid',
 };
 
 /**

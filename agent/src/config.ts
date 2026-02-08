@@ -127,8 +127,13 @@ export const REDACTED_ADDRESS_SEPOLIA = process.env.REDACTED_ADDRESS_SEPOLIA;
 
 export const WETH_ADDRESS_SEPOLIA = process.env.WETH_ADDRESS_SEPOLIA;
 
-// Solana devnet config (for cross-chain intents)
-export const SOLANA_RPC_URL = process.env.SOLANA_RPC_URL || 'https://api.devnet.solana.com';
+// Solana config (for cross-chain intents)
+// Prefer mainnet-beta for liquidity (devnet has none)
+export const SOLANA_NETWORK = (process.env.SOLANA_NETWORK || 'devnet') as 'devnet' | 'mainnet-beta';
+export const SOLANA_RPC_URL = process.env.SOLANA_RPC_URL ||
+  (SOLANA_NETWORK === 'mainnet-beta'
+    ? 'https://api.mainnet-beta.solana.com'
+    : 'https://api.devnet.solana.com');
 export const SOLANA_PROGRAM_ID = process.env.SOLANA_PROGRAM_ID;
 
 // Demo swap venue (deterministic for investor demos)

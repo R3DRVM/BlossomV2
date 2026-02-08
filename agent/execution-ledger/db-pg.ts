@@ -502,31 +502,84 @@ export async function getIntentStatsSummary() {
  * Get summary statistics
  */
 export async function getSummaryStats() {
+  // Fee configuration
+  const rawFeeBps = parseInt(process.env.BLOSSOM_FEE_BPS || '25', 10);
+  const feeBps = Math.min(50, Math.max(10, isNaN(rawFeeBps) ? 25 : rawFeeBps));
+  const feeTokenSymbol = process.env.BLOSSOM_FEE_TOKEN_SYMBOL || 'bUSDC';
+  const feeTreasuryAddress =
+    process.env.BLOSSOM_TREASURY_ADDRESS ||
+    process.env.RELAYER_ADDRESS ||
+    process.env.RELAYER_WALLET_ADDRESS ||
+    null;
+
   const sql = `
     SELECT
       COUNT(*) as total_executions,
-      COUNT(CASE WHEN status = 'confirmed' THEN 1 END) as successful_executions,
-      COALESCE(SUM(CASE WHEN status = 'confirmed' THEN usd_estimate ELSE 0 END), 0) as total_usd_routed,
+      COUNT(CASE WHEN status IN ('confirmed', 'finalized') THEN 1 END) as successful_executions,
+      COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed_executions,
+      COALESCE(SUM(CASE WHEN status IN ('confirmed', 'finalized') THEN usd_estimate ELSE 0 END), 0) as total_usd_routed,
       COUNT(DISTINCT chain) as chains_count,
-      COUNT(DISTINCT CASE WHEN status = 'confirmed' THEN from_address END) as unique_wallets
+      COUNT(DISTINCT CASE WHEN status IN ('confirmed', 'finalized') AND from_address IS NOT NULL THEN from_address END) as unique_wallets,
+      COUNT(CASE WHEN relayer_address IS NOT NULL THEN 1 END) as relayed_count,
+      AVG(CASE WHEN latency_ms IS NOT NULL THEN latency_ms END) as avg_latency_ms
     FROM executions
   `;
 
   const row = await queryOne<any>(sql, []);
 
-  const chainsResult = await queryRows<{chain: string}>('SELECT DISTINCT chain FROM executions WHERE status = $1', ['confirmed']);
+  const chainsResult = await queryRows<{chain: string}>('SELECT DISTINCT chain FROM executions WHERE status IN ($1, $2)', ['confirmed', 'finalized']);
   const chainsActive = chainsResult.map(r => r.chain);
 
   const totalExecs = parseInt(row?.total_executions || '0');
   const successfulExecs = parseInt(row?.successful_executions || '0');
+  const failedExecs = parseInt(row?.failed_executions || '0');
+  const totalUsdRouted = parseFloat(row?.total_usd_routed || '0');
+
+  // Calculate protocol fee (0.25% = 25 bps)
+  const totalFeeBlsmUsdc = totalUsdRouted * (feeBps / 10000);
+
+  // Get breakdown by kind for reputation system
+  const kindSql = `
+    SELECT kind, COUNT(*) as count
+    FROM executions
+    WHERE status IN ('confirmed', 'finalized')
+    GROUP BY kind
+    ORDER BY count DESC
+  `;
+  const kindRows = await queryRows<{kind: string, count: string}>(kindSql, []);
+  const byKind = kindRows.map(r => ({ kind: r.kind, count: parseInt(r.count || '0') }));
+
+  // Calculate adjusted success rate (excluding RPC/infra failures)
+  const infraFailSql = `
+    SELECT COUNT(*) as count FROM executions
+    WHERE status = 'failed'
+    AND error_code NOT IN ('RPC_RATE_LIMITED', 'RPC_UNAVAILABLE', 'RPC_ERROR', 'RPC_TIMEOUT')
+  `;
+  const infraFailRow = await queryOne<any>(infraFailSql, []);
+  const nonInfraFailedExec = parseInt(infraFailRow?.count || '0');
+  const rpcInfraFailed = failedExecs - nonInfraFailedExec;
+  const adjustedTotal = totalExecs - rpcInfraFailed;
+
+  const successRateRaw = totalExecs > 0 ? (successfulExecs / totalExecs) * 100 : 0;
+  const successRateAdjusted = adjustedTotal > 0 ? (successfulExecs / adjustedTotal) * 100 : successRateRaw;
 
   return {
     totalExecutions: totalExecs,
     successfulExecutions: successfulExecs,
-    successRate: totalExecs > 0 ? (successfulExecs / totalExecs) * 100 : 0,
-    totalUsdRouted: parseFloat(row?.total_usd_routed || '0'),
+    failedExecutions: failedExecs,
+    successRate: successRateRaw,
+    successRateRaw,
+    successRateAdjusted,
+    totalUsdRouted,
+    totalFeeBlsmUsdc: Math.round(totalFeeBlsmUsdc * 100) / 100,
+    feeBps,
+    feeTokenSymbol,
+    feeTreasuryAddress,
     chainsActive,
     uniqueWallets: parseInt(row?.unique_wallets || '0'),
+    relayedTxCount: parseInt(row?.relayed_count || '0'),
+    avgLatencyMs: Math.round(parseFloat(row?.avg_latency_ms || '0')),
+    byKind,
   };
 }
 

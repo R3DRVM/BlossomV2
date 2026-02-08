@@ -1,9 +1,11 @@
-import { useState, useEffect } from 'react';
-import { Star, X, Shield, CheckCircle2, Activity } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { Star, X, Shield, CheckCircle2, Activity, Coins, Loader2 } from 'lucide-react';
 import { QUICK_START_CATEGORIES, QuickStartCategoryId } from '../config/quickStartConfig';
 import { useBlossomContext, Venue } from '../context/BlossomContext';
 import { getSavedPrompts, savePrompt, deletePrompt, isPromptSaved, SavedPrompt } from '../lib/savedPrompts';
 import { useERC8004Identity, useERC8004Reputation, useERC8004Capabilities } from '../hooks/useERC8004';
+import { useAccount } from 'wagmi';
+import { callAgent } from '../lib/apiClient';
 
 interface QuickStartPanelProps {
   onSelectPrompt: (prompt: string) => void;
@@ -67,6 +69,13 @@ export default function QuickStartPanel({ onSelectPrompt }: QuickStartPanelProps
   const [savedPrompts, setSavedPrompts] = useState<SavedPrompt[]>([]);
   const [showSaved, setShowSaved] = useState(false);
 
+  // Wallet connection for minting
+  const { address: walletAddress, isConnected } = useAccount();
+
+  // Mint bUSDC state
+  const [isMinting, setIsMinting] = useState(false);
+  const [mintResult, setMintResult] = useState<{ success: boolean; message: string } | null>(null);
+
   // ERC-8004 Agent info
   const { isEnabled, isRegistered, agentId } = useERC8004Identity();
   const { tier, executionCount, totalVolumeUsd, formattedScore } = useERC8004Reputation();
@@ -76,6 +85,39 @@ export default function QuickStartPanel({ onSelectPrompt }: QuickStartPanelProps
   useEffect(() => {
     setSavedPrompts(getSavedPrompts());
   }, []);
+
+  // Mint bUSDC handler
+  const handleMintBusdc = useCallback(async () => {
+    if (!walletAddress || isMinting) return;
+
+    setIsMinting(true);
+    setMintResult(null);
+
+    try {
+      const response = await callAgent('/api/mint-busdc', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userAddress: walletAddress, amount: 500 }),
+      });
+
+      const data = await response.json();
+
+      if (data.ok) {
+        setMintResult({ success: true, message: `Minted 500 bUSDC` });
+        // Clear message after 5 seconds
+        setTimeout(() => setMintResult(null), 5000);
+      } else {
+        setMintResult({ success: false, message: data.error || 'Mint failed' });
+        setTimeout(() => setMintResult(null), 5000);
+      }
+    } catch (error: any) {
+      console.error('[QuickStartPanel] Mint error:', error);
+      setMintResult({ success: false, message: 'Network error' });
+      setTimeout(() => setMintResult(null), 5000);
+    } finally {
+      setIsMinting(false);
+    }
+  }, [walletAddress, isMinting]);
 
   const handleSavePrompt = (prompt: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -176,6 +218,33 @@ export default function QuickStartPanel({ onSelectPrompt }: QuickStartPanelProps
                   </span>
                 ))}
               </div>
+            )}
+          </div>
+        )}
+
+        {/* Testnet Faucet - Compact inline with wallet status */}
+        {isConnected && walletAddress && (
+          <div className="flex items-center justify-between rounded-xl border border-emerald-100 bg-emerald-50/50 px-2.5 py-1.5">
+            <div className="flex items-center gap-1.5">
+              <Coins className="w-3.5 h-3.5 text-emerald-600" />
+              <span className="text-[10px] text-emerald-700">Testnet</span>
+            </div>
+            <button
+              onClick={handleMintBusdc}
+              disabled={isMinting}
+              className={`flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-medium transition-all ${
+                isMinting
+                  ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                  : 'bg-emerald-500 text-white hover:bg-emerald-600'
+              }`}
+            >
+              {isMinting ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Coins className="w-2.5 h-2.5" />}
+              {isMinting ? 'Minting...' : 'Get 500 bUSDC'}
+            </button>
+            {mintResult && (
+              <span className={`text-[9px] ml-2 ${mintResult.success ? 'text-emerald-600' : 'text-rose-500'}`}>
+                {mintResult.success ? '✓' : '✗'}
+              </span>
             )}
           </div>
         )}

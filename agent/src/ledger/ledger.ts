@@ -97,7 +97,8 @@ async function getLedgerDb() {
 export async function recordExecution(params: RecordExecutionParams): Promise<string> {
   const db = await getLedgerDb();
 
-  const exec = db.createExecution({
+  // Use async function to ensure Postgres writes when configured
+  const exec = await db.createExecutionAsync({
     chain: params.chain,
     network: params.network,
     kind: params.kind,
@@ -126,7 +127,8 @@ export async function updateLedgerExecution(
   updates: ExecutionUpdateParams
 ): Promise<void> {
   const db = await getLedgerDb();
-  db.updateExecution(id, updates);
+  // Use async function to ensure Postgres writes when configured
+  await db.updateExecutionAsync(id, updates);
 }
 
 /**

@@ -49,17 +49,28 @@ interface ExecutionTemplate {
 }
 
 const EXECUTION_TEMPLATES: ExecutionTemplate[] = [
-  // Swaps - USDC to WETH only (these work with relayer)
+  // Swaps - USDC to WETH (high success rate)
   { name: 'swap_usdc_weth_1', intent: 'swap 10 USDC to WETH', category: 'swap', expectedSuccess: true },
   { name: 'swap_usdc_weth_2', intent: 'swap 15 USDC for WETH', category: 'swap', expectedSuccess: true },
   { name: 'swap_usdc_weth_3', intent: 'swap 20 USDC to WETH', category: 'swap', expectedSuccess: true },
   { name: 'swap_usdc_weth_4', intent: 'swap 25 USDC for WETH', category: 'swap', expectedSuccess: true },
   { name: 'swap_usdc_weth_5', intent: 'swap 30 USDC to WETH', category: 'swap', expectedSuccess: true },
-  { name: 'swap_usdc_weth_6', intent: 'swap 35 USDC for WETH', category: 'swap', expectedSuccess: true },
-  { name: 'swap_usdc_weth_7', intent: 'swap 40 USDC to WETH', category: 'swap', expectedSuccess: true },
-  { name: 'swap_usdc_weth_8', intent: 'swap 45 USDC for WETH', category: 'swap', expectedSuccess: true },
-  { name: 'swap_usdc_weth_9', intent: 'swap 50 USDC to WETH', category: 'swap', expectedSuccess: true },
-  { name: 'swap_usdc_weth_10', intent: 'swap 55 USDC for WETH', category: 'swap', expectedSuccess: true },
+
+  // Perps - Demo perp engine
+  { name: 'perp_btc_long_1', intent: 'long BTC 5x with 50 USDC', category: 'perp', expectedSuccess: true },
+  { name: 'perp_eth_short_1', intent: 'short ETH 3x leverage 30 USDC', category: 'perp', expectedSuccess: true },
+  { name: 'perp_btc_long_2', intent: 'open BTC long 10x 100 USDC', category: 'perp', expectedSuccess: true },
+  { name: 'perp_eth_long_1', intent: 'long ETH 2x with 40 USDC', category: 'perp', expectedSuccess: true },
+
+  // Events - Prediction markets
+  { name: 'event_btc_100k', intent: 'bet 20 USDC BTC above 100k', category: 'event', expectedSuccess: true },
+  { name: 'event_eth_5k', intent: 'predict ETH reaches 5000 with 15 USDC', category: 'event', expectedSuccess: true },
+  { name: 'event_btc_90k', intent: '25 USDC on BTC hitting 90k', category: 'event', expectedSuccess: true },
+
+  // Lend - Aave deposits
+  { name: 'lend_aave_1', intent: 'deposit 50 USDC to Aave', category: 'lend', expectedSuccess: true },
+  { name: 'lend_aave_2', intent: 'supply 30 USDC as collateral', category: 'lend', expectedSuccess: true },
+  { name: 'lend_aave_3', intent: 'lend 40 USDC on Aave', category: 'lend', expectedSuccess: true },
 ];
 
 // ============================================

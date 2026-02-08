@@ -218,6 +218,7 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
             feeBps: publicData.feeBps || 25,
             feeTokenSymbol: publicData.feeTokenSymbol || DEMO_STABLE_BRAND_SYMBOL,
             feeTreasuryAddress: publicData.feeTreasuryAddress || null,
+            uniqueWallets: publicData.uniqueWallets || 0,
             relayedTxCount: 0, // Not in public stats
             chainsActive: publicData.chainsActive || [],
             byKind: [],
@@ -444,8 +445,8 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
                 <h1 className="text-lg font-bold text-gray-900">
                   {isPublic ? 'Blossom Statistics' : 'Execution Statistics'}
                 </h1>
-                <span className="px-2 py-0.5 text-xs bg-[#F25AA2]/10 text-[#F25AA2] rounded-full font-medium border border-[#F25AA2]/20">
-                  BETA
+                <span className="px-2 py-0.5 text-xs bg-emerald-500/15 text-emerald-600 rounded-full font-medium border border-emerald-500/30">
+                  LIVE
                 </span>
                 {!isPublic && (
                   <span className="px-2 py-0.5 text-xs bg-gray-100 text-gray-600 rounded-full">DEV</span>

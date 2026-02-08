@@ -113,9 +113,8 @@ async function fetchPortfolioData(
     let evmBalances: TokenBalance[] = [];
     if (evmAddress) {
       try {
-        const response = await callAgent('/api/wallet/balances', {
-          method: 'POST',
-          body: JSON.stringify({ userAddress: evmAddress }),
+        const response = await callAgent(`/api/wallet/balances?address=${evmAddress}`, {
+          method: 'GET',
         });
         if (response.ok) {
           const data = await response.json();

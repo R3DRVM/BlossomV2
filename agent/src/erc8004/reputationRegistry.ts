@@ -143,8 +143,9 @@ export function calculateReputationScore(
  */
 export async function deriveReputationFromStats(): Promise<ReputationSummary> {
   // Dynamic import to avoid circular dependencies
-  const { getSummaryStats } = await import('../../execution-ledger/db.js');
-  const stats = getSummaryStats();
+  // Use async version which routes to Postgres in production
+  const { getSummaryStatsAsync } = await import('../../execution-ledger/db.js');
+  const stats = await getSummaryStatsAsync();
 
   const score = calculateReputationScore({
     successRateAdjusted: stats.successRateAdjusted,

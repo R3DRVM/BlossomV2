@@ -4,7 +4,7 @@
  */
 
 import { RELAYER_PRIVATE_KEY, ETH_TESTNET_RPC_URL, requireRelayerConfig } from '../config';
-import { createWalletClient, http, parseEther } from 'viem';
+import { createWalletClient, http, parseEther, formatEther } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { sepolia } from 'viem/chains';
 
@@ -85,6 +85,25 @@ export async function sendRelayedTx({
       // Estimation failed - this usually means the tx will revert
       console.error('[relayer] Gas estimation failed:', error.message);
       throw new Error(`Gas estimation failed: ${error.message}. This usually means the transaction will revert. Check contract addresses and adapter configuration.`);
+    }
+
+    // Check relayer ETH balance before sending
+    const relayerBalance = await publicClient.getBalance({
+      address: account.address,
+    });
+    const gasPrice = await publicClient.getGasPrice();
+    const estimatedCost = gasLimit * gasPrice;
+    const MIN_BUFFER = parseEther('0.002'); // Keep 0.002 ETH buffer
+
+    if (relayerBalance < estimatedCost + MIN_BUFFER) {
+      console.error('[relayer] Insufficient ETH balance:', {
+        balance: formatEther(relayerBalance),
+        needed: formatEther(estimatedCost + MIN_BUFFER),
+      });
+      throw new Error(
+        `Relayer has insufficient ETH for gas. Balance: ${formatEther(relayerBalance)} ETH, ` +
+        `Estimated need: ${formatEther(estimatedCost)} ETH`
+      );
     }
 
     // Send transaction with estimated gas

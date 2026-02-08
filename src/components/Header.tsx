@@ -16,8 +16,8 @@ export default function Header() {
           <div className="flex flex-col">
             <div className="flex items-center gap-1.5">
               <h1 className="text-sm font-semibold text-blossom-ink leading-tight">Blossom</h1>
-              <span className="px-1.5 py-0.5 text-[10px] font-bold tracking-wide bg-blossom-pink/15 text-blossom-pink border border-blossom-pink/30 rounded">
-                BETA
+              <span className="px-1.5 py-0.5 text-[10px] font-bold tracking-wide bg-emerald-500/15 text-emerald-600 border border-emerald-500/30 rounded">
+                LIVE
               </span>
             </div>
             <p className="text-xs text-blossom-slate leading-tight">AI Trading Copilot</p>

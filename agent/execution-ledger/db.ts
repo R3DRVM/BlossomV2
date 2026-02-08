@@ -267,7 +267,7 @@ export function createExecution(params: {
     params.venue ?? null,
     params.intent,
     params.action,
-    params.fromAddress.toLowerCase(),
+    params.fromAddress?.toLowerCase() ?? null,
     params.toAddress?.toLowerCase() ?? null,
     params.token ?? null,
     params.amountUnits ?? null,
@@ -288,7 +288,7 @@ export function createExecution(params: {
     venue: params.venue,
     intent: params.intent,
     action: params.action,
-    from_address: params.fromAddress.toLowerCase(),
+    from_address: params.fromAddress?.toLowerCase() ?? '',
     to_address: params.toAddress?.toLowerCase(),
     token: params.token,
     amount_units: params.amountUnits,
@@ -1224,9 +1224,10 @@ export function getSummaryStats(): StatsSummary {
     SELECT MAX(created_at) as lastAt FROM executions
   `).get() as { lastAt: number | null };
 
-  // Unique wallets
+  // Unique wallets (only count confirmed/finalized executions)
   const uniqueWalletsResult = db.prepare(`
-    SELECT COUNT(DISTINCT from_address) as count FROM executions WHERE from_address IS NOT NULL
+    SELECT COUNT(DISTINCT from_address) as count FROM executions
+    WHERE from_address IS NOT NULL AND status IN ('confirmed', 'finalized')
   `).get() as { count: number };
   const uniqueWallets = uniqueWalletsResult.count;
 
@@ -1970,12 +1971,20 @@ export async function createExecutionAsync(params: {
   sessionId?: string;
   intentId?: string;
 }): Promise<Execution> {
+  console.log('[db] createExecutionAsync called, dbType:', dbType, 'fromAddress:', params.fromAddress);
   if (dbType === 'postgres') {
-    const pgDb = await import('./db-pg.js');
-    return pgDb.createExecution(params as any) as Promise<Execution>;
+    try {
+      const pgDb = await import('./db-pg.js');
+      console.log('[db] Using postgres createExecution');
+      return pgDb.createExecution(params as any) as Promise<Execution>;
+    } catch (pgError: any) {
+      console.error('[db] Postgres import/execution failed:', pgError.message);
+      // Fall through to SQLite
+    }
   }
 
   // SQLite: use synchronous version
+  console.log('[db] Using SQLite createExecution');
   return Promise.resolve(createExecution(params as any));
 }
 

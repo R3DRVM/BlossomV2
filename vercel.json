@@ -1,6 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "version": 2,
+  "installCommand": "npm ci --include=dev && cd agent && npm ci --include=dev",
   "buildCommand": "npm run build && cd agent && npm run build && cd .. && node build-agent.js",
   "outputDirectory": "dist",
   "framework": "vite",

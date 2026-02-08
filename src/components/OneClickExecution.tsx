@@ -49,6 +49,35 @@ export default function OneClickExecution({
     }
   }, [userAddress]);
 
+  // Validate stored session with server on restore
+  useEffect(() => {
+    if (userAddress && isEnabled && isAuthorized) {
+      const storedSessionId = localStorage.getItem(getSessionIdKey(userAddress));
+      if (storedSessionId) {
+        callAgent('/api/session/validate', {
+          method: 'POST',
+          body: JSON.stringify({ userAddress, sessionId: storedSessionId }),
+        })
+          .then(res => res.json())
+          .then(data => {
+            if (!data.valid) {
+              // Clear invalid session
+              console.warn('[OneClickExecution] Session validation failed:', data.reason);
+              localStorage.removeItem(getEnabledKey(userAddress));
+              localStorage.removeItem(getAuthorizedKey(userAddress));
+              localStorage.removeItem(getSessionIdKey(userAddress));
+              setIsEnabled(false);
+              setIsAuthorized(false);
+              onDisabled?.();
+            }
+          })
+          .catch(() => {
+            // Keep existing state if validation fails (network error)
+          });
+      }
+    }
+  }, [userAddress, isEnabled, isAuthorized, onDisabled]);
+
   const handleToggle = useCallback(async () => {
     if (!userAddress) return;
 

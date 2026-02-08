@@ -18,7 +18,8 @@ export type AdvancedIntentKind =
   | 'multi_step'
   | 'limit_order'
   | 'stop_loss'
-  | 'take_profit';
+  | 'take_profit'
+  | 'hedge';
 
 // DCA-specific parameters
 export interface DCAIntent {
@@ -70,11 +71,20 @@ export interface ParsedStepIntent {
   percentageOfPrevious?: number; // "half", "all", "quarter" -> 50, 100, 25
 }
 
+// Hedge/reduce exposure parameters
+export interface HedgeIntent {
+  kind: 'hedge';
+  action: 'reduce' | 'close' | 'hedge';
+  targetAsset?: string;
+  percentageToReduce?: number;
+}
+
 export type AdvancedParsedIntent =
   | (DCAIntent & { rawText: string })
   | (LeverageIntent & { rawText: string })
   | (YieldOptimizeIntent & { rawText: string })
-  | (MultiStepIntent & { rawText: string });
+  | (MultiStepIntent & { rawText: string })
+  | (HedgeIntent & { rawText: string });
 
 // Parsing patterns
 const PATTERNS = {
@@ -664,6 +674,30 @@ export function parseAdvancedIntent(text: string): AdvancedParsedIntent | null {
     }
   }
 
+  // Check for hedge/reduce exposure keywords
+  const hedgeKeywords = ['hedge', 'de-risk', 'derisk', 'reduce risk'];
+  const reduceKeywords = normalizedText.includes('reduce') && normalizedText.includes('exposure');
+  const closeKeywords = normalizedText.includes('close') &&
+    (normalizedText.includes('position') || normalizedText.includes('long') || normalizedText.includes('short'));
+
+  if (hedgeKeywords.some(k => normalizedText.includes(k)) || reduceKeywords || closeKeywords) {
+    // Extract target asset (e.g., "my ETH exposure" -> "ETH")
+    const assetMatch = text.match(/(?:my\s+)?(\w+)\s+(?:exposure|position|long|short)/i);
+    const targetAsset = assetMatch?.[1]?.toUpperCase();
+
+    // Extract percentage (e.g., "reduce 50%" -> 50)
+    const pctMatch = text.match(/(\d+)%/);
+    const percentage = pctMatch ? parseInt(pctMatch[1]) : undefined;
+
+    return {
+      kind: 'hedge' as const,
+      action: closeKeywords ? 'close' : 'reduce',
+      targetAsset,
+      percentageToReduce: percentage,
+      rawText: text,
+    };
+  }
+
   return null;
 }
 
@@ -737,6 +771,18 @@ export function advancedIntentToStandard(
           advancedKind: 'multi_step',
           steps: advanced.steps,
           currentStep: 0,
+        },
+      };
+
+    case 'hedge':
+      return {
+        kind: 'swap', // Hedge is typically a swap to reduce exposure
+        action: advanced.action,
+        targetAsset: advanced.targetAsset,
+        rawParams: {
+          original: advanced.rawText,
+          advancedKind: 'hedge',
+          percentageToReduce: advanced.percentageToReduce,
         },
       };
 

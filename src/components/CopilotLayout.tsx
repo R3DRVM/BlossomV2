@@ -111,8 +111,8 @@ export default function CopilotLayout() {
             <div className="flex items-center gap-2">
               <BlossomLogo size={20} className="drop-shadow-sm" />
               <h1 className="text-sm font-semibold text-slate-900">Blossom</h1>
-              <span className="px-1.5 py-0.5 text-[9px] font-bold tracking-wide bg-blossom-pink/15 text-blossom-pink border border-blossom-pink/30 rounded">
-                BETA
+              <span className="px-1.5 py-0.5 text-[9px] font-bold tracking-wide bg-emerald-500/15 text-emerald-600 border border-emerald-500/30 rounded">
+                LIVE
               </span>
               <span className="text-slate-300">|</span>
               <span className="text-sm font-medium text-slate-700">Copilot</span>
