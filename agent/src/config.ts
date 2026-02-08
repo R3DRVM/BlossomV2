@@ -172,6 +172,10 @@ export const DEMO_PERP_ADAPTER_ADDRESS = process.env.DEMO_PERP_ADAPTER_ADDRESS a
 export const DEMO_EVENT_ENGINE_ADDRESS = process.env.DEMO_EVENT_ENGINE_ADDRESS as Address | undefined;
 export const DEMO_EVENT_ADAPTER_ADDRESS = process.env.DEMO_EVENT_ADAPTER_ADDRESS as Address | undefined;
 
+// Collateral token for perp/event adapters (may differ from DEMO_REDACTED_ADDRESS)
+// Default to the deployed DemoPerpEngine's collateral token on Sepolia
+export const DEMO_PERP_COLLATERAL_ADDRESS = (process.env.DEMO_PERP_COLLATERAL_ADDRESS || '0x6751001fD8207c494703C062139784abCa099bB9') as Address;
+
 // Proof-of-execution adapter (fallback for perps/events when demo adapters not deployed)
 export const PROOF_ADAPTER_ADDRESS = process.env.PROOF_ADAPTER_ADDRESS;
 
