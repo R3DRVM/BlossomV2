@@ -516,11 +516,12 @@ export async function prepareEthTestnetExecution(
       tokenOut = executionIntent === 'swap_usdc_weth'
         ? DEMO_WETH_ADDRESS.toLowerCase()
         : DEMO_REDACTED_ADDRESS.toLowerCase();
-      swapAdapter = UNISWAP_ADAPTER_ADDRESS?.toLowerCase() || UNISWAP_V3_ADAPTER_ADDRESS?.toLowerCase() || '';
+      // Use MockSwapAdapter for demo token swaps (UniswapV3 has no pool for demo tokens)
+      swapAdapter = MOCK_SWAP_ADAPTER_ADDRESS?.toLowerCase() || '';
       pullAdapter = ERC20_PULL_ADAPTER_ADDRESS?.toLowerCase();
 
       if (!swapAdapter) {
-        throw new Error('UNISWAP_ADAPTER_ADDRESS not configured for demo swap');
+        throw new Error('MOCK_SWAP_ADAPTER_ADDRESS not configured for demo swap');
       }
       if (!pullAdapter) {
         throw new Error('ERC20_PULL_ADAPTER_ADDRESS not configured for demo swap');
