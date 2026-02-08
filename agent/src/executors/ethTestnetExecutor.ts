@@ -23,6 +23,7 @@ import {
   DEMO_EVENT_ADAPTER_ADDRESS,
   DEMO_EVENT_ENGINE_ADDRESS,
   DEMO_PERP_COLLATERAL_ADDRESS,
+  DEMO_EVENT_MARKET_ID,
   ETH_TESTNET_RPC_URL,
   ETH_TESTNET_CHAIN_ID,
   requireEthTestnetConfig,
@@ -1159,10 +1160,10 @@ export async function prepareEthTestnetExecution(
       }
     } else if (useDemoEventAdapter) {
       // Build EVENT action using DemoEventAdapter (real on-chain execution)
-      const { encodeAbiParameters, keccak256, stringToBytes } = await import('viem');
+      const { encodeAbiParameters } = await import('viem');
 
       // Parse event parameters
-      const marketId = (executionRequest && executionRequest.kind === 'event')
+      const rawMarketId = (executionRequest && executionRequest.kind === 'event')
         ? executionRequest.marketId
         : (strategy?.market || 'demo-market');
       const outcome = (executionRequest && executionRequest.kind === 'event')
@@ -1172,10 +1173,11 @@ export async function prepareEthTestnetExecution(
         ? executionRequest.stakeUsd
         : (strategy?.stakeUsd || 5);
 
-      // Convert marketId to bytes32 (hash if string)
-      const marketIdBytes32 = marketId.startsWith('0x') && marketId.length === 66
-        ? marketId as `0x${string}`
-        : keccak256(stringToBytes(marketId));
+      // Use DEMO_EVENT_MARKET_ID for non-hex market IDs (must be a valid market in the contract)
+      // Only accept full hex bytes32 if explicitly provided
+      const marketIdBytes32 = (rawMarketId.startsWith('0x') && rawMarketId.length === 66)
+        ? rawMarketId as `0x${string}`
+        : DEMO_EVENT_MARKET_ID as `0x${string}`;
 
       // Convert stake to REDACTED units (6 decimals)
       const stakeAmount = parseUnits(stakeUsd.toString(), 6);

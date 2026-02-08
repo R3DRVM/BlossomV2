@@ -176,6 +176,10 @@ export const DEMO_EVENT_ADAPTER_ADDRESS = process.env.DEMO_EVENT_ADAPTER_ADDRESS
 // Default to the deployed DemoPerpEngine's collateral token on Sepolia
 export const DEMO_PERP_COLLATERAL_ADDRESS = (process.env.DEMO_PERP_COLLATERAL_ADDRESS || '0x6751001fD8207c494703C062139784abCa099bB9') as Address;
 
+// Default event market ID (must be a valid market in DemoEventMarket contract)
+// This is used when the intent parser doesn't specify a specific market ID
+export const DEMO_EVENT_MARKET_ID = process.env.DEMO_EVENT_MARKET_ID || '0x1226b7463e5736847636fa62571d53037f286df793b8f984fc2a38c0f2d7a3ca';
+
 // Proof-of-execution adapter (fallback for perps/events when demo adapters not deployed)
 export const PROOF_ADAPTER_ADDRESS = process.env.PROOF_ADAPTER_ADDRESS;
 
