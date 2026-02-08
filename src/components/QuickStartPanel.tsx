@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Star, X, Shield, CheckCircle2, Activity } from 'lucide-react';
+import { Star, X, CheckCircle2, Activity } from 'lucide-react';
 import { QUICK_START_CATEGORIES, QuickStartCategoryId } from '../config/quickStartConfig';
 import { useBlossomContext, Venue } from '../context/BlossomContext';
 import { getSavedPrompts, savePrompt, deletePrompt, isPromptSaved, SavedPrompt } from '../lib/savedPrompts';
@@ -125,52 +125,41 @@ export default function QuickStartPanel({ onSelectPrompt }: QuickStartPanelProps
 
     return (
       <div className="mt-3 px-4 pb-4 space-y-3">
-        {/* ERC-8004 Agent Credentials */}
-        {isEnabled && (
-          <div className="rounded-2xl border border-slate-100 bg-white/90 shadow-sm px-3 py-2.5">
+        {/* ERC-8004 Agent Credentials - Only show when registered (no "Unverified" badge) */}
+        {isEnabled && isRegistered && (
+          <div className="rounded-2xl border border-emerald-100 bg-emerald-50/30 shadow-sm px-3 py-2.5">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                {isRegistered ? (
-                  <div className="flex items-center gap-1.5">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                    <span className="text-[11px] font-medium text-slate-700">
-                      Verified Agent #{agentId}
-                    </span>
-                    <span className="text-[10px] text-slate-400">|</span>
-                    <span className={`text-[10px] font-medium ${
-                      tier === 'excellent' || tier === 'good'
-                        ? 'text-emerald-600'
-                        : tier === 'fair' || tier === 'neutral'
-                        ? 'text-amber-600'
-                        : 'text-slate-500'
-                    }`}>
-                      {formattedScore}
-                    </span>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-1.5">
-                    <Shield className="w-4 h-4 text-slate-400" />
-                    <span className="text-[11px] text-slate-500">Unverified Agent</span>
-                  </div>
-                )}
+              <div className="flex items-center gap-1.5">
+                <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                <span className="text-[11px] font-medium text-slate-700">
+                  Verified Agent #{agentId}
+                </span>
+                <span className="text-[10px] text-slate-400">|</span>
+                <span className={`text-[10px] font-medium ${
+                  tier === 'excellent' || tier === 'good'
+                    ? 'text-emerald-600'
+                    : tier === 'fair' || tier === 'neutral'
+                    ? 'text-amber-600'
+                    : 'text-slate-500'
+                }`}>
+                  {formattedScore}
+                </span>
               </div>
-              {isRegistered && (
-                <div className="flex items-center gap-2 text-[10px] text-slate-400">
-                  <span className="flex items-center gap-1">
-                    <Activity className="w-3 h-3" />
-                    {executionCount} txs
-                  </span>
-                  <span>|</span>
-                  <span>{formatVolume(totalVolumeUsd)} routed</span>
-                </div>
-              )}
+              <div className="flex items-center gap-2 text-[10px] text-slate-400">
+                <span className="flex items-center gap-1">
+                  <Activity className="w-3 h-3" />
+                  {executionCount} txs
+                </span>
+                <span>|</span>
+                <span>{formatVolume(totalVolumeUsd)} routed</span>
+              </div>
             </div>
             {capabilityPills.length > 0 && (
               <div className="flex items-center gap-1 mt-1.5">
                 {capabilityPills.map((cap) => (
                   <span
                     key={cap}
-                    className="px-1.5 py-0.5 text-[9px] font-medium bg-slate-100 text-slate-600 rounded"
+                    className="px-1.5 py-0.5 text-[9px] font-medium bg-emerald-100 text-emerald-700 rounded"
                   >
                     {cap}
                   </span>
