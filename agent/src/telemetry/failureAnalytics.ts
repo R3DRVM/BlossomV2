@@ -28,7 +28,7 @@ export type FailureCategory =
 export type IntentType = 'swap' | 'perp' | 'defi' | 'event' | 'transfer' | 'session' | 'bridge' | 'other';
 
 // Chain types
-export type Chain = 'ethereum' | 'solana' | 'unknown';
+export type Chain = 'ethereum' | 'solana' | 'hyperliquid' | 'unknown';
 
 export interface FailureRecord {
   id: string;

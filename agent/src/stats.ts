@@ -17,7 +17,7 @@ import { recordFailure, getFailureMetrics, incrementRequestCount, type FailureMe
 // Types
 // ============================================
 
-export type ChainType = 'ethereum' | 'solana' | 'unknown';
+export type ChainType = 'ethereum' | 'solana' | 'hyperliquid' | 'unknown';
 export type ExecutionStatus = 'success' | 'failed' | 'pending' | 'timeout';
 export type IntentKind = 'swap' | 'perp' | 'defi' | 'event' | 'transfer' | 'bridge' | 'other';
 
@@ -116,6 +116,7 @@ const chainCounters: Record<ChainType, {
 }> = {
   ethereum: { total: 0, success: 0, failed: 0, usdRouted: 0, latencySum: 0, latencyCount: 0, events24h: [] },
   solana: { total: 0, success: 0, failed: 0, usdRouted: 0, latencySum: 0, latencyCount: 0, events24h: [] },
+  hyperliquid: { total: 0, success: 0, failed: 0, usdRouted: 0, latencySum: 0, latencyCount: 0, events24h: [] },
   unknown: { total: 0, success: 0, failed: 0, usdRouted: 0, latencySum: 0, latencyCount: 0, events24h: [] },
 };
 
@@ -191,6 +192,9 @@ function detectChain(chain?: string, network?: string): ChainType {
 
   const combined = `${chain || ''} ${network || ''}`.toLowerCase();
 
+  if (combined.includes('hyperliquid') || combined.includes('hl') || combined.includes('hyper')) {
+    return 'hyperliquid';
+  }
   if (combined.includes('sol') || combined.includes('devnet')) {
     return 'solana';
   }

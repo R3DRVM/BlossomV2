@@ -189,6 +189,157 @@ const EVENT_BETTING_PATTERNS = [
   /\bpolymarket\b/i,
 ];
 
+// ============================================
+// Category Blacklists - Prevent Cross-Path Mismatch
+// ============================================
+
+/**
+ * Keywords that MUST NOT appear in EVENT_BETTING intents
+ * (prevents "bet on BTC long" from being routed to events)
+ */
+const EVENT_BETTING_BLACKLIST_PATTERNS = [
+  /\bperp\b/i,
+  /\bperpetual\b/i,
+  /\bfutures?\b/i,
+  /\bleverage\b/i,
+  /\bmargin\b/i,
+  /\blong\s+(position|eth|btc|sol)\b/i,
+  /\b(eth|btc|sol)\s+long\b/i,             // "BTC long"
+  /\bshort\s+(position|eth|btc|sol)\b/i,
+  /\b(eth|btc|sol)\s+short\b/i,            // "ETH short"
+  /\bopen\s+(long|short)\b/i,
+  /\b\d+x\s*(long|short|leverage)?\b/i,
+  /\bgo\s+(long|short)\b/i,                // "go long on"
+];
+
+/**
+ * Keywords that MUST NOT appear in PERP/EXECUTION intents
+ * (prevents "long ETH prediction" from being routed to perps)
+ */
+const EXECUTION_BLACKLIST_PATTERNS = [
+  /\bbet\s+on\b/i,
+  /\bwager\b/i,
+  /\boutcome\b/i,
+  /\bprediction\s*market\b/i,
+  /\bprediction\b/i,
+  /\bpolymarket\b/i,
+  /\bplace\s+bet\b/i,
+  /\bbetting\s+on\b/i,
+];
+
+/**
+ * Keywords that MUST NOT appear in CREATION intents
+ * (prevents "create bet market" from being routed to HIP-3)
+ */
+const CREATION_BLACKLIST_PATTERNS = [
+  /\bbet\b/i,
+  /\bwager\b/i,
+  /\boutcome\b/i,
+  /\bprediction\b/i,
+  /\bevent\s+market\b/i,
+  /\bbetting\s+market\b/i,
+  /\bpolymarket\b/i,
+];
+
+/**
+ * Validate path integrity - check for conflicting keywords
+ * Returns null if valid, or error info if mismatch detected
+ */
+export function validatePathIntegrity(
+  intentText: string,
+  detectedPath: IntentPath
+): { valid: false; conflictingKeywords: string[]; suggestedPath?: IntentPath } | { valid: true } {
+  const text = intentText;
+  const conflicts: string[] = [];
+
+  if (detectedPath === IntentPath.EVENT_BETTING) {
+    // Check for perp/execution keywords in event intent
+    for (const pattern of EVENT_BETTING_BLACKLIST_PATTERNS) {
+      const match = text.match(pattern);
+      if (match) {
+        conflicts.push(match[0]);
+      }
+    }
+    if (conflicts.length > 0) {
+      return {
+        valid: false,
+        conflictingKeywords: conflicts,
+        suggestedPath: IntentPath.PLANNING, // Suggest perp path
+      };
+    }
+  }
+
+  if (detectedPath === IntentPath.PLANNING || detectedPath === IntentPath.EXECUTION) {
+    // Check for event/betting keywords in perp intent
+    for (const pattern of EXECUTION_BLACKLIST_PATTERNS) {
+      const match = text.match(pattern);
+      if (match) {
+        conflicts.push(match[0]);
+      }
+    }
+    if (conflicts.length > 0) {
+      return {
+        valid: false,
+        conflictingKeywords: conflicts,
+        suggestedPath: IntentPath.EVENT_BETTING, // Suggest event path
+      };
+    }
+  }
+
+  if (detectedPath === IntentPath.CREATION) {
+    // Check for event keywords in creation intent
+    for (const pattern of CREATION_BLACKLIST_PATTERNS) {
+      const match = text.match(pattern);
+      if (match) {
+        conflicts.push(match[0]);
+      }
+    }
+    if (conflicts.length > 0) {
+      return {
+        valid: false,
+        conflictingKeywords: conflicts,
+        suggestedPath: IntentPath.EVENT_BETTING,
+      };
+    }
+  }
+
+  return { valid: true };
+}
+
+/**
+ * Classify intent with path integrity validation
+ * Returns path and optional mismatch error
+ */
+export interface ClassifyResult {
+  path: IntentPath;
+  mismatch?: {
+    detectedPath: IntentPath;
+    conflictingKeywords: string[];
+    suggestedPath?: IntentPath;
+    message: string;
+  };
+}
+
+export function classifyIntentPathWithValidation(intentText: string): ClassifyResult {
+  const path = classifyIntentPath(intentText);
+  const validation = validatePathIntegrity(intentText, path);
+
+  if (!validation.valid) {
+    return {
+      path: IntentPath.RESEARCH, // Fall back to safe research path
+      mismatch: {
+        detectedPath: path,
+        conflictingKeywords: validation.conflictingKeywords,
+        suggestedPath: validation.suggestedPath,
+        message: `Intent contains conflicting keywords: "${validation.conflictingKeywords.join('", "')}". ` +
+          `Did you mean to ${path === IntentPath.EVENT_BETTING ? 'open a position' : 'place a bet'}?`,
+      },
+    };
+  }
+
+  return { path };
+}
+
 /**
  * Classify intent text into a path
  */

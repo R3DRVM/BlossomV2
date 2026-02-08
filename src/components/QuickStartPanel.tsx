@@ -1,11 +1,9 @@
-import { useState, useEffect, useCallback } from 'react';
-import { Star, X, Shield, CheckCircle2, Activity, Coins, Loader2 } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Star, X, Shield, CheckCircle2, Activity } from 'lucide-react';
 import { QUICK_START_CATEGORIES, QuickStartCategoryId } from '../config/quickStartConfig';
 import { useBlossomContext, Venue } from '../context/BlossomContext';
 import { getSavedPrompts, savePrompt, deletePrompt, isPromptSaved, SavedPrompt } from '../lib/savedPrompts';
 import { useERC8004Identity, useERC8004Reputation, useERC8004Capabilities } from '../hooks/useERC8004';
-import { useAccount } from 'wagmi';
-import { callAgent } from '../lib/apiClient';
 
 interface QuickStartPanelProps {
   onSelectPrompt: (prompt: string) => void;
@@ -16,24 +14,24 @@ function getQuickActionsForVenue(venue: Venue): Array<{ title: string; descripti
   if (venue === 'event_demo') {
     return [
       {
-        title: 'Bet on macro events',
-        description: 'Take a YES/NO view on a key macro outcome.',
-        prompt: 'Take YES on Fed cuts in March with 2% risk',
+        title: 'Fed Rate Decision',
+        description: 'Bet YES or NO on upcoming Fed policy.',
+        prompt: 'Take YES position on Fed cutting rates in March, stake $25',
       },
       {
-        title: 'Scan my event exposure',
-        description: 'See how much of my account is tied to event markets.',
-        prompt: 'Show me my event market exposure and the riskiest positions',
+        title: 'BTC Price Target',
+        description: 'Bet on Bitcoin hitting a price level.',
+        prompt: 'Bet $20 that BTC will hit 100k by end of Q1',
       },
       {
-        title: 'Risk-adjusted event sizing',
-        description: 'Use a conservative stake based on my risk rules.',
-        prompt: 'Risk 2% on the highest volume event market',
+        title: 'ETH Market Move',
+        description: 'Take a position on ETH price action.',
+        prompt: 'Place $15 NO bet on ETH falling below 2000 this month',
       },
       {
-        title: 'Explore top markets',
-        description: 'View the highest-volume prediction markets right now.',
-        prompt: 'Show me the top 5 prediction markets by volume',
+        title: 'Browse Markets',
+        description: 'See available prediction markets.',
+        prompt: 'List the top 5 prediction markets by trading volume',
       },
     ];
   }
@@ -41,24 +39,24 @@ function getQuickActionsForVenue(venue: Venue): Array<{ title: string; descripti
   // Default: on-chain / hyperliquid
   return [
     {
-      title: 'Long BTC with live prices',
-      description: 'Route across venues for optimal execution.',
-      prompt: 'Long BTC with 20x leverage using 2% risk. Show me the execution plan across venues.',
+      title: 'Long BTC Perp',
+      description: 'Open a leveraged long position on Bitcoin.',
+      prompt: 'Long BTC with 5x leverage, use 50 USDC as collateral',
     },
     {
-      title: 'Check exposure & risk',
-      description: 'See where my risk is concentrated right now.',
-      prompt: 'Show me my current perp exposure and largest risk buckets',
+      title: 'Swap to ETH',
+      description: 'Convert USDC to ETH via best route.',
+      prompt: 'Swap 25 USDC to ETH',
     },
     {
-      title: 'Multi-venue execution',
-      description: 'Route a hedge across optimal venues and chains.',
-      prompt: 'Hedge my BTC and ETH exposure with a short BTC perp position. Route across the best venues.',
+      title: 'Deposit to Aave',
+      description: 'Earn yield by lending USDC.',
+      prompt: 'Deposit 100 USDC to Aave to earn interest',
     },
     {
-      title: 'Explore top DeFi protocols',
-      description: 'View the highest TVL DeFi protocols right now.',
-      prompt: 'Show me the top 5 DeFi protocols by TVL',
+      title: 'Short ETH Hedge',
+      description: 'Open a short to hedge ETH exposure.',
+      prompt: 'Short ETH with 3x leverage using 30 USDC',
     },
   ];
 }
@@ -69,13 +67,6 @@ export default function QuickStartPanel({ onSelectPrompt }: QuickStartPanelProps
   const [savedPrompts, setSavedPrompts] = useState<SavedPrompt[]>([]);
   const [showSaved, setShowSaved] = useState(false);
 
-  // Wallet connection for minting
-  const { address: walletAddress, isConnected } = useAccount();
-
-  // Mint bUSDC state
-  const [isMinting, setIsMinting] = useState(false);
-  const [mintResult, setMintResult] = useState<{ success: boolean; message: string } | null>(null);
-
   // ERC-8004 Agent info
   const { isEnabled, isRegistered, agentId } = useERC8004Identity();
   const { tier, executionCount, totalVolumeUsd, formattedScore } = useERC8004Reputation();
@@ -85,39 +76,6 @@ export default function QuickStartPanel({ onSelectPrompt }: QuickStartPanelProps
   useEffect(() => {
     setSavedPrompts(getSavedPrompts());
   }, []);
-
-  // Mint bUSDC handler
-  const handleMintBusdc = useCallback(async () => {
-    if (!walletAddress || isMinting) return;
-
-    setIsMinting(true);
-    setMintResult(null);
-
-    try {
-      const response = await callAgent('/api/mint-busdc', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userAddress: walletAddress, amount: 500 }),
-      });
-
-      const data = await response.json();
-
-      if (data.ok) {
-        setMintResult({ success: true, message: `Minted 500 bUSDC` });
-        // Clear message after 5 seconds
-        setTimeout(() => setMintResult(null), 5000);
-      } else {
-        setMintResult({ success: false, message: data.error || 'Mint failed' });
-        setTimeout(() => setMintResult(null), 5000);
-      }
-    } catch (error: any) {
-      console.error('[QuickStartPanel] Mint error:', error);
-      setMintResult({ success: false, message: 'Network error' });
-      setTimeout(() => setMintResult(null), 5000);
-    } finally {
-      setIsMinting(false);
-    }
-  }, [walletAddress, isMinting]);
 
   const handleSavePrompt = (prompt: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -222,32 +180,7 @@ export default function QuickStartPanel({ onSelectPrompt }: QuickStartPanelProps
           </div>
         )}
 
-        {/* Testnet Faucet - Compact inline with wallet status */}
-        {isConnected && walletAddress && (
-          <div className="flex items-center justify-between rounded-xl border border-emerald-100 bg-emerald-50/50 px-2.5 py-1.5">
-            <div className="flex items-center gap-1.5">
-              <Coins className="w-3.5 h-3.5 text-emerald-600" />
-              <span className="text-[10px] text-emerald-700">Testnet</span>
-            </div>
-            <button
-              onClick={handleMintBusdc}
-              disabled={isMinting}
-              className={`flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-medium transition-all ${
-                isMinting
-                  ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                  : 'bg-emerald-500 text-white hover:bg-emerald-600'
-              }`}
-            >
-              {isMinting ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Coins className="w-2.5 h-2.5" />}
-              {isMinting ? 'Minting...' : 'Get 500 bUSDC'}
-            </button>
-            {mintResult && (
-              <span className={`text-[9px] ml-2 ${mintResult.success ? 'text-emerald-600' : 'text-rose-500'}`}>
-                {mintResult.success ? '✓' : '✗'}
-              </span>
-            )}
-          </div>
-        )}
+        {/* Faucet moved to RightPanel wallet card for cleaner UX */}
 
         {/* Saved Prompts Section */}
         {savedPrompts.length > 0 && (

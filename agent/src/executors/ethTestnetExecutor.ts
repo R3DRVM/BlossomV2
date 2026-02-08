@@ -171,37 +171,42 @@ export function executionRequestToIntent(
     throw new Error('Token addresses not configured (set REDACTED_ADDRESS_SEPOLIA/WETH_ADDRESS_SEPOLIA or DEMO_REDACTED_ADDRESS/DEMO_WETH_ADDRESS)');
   }
 
+  // Normalize token names - accept USDC/bUSDC/REDACTED as the same token
+  const isStablecoin = (token: string) => ['USDC', 'bUSDC', 'REDACTED'].includes(token.toUpperCase());
+  const tokenIn = executionRequest.tokenIn.toUpperCase();
+  const tokenOut = executionRequest.tokenOut.toUpperCase();
+
   // Determine token addresses
-  const tokenInAddr = executionRequest.tokenIn === 'ETH'
+  const tokenInAddr = tokenIn === 'ETH'
     ? 'ETH' // Special case for native ETH
-    : executionRequest.tokenIn === 'WETH'
+    : tokenIn === 'WETH'
     ? wethAddress.toLowerCase()
     : usdcAddress.toLowerCase();
 
-  const tokenOutAddr = executionRequest.tokenOut === 'WETH'
+  const tokenOutAddr = tokenOut === 'WETH'
     ? wethAddress.toLowerCase()
     : usdcAddress.toLowerCase();
 
   // Determine executionIntent
   let executionIntent: 'swap_usdc_weth' | 'swap_weth_usdc';
-  if (executionRequest.tokenIn === 'REDACTED' && executionRequest.tokenOut === 'WETH') {
+  if (isStablecoin(tokenIn) && tokenOut === 'WETH') {
     executionIntent = 'swap_usdc_weth';
-  } else if (executionRequest.tokenIn === 'WETH' && executionRequest.tokenOut === 'REDACTED') {
+  } else if (tokenIn === 'WETH' && isStablecoin(tokenOut)) {
     executionIntent = 'swap_weth_usdc';
-  } else if (executionRequest.tokenIn === 'ETH') {
+  } else if (tokenIn === 'ETH') {
     // ETH input: will need funding route, use WETH→REDACTED or REDACTED→WETH based on tokenOut
-    executionIntent = executionRequest.tokenOut === 'REDACTED' ? 'swap_weth_usdc' : 'swap_usdc_weth';
+    executionIntent = isStablecoin(tokenOut) ? 'swap_weth_usdc' : 'swap_usdc_weth';
   } else {
     throw new Error(`Unsupported swap: ${executionRequest.tokenIn} → ${executionRequest.tokenOut}`);
   }
 
   // Convert amountIn to bigint using viem parseUnits (no float math)
   let amountIn: bigint;
-  if (executionRequest.tokenIn === 'ETH' || executionRequest.tokenIn === 'WETH') {
+  if (tokenIn === 'ETH' || tokenIn === 'WETH') {
     // 18 decimals
     amountIn = parseUnits(executionRequest.amountIn, 18);
   } else {
-    // REDACTED: 6 decimals
+    // USDC/bUSDC/REDACTED: 6 decimals
     amountIn = parseUnits(executionRequest.amountIn, 6);
   }
 
@@ -505,7 +510,7 @@ export async function prepareEthTestnetExecution(
 
     if (useDemoTokens && DEMO_REDACTED_ADDRESS && DEMO_WETH_ADDRESS) {
       // Use demo tokens and adapters
-      tokenIn = executionIntent === 'swap_usdc_weth' 
+      tokenIn = executionIntent === 'swap_usdc_weth'
         ? DEMO_REDACTED_ADDRESS.toLowerCase()
         : DEMO_WETH_ADDRESS.toLowerCase();
       tokenOut = executionIntent === 'swap_usdc_weth'
@@ -513,7 +518,7 @@ export async function prepareEthTestnetExecution(
         : DEMO_REDACTED_ADDRESS.toLowerCase();
       swapAdapter = UNISWAP_ADAPTER_ADDRESS?.toLowerCase() || UNISWAP_V3_ADAPTER_ADDRESS?.toLowerCase() || '';
       pullAdapter = ERC20_PULL_ADAPTER_ADDRESS?.toLowerCase();
-      
+
       if (!swapAdapter) {
         throw new Error('UNISWAP_ADAPTER_ADDRESS not configured for demo swap');
       }
