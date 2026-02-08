@@ -1218,9 +1218,9 @@ export async function prepareEthTestnetExecution(
         },
       ];
 
-      summary = `${outcome.toUpperCase()} on ${marketId} ($${stakeUsd} stake)`;
+      summary = `${outcome.toUpperCase()} on ${rawMarketId} ($${stakeUsd} stake)`;
       routingMetadata = {
-        venue: `DemoEvents: ${marketId}`,
+        venue: `DemoEvents: ${rawMarketId}`,
         chain: 'Sepolia',
         settlementEstimate: '~1 block',
         routingSource: 'demo',
