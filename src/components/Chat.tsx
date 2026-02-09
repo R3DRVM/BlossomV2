@@ -1375,6 +1375,12 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
 
           const result = await executeIntent(userText, { chain: intentChain });
 
+          // Check if approval is required and trigger modal
+          if (!result.ok && result.error?.code === 'APPROVAL_REQUIRED') {
+            console.log('[Chat] Approval required, triggering modal');
+            window.dispatchEvent(new CustomEvent('blossom:approval-required'));
+          }
+
           // Update message with result
           const resultText = result.ok
             ? `Intent executed successfully! ${result.metadata?.executedKind === 'proof_only' ? '(proof_only)' : ''}`

@@ -21,6 +21,7 @@ const SESSION_REQUIRED_KEY = 'blossom_session_required_dismissed';
 
 interface SessionEnforcementModalProps {
   onSessionEnabled: () => void;
+  mode?: 'full' | 'approval-only'; // 'full' = complete setup, 'approval-only' = skip session creation
 }
 
 export function isSessionEnabled(address: string | undefined): boolean {
@@ -40,13 +41,15 @@ export function hasUserChosenSigningMode(address: string | undefined): boolean {
   return isSessionEnabled(address) || isManualSigningEnabled(address);
 }
 
-export default function SessionEnforcementModal({ onSessionEnabled }: SessionEnforcementModalProps) {
+export default function SessionEnforcementModal({ onSessionEnabled, mode = 'full' }: SessionEnforcementModalProps) {
   const { address, isConnected } = useAccount();
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [showLearnMore, setShowLearnMore] = useState(false);
-  const [approvalStep, setApprovalStep] = useState<'session' | 'token' | 'mint' | 'complete'>('session');
+  const [approvalStep, setApprovalStep] = useState<'session' | 'token' | 'mint' | 'complete'>(
+    mode === 'approval-only' ? 'token' : 'session'
+  );
 
   // Check if already authorized (session or manual signing)
   useEffect(() => {
@@ -64,6 +67,105 @@ export default function SessionEnforcementModal({ onSessionEnabled }: SessionEnf
     localStorage.setItem(getManualSigningKey(address), 'true');
     console.log('[SessionEnforcement] Manual signing enabled for', address);
     onSessionEnabled();
+  };
+
+  const handleApprovalOnly = async () => {
+    if (!address) {
+      setError('Please connect your wallet first');
+      return;
+    }
+
+    setIsLoading(true);
+    setError('');
+
+    try {
+      console.log('[SessionEnforcement] Starting approval-only flow...');
+
+      // Get existing sessionId from localStorage
+      const sessionId = localStorage.getItem(`blossom_oneclick_sessionid_${address.toLowerCase()}`) || '';
+
+      // Check if approval is needed
+      const approvalResponse = await callAgent('/api/setup/check-approval', {
+        method: 'POST',
+        body: JSON.stringify({ userAddress: address }),
+      });
+
+      if (!approvalResponse.ok) {
+        throw new Error('Failed to check approval status');
+      }
+
+      const approvalData = await approvalResponse.json();
+      const hasApproval = approvalData?.hasApproval ?? false;
+
+      if (hasApproval) {
+        // Already approved, skip to mint check
+        console.log('[SessionEnforcement] Token already approved');
+        await checkAndMintIfNeeded(address, sessionId);
+        return;
+      }
+
+      // Need token approval - prepare approval transaction
+      console.log('[SessionEnforcement] Token approval needed');
+
+      const prepareApprovalResponse = await callAgent('/api/setup/approve', {
+        method: 'POST',
+        body: JSON.stringify({
+          userAddress: address,
+          tokenAddress: approvalData.tokenAddress,
+          spenderAddress: approvalData.spenderAddress,
+          amount: '115792089237316195423570985008687907853269984665640564039457584007913129639935', // max uint256
+        }),
+      });
+
+      if (!prepareApprovalResponse.ok) {
+        throw new Error('Failed to prepare token approval');
+      }
+
+      const approvalTxData = await prepareApprovalResponse.json();
+      const approvalTxHash = await sendTransaction({
+        to: approvalTxData.to,
+        data: approvalTxData.data,
+        value: '0x0',
+      });
+
+      if (!approvalTxHash) {
+        throw new Error('Token approval transaction was rejected');
+      }
+
+      // Wait for approval confirmation
+      let approvalConfirmed = false;
+      for (let i = 0; i < 30; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        try {
+          const statusResponse = await callAgent(`/api/execute/status?txHash=${encodeURIComponent(approvalTxHash)}`, {
+            method: 'GET',
+          });
+          if (!statusResponse.ok) continue;
+          const statusData = await statusResponse.json();
+          const status = String(statusData?.status || '').toLowerCase();
+          if (status === 'confirmed') {
+            approvalConfirmed = true;
+            break;
+          }
+          if (status === 'reverted' || status === 'failed') {
+            throw new Error('Token approval transaction reverted');
+          }
+        } catch {
+          // keep polling
+        }
+      }
+
+      if (!approvalConfirmed) {
+        throw new Error('Token approval is still pending. Please wait and try again.');
+      }
+
+      // Approval complete - check balance and offer mint
+      await checkAndMintIfNeeded(address, sessionId);
+    } catch (err: any) {
+      console.warn('[SessionEnforcement] Approval-only flow failed:', err.message);
+      setError(err.message || 'Token approval failed. Please try again.');
+      setIsLoading(false);
+    }
   };
 
   const handleEnableSession = async () => {
@@ -346,13 +448,15 @@ export default function SessionEnforcementModal({ onSessionEnabled }: SessionEnf
             </div>
             <h2 className="text-xl font-semibold text-slate-900">
               {approvalStep === 'session' && 'Enable One-Click Session'}
-              {approvalStep === 'token' && 'Approve Token Spending'}
+              {approvalStep === 'token' && (mode === 'approval-only' ? 'Re-authorize Token Spending' : 'Approve Token Spending')}
               {approvalStep === 'mint' && 'Get Test Tokens'}
               {approvalStep === 'complete' && 'Setup Complete!'}
             </h2>
             <p className="mt-2 text-sm text-slate-600">
               {approvalStep === 'session' && 'For seamless execution, enable session mode with a one-time approval transaction.'}
-              {approvalStep === 'token' && 'One more step: approve the router to spend your tokens for automated execution.'}
+              {approvalStep === 'token' && (mode === 'approval-only'
+                ? 'Your token approval has expired or been revoked. Please re-authorize to continue trading.'
+                : 'One more step: approve the router to spend your tokens for automated execution.')}
               {approvalStep === 'mint' && 'Your wallet needs test tokens to start trading. Get 1,000 bUSDC for free!'}
               {approvalStep === 'complete' && 'Your account is ready for one-click execution!'}
             </p>
@@ -398,7 +502,13 @@ export default function SessionEnforcementModal({ onSessionEnabled }: SessionEnf
           {/* Actions */}
           <div className="px-6 py-4 space-y-3">
             <Button
-              onClick={approvalStep === 'mint' ? handleMintTokens : handleEnableSession}
+              onClick={
+                approvalStep === 'mint'
+                  ? handleMintTokens
+                  : mode === 'approval-only'
+                  ? handleApprovalOnly
+                  : handleEnableSession
+              }
               disabled={isLoading || approvalStep === 'complete'}
               className="w-full h-11 bg-gradient-to-r from-pink-500 to-pink-600 hover:from-pink-600 hover:to-pink-700 text-white font-medium rounded-xl disabled:opacity-50"
             >
@@ -434,13 +544,15 @@ export default function SessionEnforcementModal({ onSessionEnabled }: SessionEnf
               </button>
             )}
 
-            {/* Manual Signing Option */}
-            <button
-              onClick={handleManualSigning}
-              className="w-full h-10 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-medium rounded-xl transition-colors"
-            >
-              No — I want to sign every transaction
-            </button>
+            {/* Manual Signing Option - only show in full mode, not approval-only */}
+            {mode !== 'approval-only' && (
+              <button
+                onClick={handleManualSigning}
+                className="w-full h-10 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-medium rounded-xl transition-colors"
+              >
+                No — I want to sign every transaction
+              </button>
+            )}
 
             <button
               onClick={() => setShowLearnMore(!showLearnMore)}

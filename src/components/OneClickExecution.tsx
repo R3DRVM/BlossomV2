@@ -49,30 +49,41 @@ export default function OneClickExecution({
     }
   }, [userAddress]);
 
-  // Validate stored session with server on restore
+  // Validate stored session AND token approval with server on restore
   useEffect(() => {
     if (userAddress && isEnabled && isAuthorized) {
       const storedSessionId = localStorage.getItem(getSessionIdKey(userAddress));
       if (storedSessionId) {
-        callAgent('/api/session/validate', {
+        callAgent('/api/session/validate-complete', {
           method: 'POST',
           body: JSON.stringify({ userAddress, sessionId: storedSessionId }),
         })
           .then(res => res.json())
           .then(data => {
-            if (!data.valid) {
-              // Clear invalid session
-              console.warn('[OneClickExecution] Session validation failed:', data.reason);
+            // Check session validity
+            if (!data.sessionValid) {
+              console.warn('[OneClickExecution] Session validation failed:', data.sessionReason);
               localStorage.removeItem(getEnabledKey(userAddress));
               localStorage.removeItem(getAuthorizedKey(userAddress));
               localStorage.removeItem(getSessionIdKey(userAddress));
               setIsEnabled(false);
               setIsAuthorized(false);
               onDisabled?.();
+              return;
+            }
+
+            // Check approval validity - if missing, clear auth flag to trigger re-approval
+            if (!data.approvalValid) {
+              console.warn('[OneClickExecution] Token approval expired or missing');
+              // Keep session but clear authorization to force re-approval flow
+              localStorage.removeItem(getAuthorizedKey(userAddress));
+              setIsAuthorized(false);
+              onDisabled?.();
             }
           })
-          .catch(() => {
+          .catch(err => {
             // Keep existing state if validation fails (network error)
+            console.warn('[OneClickExecution] Validation request failed:', err);
           });
       }
     }

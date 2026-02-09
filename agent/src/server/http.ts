@@ -4609,6 +4609,65 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
       });
     }
 
+    // Guard 7: Verify token approval hasn't expired/been revoked
+    // This is a safety net to catch approval issues at execution time
+    if (EXECUTION_ROUTER_ADDRESS && ETH_TESTNET_RPC_URL && DEMO_REDACTED_ADDRESS) {
+      try {
+        const { createPublicClient, http, encodeFunctionData } = await import('viem');
+        const { sepolia } = await import('viem/chains');
+
+        const publicClient = createPublicClient({
+          chain: sepolia,
+          transport: http(ETH_TESTNET_RPC_URL),
+        });
+
+        const allowanceAbi = [
+          {
+            name: 'allowance',
+            type: 'function',
+            stateMutability: 'view',
+            inputs: [
+              { name: 'owner', type: 'address' },
+              { name: 'spender', type: 'address' },
+            ],
+            outputs: [{ name: '', type: 'uint256' }],
+          },
+        ] as const;
+
+        const data = encodeFunctionData({
+          abi: allowanceAbi,
+          functionName: 'allowance',
+          args: [plan.user as `0x${string}`, EXECUTION_ROUTER_ADDRESS.trim() as `0x${string}`],
+        });
+
+        const result = await Promise.race([
+          publicClient.call({
+            to: DEMO_REDACTED_ADDRESS as `0x${string}`,
+            data: data as `0x${string}`,
+          }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000)),
+        ]) as { data?: `0x${string}` };
+
+        const allowance = result.data ? BigInt(result.data) : 0n;
+
+        if (allowance === 0n) {
+          return res.status(400).json({
+            ok: false,
+            error: {
+              code: 'APPROVAL_REQUIRED',
+              message: 'Token approval expired or missing. Please re-authorize token spending.',
+              tokenAddress: DEMO_REDACTED_ADDRESS,
+              spenderAddress: EXECUTION_ROUTER_ADDRESS.trim(),
+            },
+            correlationId,
+          });
+        }
+      } catch (error: any) {
+        // Don't block execution on RPC failure - log and continue
+        console.warn('[relayed] Approval check failed (continuing):', error.message);
+      }
+    }
+
     // SPRINT 2: Session Authority Policy Enforcement
     const validateOnly = req.query?.validateOnly === 'true' || req.body?.validateOnly === true;
     
@@ -5846,6 +5905,168 @@ app.post('/api/session/validate', asyncHandler(async (req, res) => {
 }));
 
 /**
+ * POST /api/session/validate-complete
+ * Comprehensive validation: checks both session status AND token approval
+ * Used to catch expired/missing approvals for existing users on app load
+ */
+app.post('/api/session/validate-complete', asyncHandler(async (req, res) => {
+  const { userAddress, sessionId } = req.body;
+
+  if (!userAddress || !sessionId) {
+    return res.json({
+      sessionValid: false,
+      approvalValid: false,
+      reason: 'MISSING_FIELDS',
+    });
+  }
+
+  try {
+    const {
+      EXECUTION_MODE,
+      EXECUTION_AUTH_MODE,
+      ETH_TESTNET_RPC_URL,
+      EXECUTION_ROUTER_ADDRESS,
+      DEMO_REDACTED_ADDRESS,
+    } = await import('../config');
+
+    // Check if session mode is enabled
+    if (EXECUTION_MODE !== 'eth_testnet' || EXECUTION_AUTH_MODE !== 'session') {
+      return res.json({
+        sessionValid: false,
+        approvalValid: false,
+        reason: 'SESSION_MODE_DISABLED',
+      });
+    }
+
+    if (!ETH_TESTNET_RPC_URL || !EXECUTION_ROUTER_ADDRESS || !DEMO_REDACTED_ADDRESS) {
+      return res.json({
+        sessionValid: false,
+        approvalValid: false,
+        reason: 'NOT_CONFIGURED',
+      });
+    }
+
+    // Setup viem client
+    const { createPublicClient, http, encodeFunctionData } = await import('viem');
+    const { sepolia } = await import('viem/chains');
+
+    const publicClient = createPublicClient({
+      chain: sepolia,
+      transport: http(ETH_TESTNET_RPC_URL),
+    });
+
+    // Normalize sessionId
+    const normalizedSessionId = sessionId.startsWith('0x') ? sessionId : `0x${sessionId}`;
+
+    // Define ABIs
+    const sessionAbi = [
+      {
+        name: 'sessions',
+        type: 'function',
+        stateMutability: 'view',
+        inputs: [{ name: '', type: 'bytes32' }],
+        outputs: [
+          { name: 'owner', type: 'address' },
+          { name: 'executor', type: 'address' },
+          { name: 'expiresAt', type: 'uint64' },
+          { name: 'maxSpend', type: 'uint256' },
+          { name: 'spent', type: 'uint256' },
+          { name: 'active', type: 'bool' },
+        ],
+      },
+    ] as const;
+
+    const allowanceAbi = [
+      {
+        name: 'allowance',
+        type: 'function',
+        stateMutability: 'view',
+        inputs: [
+          { name: 'owner', type: 'address' },
+          { name: 'spender', type: 'address' },
+        ],
+        outputs: [{ name: '', type: 'uint256' }],
+      },
+    ] as const;
+
+    // Parallel on-chain validation calls with timeout
+    const [sessionResult, allowanceResult] = await Promise.race([
+      Promise.all([
+        // Session validation
+        publicClient.readContract({
+          address: EXECUTION_ROUTER_ADDRESS as `0x${string}`,
+          abi: sessionAbi,
+          functionName: 'sessions',
+          args: [normalizedSessionId as `0x${string}`],
+        }),
+        // Approval validation
+        (async () => {
+          const data = encodeFunctionData({
+            abi: allowanceAbi,
+            functionName: 'allowance',
+            args: [userAddress as `0x${string}`, EXECUTION_ROUTER_ADDRESS.trim() as `0x${string}`],
+          });
+          return publicClient.call({
+            to: DEMO_REDACTED_ADDRESS as `0x${string}`,
+            data: data as `0x${string}`,
+          });
+        })(),
+      ]),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('RPC timeout')), 5000)),
+    ]) as [
+      [string, string, bigint, bigint, bigint, boolean],
+      { data?: `0x${string}` }
+    ];
+
+    // Process session validation
+    const [owner, executor, expiresAt, maxSpend, spent, active] = sessionResult;
+    const now = Math.floor(Date.now() / 1000);
+    const expiresAtNum = Number(expiresAt);
+
+    let sessionValid = true;
+    let sessionReason = null;
+
+    if (!active) {
+      sessionValid = false;
+      sessionReason = 'SESSION_NOT_ACTIVE';
+    } else if (expiresAtNum > 0 && expiresAtNum < now) {
+      sessionValid = false;
+      sessionReason = 'SESSION_EXPIRED';
+    }
+
+    // Process approval validation
+    const allowance = allowanceResult.data ? BigInt(allowanceResult.data) : 0n;
+    const approvalValid = allowance > 0n;
+
+    // Return comprehensive validation result
+    return res.json({
+      sessionValid,
+      sessionReason,
+      sessionId: normalizedSessionId,
+      sessionActive: active,
+      sessionExpired: expiresAtNum > 0 && expiresAtNum < now,
+      expiresAt: expiresAtNum,
+      remainingMs: expiresAtNum > 0 ? (expiresAtNum - now) * 1000 : null,
+      owner: owner.toLowerCase(),
+      executor: executor.toLowerCase(),
+      approvalValid,
+      allowance: allowance.toString(),
+      needsApproval: !approvalValid,
+      tokenAddress: DEMO_REDACTED_ADDRESS,
+      spenderAddress: EXECUTION_ROUTER_ADDRESS.trim(),
+    });
+  } catch (error: any) {
+    console.warn('[api/session/validate-complete] Error:', error.message);
+    return res.json({
+      sessionValid: false,
+      approvalValid: false,
+      reason: error.message?.includes('timeout') ? 'RPC_ERROR' : 'VALIDATION_ERROR',
+      error: error.message,
+    });
+  }
+}));
+
+/**
  * GET /api/debug/session (read-only, gated by DEBUG_DIAGNOSTICS=true)
  * Returns session config and optional on-chain session presence. No secrets; only boolean flags and prefixes.
  * Session state (enabledKey, authorizedKey, sessionId) lives in client localStorage; server cannot see it unless
@@ -5931,6 +6152,201 @@ if (process.env.DEBUG_DIAGNOSTICS === 'true') {
     }
   });
 }
+
+/**
+ * POST /api/session/validate-complete
+ * Validate both session existence AND token approval in one call
+ * Catches cases where localStorage shows authorized but approval expired
+ */
+app.post('/api/session/validate-complete', async (req, res) => {
+  try {
+    const { sessionId, userAddress } = req.body;
+
+    if (!sessionId || !userAddress) {
+      return res.status(400).json({
+        ok: false,
+        error: 'sessionId and userAddress are required',
+      });
+    }
+
+    const { EXECUTION_ROUTER_ADDRESS, DEMO_REDACTED_ADDRESS, ETH_TESTNET_RPC_URL, EXECUTION_MODE, EXECUTION_AUTH_MODE } = await import('../config');
+
+    // Check if session mode is enabled
+    if (EXECUTION_MODE !== 'eth_testnet' || EXECUTION_AUTH_MODE !== 'session') {
+      return res.json({
+        ok: true,
+        sessionValid: false,
+        approvalValid: false,
+        reason: 'Session mode not enabled',
+      });
+    }
+
+    if (!EXECUTION_ROUTER_ADDRESS || !ETH_TESTNET_RPC_URL) {
+      return res.json({
+        ok: true,
+        sessionValid: false,
+        approvalValid: false,
+        reason: 'Router not configured',
+      });
+    }
+
+    // Parallel validation: session + approval
+    const validationPromises: Promise<any>[] = [];
+
+    // 1. Session validation
+    const sessionPromise = (async () => {
+      try {
+        const { encodeFunctionData, createPublicClient, http } = await import('viem');
+        const { sepolia } = await import('viem/chains');
+
+        const publicClient = createPublicClient({
+          chain: sepolia,
+          transport: http(ETH_TESTNET_RPC_URL),
+        });
+
+        const getSessionAbi = [
+          {
+            name: 'getSession',
+            type: 'function',
+            stateMutability: 'view',
+            inputs: [{ name: 'sessionId', type: 'bytes32' }],
+            outputs: [
+              {
+                name: '',
+                type: 'tuple',
+                components: [
+                  { name: 'owner', type: 'address' },
+                  { name: 'executor', type: 'address' },
+                  { name: 'expiresAt', type: 'uint64' },
+                  { name: 'maxSpend', type: 'uint256' },
+                  { name: 'spent', type: 'uint256' },
+                  { name: 'maxSpendPerTx', type: 'uint256' },
+                  { name: 'active', type: 'bool' },
+                  { name: 'revoked', type: 'bool' },
+                ],
+              },
+            ],
+          },
+        ] as const;
+
+        const data = encodeFunctionData({
+          abi: getSessionAbi,
+          functionName: 'getSession',
+          args: [sessionId as `0x${string}`],
+        });
+
+        const result = await Promise.race([
+          publicClient.call({
+            to: EXECUTION_ROUTER_ADDRESS.trim() as `0x${string}`,
+            data: data as `0x${string}`,
+          }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Session check timeout')), 3000)),
+        ]) as any;
+
+        if (!result.data || result.data === '0x' || result.data.length < 10) {
+          return { sessionValid: false, reason: 'Session not found' };
+        }
+
+        const { decodeAbiParameters } = await import('viem');
+        const decoded = decodeAbiParameters(getSessionAbi[0].outputs, result.data);
+        const session = decoded[0];
+
+        const now = BigInt(Math.floor(Date.now() / 1000));
+        const isActive = session.active && !session.revoked;
+        const isExpired = session.expiresAt < now;
+        const ownerMatches = session.owner.toLowerCase() === userAddress.toLowerCase();
+
+        return {
+          sessionValid: isActive && !isExpired && ownerMatches,
+          sessionActive: isActive,
+          sessionExpired: isExpired,
+          sessionOwner: session.owner,
+        };
+      } catch (error: any) {
+        console.warn('[validate-complete] Session check failed:', error.message);
+        return { sessionValid: false, reason: error.message };
+      }
+    })();
+
+    validationPromises.push(sessionPromise);
+
+    // 2. Approval validation
+    const approvalPromise = (async () => {
+      if (!DEMO_REDACTED_ADDRESS) {
+        return { approvalValid: false, reason: 'Token address not configured' };
+      }
+
+      try {
+        const { encodeFunctionData, createPublicClient, http } = await import('viem');
+        const { sepolia } = await import('viem/chains');
+
+        const publicClient = createPublicClient({
+          chain: sepolia,
+          transport: http(ETH_TESTNET_RPC_URL),
+        });
+
+        const allowanceAbi = [
+          {
+            name: 'allowance',
+            type: 'function',
+            stateMutability: 'view',
+            inputs: [
+              { name: 'owner', type: 'address' },
+              { name: 'spender', type: 'address' },
+            ],
+            outputs: [{ name: '', type: 'uint256' }],
+          },
+        ] as const;
+
+        const data = encodeFunctionData({
+          abi: allowanceAbi,
+          functionName: 'allowance',
+          args: [userAddress as `0x${string}`, EXECUTION_ROUTER_ADDRESS.trim() as `0x${string}`],
+        });
+
+        const result = await Promise.race([
+          publicClient.call({
+            to: DEMO_REDACTED_ADDRESS as `0x${string}`,
+            data: data as `0x${string}`,
+          }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Approval check timeout')), 3000)),
+        ]) as any;
+
+        const allowance = result.data ? BigInt(result.data) : 0n;
+        const hasApproval = allowance > 0n;
+
+        return {
+          approvalValid: hasApproval,
+          allowance: allowance.toString(),
+          tokenAddress: DEMO_REDACTED_ADDRESS,
+          spenderAddress: EXECUTION_ROUTER_ADDRESS.trim(),
+        };
+      } catch (error: any) {
+        console.warn('[validate-complete] Approval check failed:', error.message);
+        return { approvalValid: false, reason: error.message };
+      }
+    })();
+
+    validationPromises.push(approvalPromise);
+
+    // Wait for both checks
+    const [sessionResult, approvalResult] = await Promise.all(validationPromises);
+
+    res.json({
+      ok: true,
+      ...sessionResult,
+      ...approvalResult,
+      needsApproval: !approvalResult.approvalValid,
+    });
+  } catch (error: any) {
+    console.error('[api/session/validate-complete] Error:', error);
+    res.status(500).json({
+      ok: false,
+      error: 'Validation failed',
+      details: error.message,
+    });
+  }
+});
 
 /**
  * POST /api/session/revoke/prepare

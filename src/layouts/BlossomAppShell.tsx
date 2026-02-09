@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useAccount } from 'wagmi';
 import { ToastProvider } from '../components/toast/ToastProvider';
 import CopilotLayout from '../components/CopilotLayout';
@@ -14,9 +14,24 @@ export default function BlossomAppShell() {
     // Check initial session state (includes manual signing mode)
     return address ? hasUserChosenSigningMode(address) : false;
   });
+  const [showApprovalModal, setShowApprovalModal] = useState(false);
 
   const handleSessionEnabled = useCallback(() => {
     setSessionEnabled(true);
+    setShowApprovalModal(false); // Close approval modal if open
+  }, []);
+
+  // Listen for APPROVAL_REQUIRED events from execution errors
+  useEffect(() => {
+    const handleApprovalRequired = () => {
+      console.log('[BlossomAppShell] APPROVAL_REQUIRED event received');
+      setShowApprovalModal(true);
+    };
+
+    window.addEventListener('blossom:approval-required', handleApprovalRequired);
+    return () => {
+      window.removeEventListener('blossom:approval-required', handleApprovalRequired);
+    };
   }, []);
 
   // Determine if session modal should show
@@ -43,6 +58,14 @@ export default function BlossomAppShell() {
       {/* Show session enforcement modal after access gate is unlocked */}
       {showSessionModal && (
         <SessionEnforcementModal onSessionEnabled={handleSessionEnabled} />
+      )}
+
+      {/* Show approval-only modal when approval is required */}
+      {showApprovalModal && isConnected && (
+        <SessionEnforcementModal
+          mode="approval-only"
+          onSessionEnabled={handleSessionEnabled}
+        />
       )}
 
       {/* Debug panel (visible with ?debug=1 query param) */}

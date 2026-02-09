@@ -16,6 +16,7 @@ export type ExecutionError =
   | 'WRONG_CHAIN'
   | 'INSUFFICIENT_GAS'
   | 'INSUFFICIENT_BALANCE'
+  | 'APPROVAL_REQUIRED'
   | 'EXECUTION_PREPARE_FAILED'
   | 'EXECUTION_FAILED'
   | 'UNKNOWN_ERROR';
@@ -41,6 +42,11 @@ export const ERROR_MESSAGES: Record<ExecutionError, { title: string; message: st
     title: 'Insufficient Balance',
     message: 'You don\'t have enough tokens for this trade.',
     action: 'Mint Demo Tokens',
+  },
+  APPROVAL_REQUIRED: {
+    title: 'Token Approval Expired',
+    message: 'Your token approval has expired or been revoked. Please re-authorize to continue.',
+    action: 'Re-Authorize Tokens',
   },
   EXECUTION_PREPARE_FAILED: {
     title: 'Preparation Failed',
@@ -124,10 +130,18 @@ export function checkExecutionGuard(walletState: WalletState): ExecutionGuardRes
 /**
  * Map server error to friendly error code
  */
-export function mapServerError(error: string | Error | unknown): ExecutionError {
+export function mapServerError(error: string | Error | unknown, errorCode?: string): ExecutionError {
+  // Check explicit error code first
+  if (errorCode === 'APPROVAL_REQUIRED') {
+    return 'APPROVAL_REQUIRED';
+  }
+
   const errorStr = typeof error === 'string' ? error : (error as Error)?.message || '';
   const lower = errorStr.toLowerCase();
 
+  if (lower.includes('approval') && (lower.includes('expired') || lower.includes('missing') || lower.includes('required'))) {
+    return 'APPROVAL_REQUIRED';
+  }
   if (lower.includes('wallet') && lower.includes('connect')) {
     return 'WALLET_NOT_CONNECTED';
   }
