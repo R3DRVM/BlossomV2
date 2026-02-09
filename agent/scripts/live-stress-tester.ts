@@ -20,7 +20,23 @@ import * as fs from 'fs';
 
 type AgentType = 'human' | 'erc8004';
 type Chain = 'ethereum' | 'solana' | 'hyperliquid' | 'both';
-type Category = 'swap' | 'deposit' | 'perp' | 'perp_market' | 'perp_close' | 'event' | 'event_close' | 'bridge' | 'leverage' | 'chat' | 'mint';
+type Category =
+  | 'swap'
+  | 'deposit'
+  | 'perp'
+  | 'perp_market'
+  | 'perp_close'
+  | 'event'
+  | 'event_close'
+  | 'bridge'
+  | 'leverage'
+  | 'chat'
+  | 'mint'
+  | 'session'
+  | 'plan'
+  | 'confirm'
+  | 'validate'
+  | 'reset';
 
 type Action = {
   id: string;
@@ -39,6 +55,7 @@ type ActionResult = {
   error?: string;
   txHash?: string;
   signature?: string;
+  intentId?: string;
 };
 
 type SessionResult = {
@@ -56,6 +73,8 @@ type AgentState = {
   type: AgentType;
   cookie?: string;
   accessOk?: boolean;
+  walletAddress?: string;
+  sessionId?: string;
 };
 
 const args = process.argv.slice(2);
@@ -75,6 +94,8 @@ const MINT_CHAINS_RAW = arg('mint-chains') || process.env.STRESS_MINT_CHAINS || 
 const MINT_CHAINS = MINT_CHAINS_RAW.split(',').map(s => s.trim()).filter(Boolean) as Chain[];
 const SWAP_CHAINS_RAW = arg('swap-chains') || process.env.STRESS_SWAP_CHAINS || 'ethereum,solana';
 const SWAP_CHAINS = SWAP_CHAINS_RAW.split(',').map(s => s.trim()).filter(Boolean) as Chain[];
+const WALLET_LIST_RAW = arg('wallets') || process.env.STRESS_TEST_WALLET_ADDRESSES || '';
+const WALLET_LIST = WALLET_LIST_RAW.split(',').map(s => s.trim()).filter(Boolean);
 
 const STRESS_EVM_ADDRESS = process.env.STRESS_TEST_EVM_ADDRESS || process.env.TEST_WALLET_ADDRESS || process.env.RELAYER_PUBLIC_ADDRESS || '';
 const STRESS_SOLANA_ADDRESS = process.env.STRESS_TEST_SOLANA_ADDRESS || '';
@@ -88,6 +109,14 @@ const agents: AgentState[] = [
   { id: 'erc8004-1', type: 'erc8004' },
   { id: 'erc8004-2', type: 'erc8004' },
 ];
+
+agents.forEach((agent, index) => {
+  if (WALLET_LIST[index]) {
+    agent.walletAddress = WALLET_LIST[index];
+  } else if (STRESS_EVM_ADDRESS) {
+    agent.walletAddress = STRESS_EVM_ADDRESS;
+  }
+});
 
 if (!ALLOW_NON_PROD && !BASE_URL.includes('blossom.onl') && !BASE_URL.includes('vercel.app')) {
   console.error(`❌ Refusing to run against non-prod baseUrl: ${BASE_URL}`);
@@ -122,6 +151,13 @@ function pick<T>(items: T[]): T {
 
 function buildActionId(category: Category, sessionIndex: number) {
   return `${category}_${sessionIndex}_${randomUUID().slice(0, 6)}`;
+}
+
+function buildHeaders(agent: AgentState): Record<string, string> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (agent.cookie) headers['cookie'] = agent.cookie;
+  if (agent.walletAddress) headers['x-wallet-address'] = agent.walletAddress;
+  return headers;
 }
 
 function buildSwapAction(sessionIndex: number): Action {
@@ -352,8 +388,7 @@ async function runMint(agent: AgentState, sessionId: string, chain: Chain): Prom
     };
   }
 
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (agent.cookie) headers['cookie'] = agent.cookie;
+  const headers = buildHeaders(agent);
 
   const res = await fetchJson('/api/mint-busdc', {
     method: 'POST',
@@ -412,8 +447,7 @@ async function runChat(agent: AgentState, sessionId: string, message: string): P
     };
   }
 
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (agent.cookie) headers['cookie'] = agent.cookie;
+  const headers = buildHeaders(agent);
 
   const res = await fetchJson('/api/chat', {
     method: 'POST',
@@ -442,7 +476,7 @@ async function runChat(agent: AgentState, sessionId: string, message: string): P
   };
 }
 
-async function executeIntent(agent: AgentState, sessionId: string, action: Action): Promise<ActionResult> {
+async function executeIntent(agent: AgentState, sessionId: string, action: Action, options?: { planOnly?: boolean; intentId?: string }): Promise<ActionResult> {
   const started = Date.now();
 
   if (DRY_RUN) {
@@ -457,7 +491,7 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
   }
 
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+    ...buildHeaders(agent),
     'X-Ledger-Secret': LEDGER_SECRET,
   };
 
@@ -471,11 +505,17 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
     source: 'live_stress_tester',
   };
 
-  const body = {
+  const body: Record<string, any> = {
     intentText: action.intentText,
     chain: action.chain,
     metadata: { ...metadata, ...(action.metadata || {}) },
   };
+
+  if (options?.planOnly) body.planOnly = true;
+  if (options?.intentId) {
+    body.intentId = options.intentId;
+    delete body.intentText;
+  }
 
   const res = await fetchJson('/api/ledger/intents/execute', {
     method: 'POST',
@@ -492,6 +532,7 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
       status: 'ok',
       latencyMs: latency,
       txHash: res.json?.txHash || res.json?.execution?.txHash,
+      intentId: res.json?.intentId,
     };
   }
 
@@ -505,6 +546,214 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
   };
 }
 
+async function executePlanAndConfirm(agent: AgentState, sessionId: string, action: Action): Promise<ActionResult[]> {
+  const results: ActionResult[] = [];
+  const planAction: Action = { ...action, id: buildActionId('plan', 0), category: 'plan' as Category };
+  const planResult = await executeIntent(agent, sessionId, planAction, { planOnly: true });
+  results.push(planResult);
+
+  if (planResult.status !== 'ok') return results;
+  const responseIntentId = planResult.intentId;
+  if (!responseIntentId) return results;
+
+  const confirmAction: Action = { ...action, id: buildActionId('confirm', 0), category: 'confirm' as Category };
+  const confirmResult = await executeIntent(agent, sessionId, confirmAction, { intentId: responseIntentId });
+  results.push(confirmResult);
+  return results;
+}
+
+async function runSessionPrepare(agent: AgentState): Promise<ActionResult> {
+  const actionId = buildActionId('session', 0);
+  const started = Date.now();
+
+  if (!agent.walletAddress) {
+    return {
+      actionId,
+      category: 'session',
+      chain: 'ethereum',
+      status: 'skipped',
+      latencyMs: Date.now() - started,
+      error: 'Missing wallet address',
+    };
+  }
+
+  if (DRY_RUN) {
+    return {
+      actionId,
+      category: 'session',
+      chain: 'ethereum',
+      status: 'skipped',
+      latencyMs: Date.now() - started,
+      error: 'dry-run',
+    };
+  }
+
+  const res = await fetchJson('/api/session/prepare', {
+    method: 'POST',
+    headers: buildHeaders(agent),
+    body: JSON.stringify({ userAddress: agent.walletAddress }),
+  });
+
+  const latency = Date.now() - started;
+  if (res.ok && res.json?.ok) {
+    const sessionId = res.json?.session?.sessionId;
+    if (sessionId) agent.sessionId = sessionId;
+
+    // Validate session status (expected to be inactive until user signs)
+    if (sessionId) {
+      await fetchJson('/api/session/validate', {
+        method: 'POST',
+        headers: buildHeaders(agent),
+        body: JSON.stringify({ userAddress: agent.walletAddress, sessionId }),
+      });
+    }
+
+    return {
+      actionId,
+      category: 'session',
+      chain: 'ethereum',
+      status: 'ok',
+      latencyMs: latency,
+    };
+  }
+
+  return {
+    actionId,
+    category: 'session',
+    chain: 'ethereum',
+    status: 'fail',
+    latencyMs: latency,
+    error: res.json?.error || res.text || 'session prepare failed',
+  };
+}
+
+async function runReset(agent: AgentState): Promise<ActionResult> {
+  const actionId = buildActionId('reset', 0);
+  const started = Date.now();
+
+  if (DRY_RUN) {
+    return {
+      actionId,
+      category: 'reset',
+      chain: 'ethereum',
+      status: 'skipped',
+      latencyMs: Date.now() - started,
+      error: 'dry-run',
+    };
+  }
+
+  const res = await fetchJson('/api/reset', {
+    method: 'POST',
+    headers: buildHeaders(agent),
+  });
+
+  const latency = Date.now() - started;
+  if (res.ok) {
+    return {
+      actionId,
+      category: 'reset',
+      chain: 'ethereum',
+      status: 'ok',
+      latencyMs: latency,
+    };
+  }
+
+  return {
+    actionId,
+    category: 'reset',
+    chain: 'ethereum',
+    status: 'fail',
+    latencyMs: latency,
+    error: res.json?.error || res.text || 'reset failed',
+  };
+}
+
+async function validateErc8004(agent: AgentState, action: Action): Promise<ActionResult> {
+  const actionId = buildActionId('validate', 0);
+  const started = Date.now();
+
+  if (DRY_RUN) {
+    return {
+      actionId,
+      category: 'validate',
+      chain: action.chain,
+      status: 'skipped',
+      latencyMs: Date.now() - started,
+      error: 'dry-run',
+    };
+  }
+
+  const kindMap: Record<Category, string> = {
+    swap: 'swap',
+    deposit: 'lend',
+    perp: 'perp',
+    perp_market: 'perp_create',
+    perp_close: 'perp',
+    event: 'event',
+    event_close: 'event',
+    bridge: 'bridge',
+    leverage: 'perp',
+    chat: 'proof',
+    mint: 'proof',
+    session: 'proof',
+    plan: 'proof',
+    confirm: 'proof',
+    validate: 'proof',
+    reset: 'proof',
+  };
+
+  const venueMap: Record<Category, string> = {
+    swap: action.chain === 'solana' ? 'jupiter' : 'uniswap',
+    deposit: action.chain === 'solana' ? 'solana_vault' : action.chain === 'hyperliquid' ? 'hyperliquid_vault' : 'aave',
+    perp: 'hyperliquid',
+    perp_market: 'hyperliquid',
+    perp_close: 'hyperliquid',
+    event: 'prediction_market',
+    event_close: 'prediction_market',
+    bridge: 'lifi',
+    leverage: 'hyperliquid',
+    chat: 'offchain',
+    mint: 'faucet',
+    session: 'session',
+    plan: 'planner',
+    confirm: 'planner',
+    validate: 'erc8004',
+    reset: 'chat',
+  };
+
+  const payload = {
+    kind: kindMap[action.category],
+    chain: action.chain,
+    venue: venueMap[action.category],
+  };
+
+  const res = await fetchJson('/api/erc8004/validate', {
+    method: 'POST',
+    headers: buildHeaders(agent),
+    body: JSON.stringify(payload),
+  });
+
+  const latency = Date.now() - started;
+  if (res.ok && res.json?.ok && res.json?.validation?.valid !== false) {
+    return {
+      actionId,
+      category: 'validate',
+      chain: action.chain,
+      status: 'ok',
+      latencyMs: latency,
+    };
+  }
+
+  return {
+    actionId,
+    category: 'validate',
+    chain: action.chain,
+    status: 'fail',
+    latencyMs: latency,
+    error: res.json?.validation?.errors?.join('; ') || res.json?.error || res.text || 'validation failed',
+  };
+}
+
 async function runSession(sessionIndex: number): Promise<SessionResult> {
   const agent = agents[sessionIndex % agents.length];
   const sessionId = `sess_${sessionIndex}_${randomUUID().slice(0, 6)}`;
@@ -514,6 +763,10 @@ async function runSession(sessionIndex: number): Promise<SessionResult> {
 
   const results: ActionResult[] = [];
 
+  if (agent.type === 'human') {
+    results.push(await runSessionPrepare(agent));
+  }
+
   const mintChain = pick(MINT_CHAINS.length ? MINT_CHAINS : ['ethereum']);
   results.push(await runMint(agent, sessionId, mintChain));
 
@@ -522,8 +775,22 @@ async function runSession(sessionIndex: number): Promise<SessionResult> {
 
   const actions = buildSessionActions(sessionIndex);
   for (const action of actions) {
-    results.push(await executeIntent(agent, sessionId, action));
+    if (agent.type === 'erc8004') {
+      results.push(await validateErc8004(agent, action));
+    }
+
+    if (agent.type === 'human' && action.category === 'swap') {
+      const planned = await executePlanAndConfirm(agent, sessionId, action);
+      results.push(...planned);
+    } else {
+      results.push(await executeIntent(agent, sessionId, action));
+    }
+
     await sleep(400); // small pacing to avoid rate limiting
+  }
+
+  if (agent.type === 'human') {
+    results.push(await runReset(agent));
   }
 
   const finishedAt = Date.now();
