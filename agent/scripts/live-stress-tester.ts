@@ -75,6 +75,7 @@ type AgentState = {
   accessOk?: boolean;
   walletAddress?: string;
   sessionId?: string;
+  privateKey?: string;
 };
 
 const args = process.argv.slice(2);
@@ -96,6 +97,9 @@ const SWAP_CHAINS_RAW = arg('swap-chains') || process.env.STRESS_SWAP_CHAINS || 
 const SWAP_CHAINS = SWAP_CHAINS_RAW.split(',').map(s => s.trim()).filter(Boolean) as Chain[];
 const WALLET_LIST_RAW = arg('wallets') || process.env.STRESS_TEST_WALLET_ADDRESSES || '';
 const WALLET_LIST = WALLET_LIST_RAW.split(',').map(s => s.trim()).filter(Boolean);
+const WALLET_KEYS_RAW = arg('wallet-keys') || process.env.STRESS_TEST_WALLET_PRIVATE_KEYS || '';
+const WALLET_KEYS = WALLET_KEYS_RAW.split(',').map(s => s.trim()).filter(Boolean);
+const ETH_RPC_URL = arg('eth-rpc') || process.env.STRESS_TEST_ETH_RPC_URL || process.env.ETH_TESTNET_RPC_URL || '';
 
 const STRESS_EVM_ADDRESS = process.env.STRESS_TEST_EVM_ADDRESS || process.env.TEST_WALLET_ADDRESS || process.env.RELAYER_PUBLIC_ADDRESS || '';
 const STRESS_SOLANA_ADDRESS = process.env.STRESS_TEST_SOLANA_ADDRESS || '';
@@ -111,6 +115,9 @@ const agents: AgentState[] = [
 ];
 
 agents.forEach((agent, index) => {
+  if (WALLET_KEYS[index]) {
+    agent.privateKey = WALLET_KEYS[index];
+  }
   if (WALLET_LIST[index]) {
     agent.walletAddress = WALLET_LIST[index];
   } else if (STRESS_EVM_ADDRESS) {
@@ -158,6 +165,22 @@ function buildHeaders(agent: AgentState): Record<string, string> {
   if (agent.cookie) headers['cookie'] = agent.cookie;
   if (agent.walletAddress) headers['x-wallet-address'] = agent.walletAddress;
   return headers;
+}
+
+async function getWalletClient(agent: AgentState) {
+  if (!agent.privateKey) return null;
+  if (!ETH_RPC_URL) return null;
+  try {
+    const { createWalletClient, createPublicClient, http } = await import('viem');
+    const { sepolia } = await import('viem/chains');
+    const { privateKeyToAccount } = await import('viem/accounts');
+    const account = privateKeyToAccount(agent.privateKey as `0x${string}`);
+    const publicClient = createPublicClient({ chain: sepolia, transport: http(ETH_RPC_URL) });
+    const walletClient = createWalletClient({ account, chain: sepolia, transport: http(ETH_RPC_URL) });
+    return { publicClient, walletClient, account };
+  } catch (err) {
+    return null;
+  }
 }
 
 function buildSwapAction(sessionIndex: number): Action {
@@ -597,15 +620,67 @@ async function runSessionPrepare(agent: AgentState): Promise<ActionResult> {
   const latency = Date.now() - started;
   if (res.ok && res.json?.ok) {
     const sessionId = res.json?.session?.sessionId;
+    const sessionEnabled = res.json?.session?.enabled;
+    const to = res.json?.session?.to;
+    const data = res.json?.session?.data;
+    const valueRaw = res.json?.session?.value;
     if (sessionId) agent.sessionId = sessionId;
 
-    // Validate session status (expected to be inactive until user signs)
-    if (sessionId) {
-      await fetchJson('/api/session/validate', {
+    if (sessionEnabled === false) {
+      return {
+        actionId,
+        category: 'session',
+        chain: 'ethereum',
+        status: 'fail',
+        latencyMs: Date.now() - started,
+        error: 'Session mode disabled',
+      };
+    }
+
+    if (sessionId && to && data) {
+      const client = await getWalletClient(agent);
+      if (!client) {
+        return {
+          actionId,
+          category: 'session',
+          chain: 'ethereum',
+          status: 'fail',
+          latencyMs: Date.now() - started,
+          error: 'Missing wallet private key or ETH_RPC_URL for session signing',
+        };
+      }
+
+      const { walletClient, publicClient } = client;
+      const value = valueRaw ? BigInt(valueRaw) : BigInt(0);
+
+      const txHash = await walletClient.sendTransaction({
+        to,
+        data,
+        value,
+      });
+
+      try {
+        await publicClient.waitForTransactionReceipt({ hash: txHash, timeout: 15000 });
+      } catch (err) {
+        // If pending, continue to validation
+      }
+
+      const validateRes = await fetchJson('/api/session/validate', {
         method: 'POST',
         headers: buildHeaders(agent),
         body: JSON.stringify({ userAddress: agent.walletAddress, sessionId }),
       });
+
+      if (!validateRes.ok || validateRes.json?.valid !== true) {
+        return {
+          actionId,
+          category: 'session',
+          chain: 'ethereum',
+          status: 'fail',
+          latencyMs: Date.now() - started,
+          error: validateRes.json?.reason || validateRes.json?.error || validateRes.text || 'Session not active after signing',
+        };
+      }
     }
 
     return {
@@ -830,7 +905,23 @@ function summarize(results: SessionResult[]) {
   };
 }
 
+async function hydrateAgentsFromKeys() {
+  if (!WALLET_KEYS.length) return;
+  try {
+    const { privateKeyToAccount } = await import('viem/accounts');
+    agents.forEach((agent) => {
+      if (agent.privateKey && !agent.walletAddress) {
+        const account = privateKeyToAccount(agent.privateKey as `0x${string}`);
+        agent.walletAddress = account.address;
+      }
+    });
+  } catch (err) {
+    // ignore
+  }
+}
+
 async function main() {
+  await hydrateAgentsFromKeys();
   log('🌸 Blossom Live Stress Tester');
   log(`   Base URL: ${BASE_URL}`);
   log(`   Run ID: ${RUN_ID}`);
@@ -839,6 +930,7 @@ async function main() {
   log(`   Dry run: ${DRY_RUN ? 'yes' : 'no'}`);
   log(`   Mint chains: ${MINT_CHAINS.join(', ')}`);
   log(`   Swap chains: ${SWAP_CHAINS.join(', ')}`);
+  if (!ETH_RPC_URL) log('   ⚠️  Missing ETH RPC URL (session signing will fail)');
   if (!STRESS_EVM_ADDRESS) log('   ⚠️  Missing STRESS_TEST_EVM_ADDRESS (mint to Ethereum may be skipped)');
   if (!STRESS_SOLANA_ADDRESS) log('   ⚠️  Missing STRESS_TEST_SOLANA_ADDRESS (mint to Solana may be skipped)');
   if (!STRESS_HYPERLIQUID_ADDRESS) log('   ⚠️  Missing STRESS_TEST_HYPERLIQUID_ADDRESS (mint to Hyperliquid may be skipped)');
