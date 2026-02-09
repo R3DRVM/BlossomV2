@@ -137,10 +137,10 @@ export const SOLANA_RPC_URL = process.env.SOLANA_RPC_URL ||
 export const SOLANA_PROGRAM_ID = process.env.SOLANA_PROGRAM_ID;
 
 // Demo swap venue (deterministic for investor demos)
-// Default addresses for Sepolia (safe fallback)
+// Default addresses for Sepolia bUSDC (safe fallback) - relayer has these tokens
 const DEFAULT_DEMO_TOKENS = {
   sepolia: {
-    usdc: '0x942eF9C37469a43077C6Fb5f23a258a6D88599cD',
+    usdc: '0x6751001fD8207c494703C062139784abCa099bB9', // bUSDC - relayer funded
     weth: '0x5FB58E6E0adB7002a6E0792BE3aBE084922c9939',
   }
 };
@@ -197,8 +197,10 @@ export const DFLOW_SWAPS_QUOTE_PATH = process.env.DFLOW_SWAPS_QUOTE_PATH;
 export const DFLOW_REQUIRE = process.env.DFLOW_REQUIRE === 'true';
 
 // Lending configuration
+// Force demo mode on Vercel (testnet doesn't need real Aave, and relayer lacks Aave USDC)
+const isVercelDeployment = process.env.VERCEL === '1';
 export const LENDING_EXECUTION_MODE: 'demo' | 'real' =
-  (process.env.LENDING_EXECUTION_MODE as 'demo' | 'real') || 'demo';
+  isVercelDeployment ? 'demo' : (process.env.LENDING_EXECUTION_MODE as 'demo' | 'real') || 'demo';
 export const AAVE_POOL_ADDRESS = process.env.AAVE_POOL_ADDRESS; // Optional, for real mode later
 export const LENDING_RATE_SOURCE: 'defillama' | 'aave' | 'none' =
   (process.env.LENDING_RATE_SOURCE as 'defillama' | 'aave' | 'none') || 'defillama';

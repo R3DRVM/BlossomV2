@@ -1889,8 +1889,11 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
     // Detect if this is an event prompt - match patterns like "bet X on Y above/below Z"
     // IMPORTANT: Perp intents take priority - if isPerpPrompt is true, isEventPrompt should be false
     const hasPerpKeywords = /\b(long|short|perp|leverage|\d+x)\b/i.test(normalizedUserMessage);
-    const isEventPrompt = !isPerpPrompt && !hasPerpKeywords &&
-      /bet|wager|risk.*on|event|prediction\s*market/i.test(normalizedUserMessage) &&
+    // Extended event keywords: "bet/wager/risk on/event/prediction market" OR "YES/NO on" patterns OR "take YES/NO"
+    const hasEventKeywords = /bet|wager|risk.*on|event|prediction\s*market/i.test(normalizedUserMessage) ||
+      /\b(yes|no)\s+on\b/i.test(normalizedUserMessage) ||
+      /\btake\s+(yes|no)\b/i.test(normalizedUserMessage);
+    const isEventPrompt = !isPerpPrompt && !hasPerpKeywords && hasEventKeywords &&
       (normalizedUserMessage.toLowerCase().includes('yes') ||
        normalizedUserMessage.toLowerCase().includes('no') ||
        normalizedUserMessage.toLowerCase().includes('fed') ||
@@ -1975,8 +1978,11 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
          normalizedUserMessage.toLowerCase().includes('leverage'));
       // IMPORTANT: Perp intents take priority - if normalizedIsPerpPrompt is true, isEventPrompt should be false
       const normalizedHasPerpKeywords = /\b(long|short|perp|leverage|\d+x)\b/i.test(normalizedUserMessage);
-      const normalizedIsEventPrompt = !normalizedIsPerpPrompt && !normalizedHasPerpKeywords &&
-        /bet|wager|risk.*on|event|prediction\s*market/i.test(normalizedUserMessage) &&
+      // Extended event keywords: "bet/wager/risk on/event/prediction market" OR "YES/NO on" patterns OR "take YES/NO"
+      const normalizedHasEventKeywords = /bet|wager|risk.*on|event|prediction\s*market/i.test(normalizedUserMessage) ||
+        /\b(yes|no)\s+on\b/i.test(normalizedUserMessage) ||
+        /\btake\s+(yes|no)\b/i.test(normalizedUserMessage);
+      const normalizedIsEventPrompt = !normalizedIsPerpPrompt && !normalizedHasPerpKeywords && normalizedHasEventKeywords &&
         (normalizedUserMessage.toLowerCase().includes('yes') ||
          normalizedUserMessage.toLowerCase().includes('no') ||
          normalizedUserMessage.toLowerCase().includes('fed') ||
