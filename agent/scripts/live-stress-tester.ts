@@ -71,6 +71,8 @@ const LEDGER_SECRET = arg('ledgerSecret') || process.env.DEV_LEDGER_SECRET || pr
 const DRY_RUN = hasFlag('dry-run');
 const VERBOSE = hasFlag('verbose');
 const ALLOW_NON_PROD = hasFlag('allow-non-prod') || process.env.ALLOW_NON_PROD === '1';
+const MINT_CHAINS_RAW = arg('mint-chains') || process.env.STRESS_MINT_CHAINS || 'ethereum,solana,hyperliquid';
+const MINT_CHAINS = MINT_CHAINS_RAW.split(',').map(s => s.trim()).filter(Boolean) as Chain[];
 
 const STRESS_EVM_ADDRESS = process.env.STRESS_TEST_EVM_ADDRESS || process.env.TEST_WALLET_ADDRESS || process.env.RELAYER_PUBLIC_ADDRESS || '';
 const STRESS_SOLANA_ADDRESS = process.env.STRESS_TEST_SOLANA_ADDRESS || '';
@@ -370,13 +372,26 @@ async function runMint(agent: AgentState, sessionId: string, chain: Chain): Prom
     };
   }
 
+  const errorMessage = res.json?.details || res.json?.error || res.text || 'mint failed';
+  const normalizedError = `${errorMessage}`.toLowerCase();
+  if (normalizedError.includes('not configured') || normalizedError.includes('not available')) {
+    return {
+      actionId,
+      category: 'mint',
+      chain,
+      status: 'skipped',
+      latencyMs: latency,
+      error: errorMessage,
+    };
+  }
+
   return {
     actionId,
     category: 'mint',
     chain,
     status: 'fail',
     latencyMs: latency,
-    error: res.json?.error || res.text || 'mint failed',
+    error: errorMessage,
   };
 }
 
@@ -497,8 +512,7 @@ async function runSession(sessionIndex: number): Promise<SessionResult> {
 
   const results: ActionResult[] = [];
 
-  const mintChains: Chain[] = ['ethereum', 'solana', 'hyperliquid'];
-  const mintChain = pick(mintChains);
+  const mintChain = pick(MINT_CHAINS.length ? MINT_CHAINS : ['ethereum']);
   results.push(await runMint(agent, sessionId, mintChain));
 
   results.push(await runChat(agent, sessionId, 'Analyze BTC trends in 2 sentences.'));
@@ -554,6 +568,7 @@ async function main() {
   log(`   Sessions: ${COUNT}`);
   log(`   Concurrency: ${CONCURRENCY}`);
   log(`   Dry run: ${DRY_RUN ? 'yes' : 'no'}`);
+  log(`   Mint chains: ${MINT_CHAINS.join(', ')}`);
   if (!STRESS_EVM_ADDRESS) log('   ⚠️  Missing STRESS_TEST_EVM_ADDRESS (mint to Ethereum may be skipped)');
   if (!STRESS_SOLANA_ADDRESS) log('   ⚠️  Missing STRESS_TEST_SOLANA_ADDRESS (mint to Solana may be skipped)');
   if (!STRESS_HYPERLIQUID_ADDRESS) log('   ⚠️  Missing STRESS_TEST_HYPERLIQUID_ADDRESS (mint to Hyperliquid may be skipped)');
@@ -598,4 +613,3 @@ main().catch(err => {
   console.error('❌ Live stress tester failed:', err);
   process.exit(1);
 });
-
