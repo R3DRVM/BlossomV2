@@ -47,7 +47,8 @@ async function getLedgerDb() {
  */
 export async function recordExecution(params) {
     const db = await getLedgerDb();
-    const exec = db.createExecution({
+    // Use async function to ensure Postgres writes when configured
+    const exec = await db.createExecutionAsync({
         chain: params.chain,
         network: params.network,
         kind: params.kind,
@@ -71,7 +72,8 @@ export async function recordExecution(params) {
  */
 export async function updateLedgerExecution(id, updates) {
     const db = await getLedgerDb();
-    db.updateExecution(id, updates);
+    // Use async function to ensure Postgres writes when configured
+    await db.updateExecutionAsync(id, updates);
 }
 /**
  * Get the ledger summary
@@ -113,6 +115,12 @@ export function buildExplorerUrl(chain, network, txHash) {
         else if (network === 'mainnet') {
             return `https://explorer.solana.com/tx/${txHash}`;
         }
+    }
+    else if (chain === 'hyperliquid') {
+        if (network === 'hyperliquid_testnet') {
+            return `https://testnet.purrsec.com/tx/${txHash}`;
+        }
+        return `https://purrsec.com/tx/${txHash}`;
     }
     return '';
 }

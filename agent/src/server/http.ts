@@ -2764,6 +2764,82 @@ app.post('/api/execute/prepare', requireAuth, maybeCheckAccess, async (req, res)
 });
 
 /**
+ * POST /api/setup/check-approval
+ * Check if user has approved ExecutionRouter to spend tokens
+ */
+app.post('/api/setup/check-approval', maybeCheckAccess, async (req, res) => {
+  try {
+    const { userAddress } = req.body;
+
+    if (!userAddress) {
+      return res.status(400).json({
+        error: 'userAddress is required',
+      });
+    }
+
+    const { EXECUTION_ROUTER_ADDRESS, DEMO_REDACTED_ADDRESS, ETH_TESTNET_RPC_URL } = await import('../config');
+
+    if (!EXECUTION_ROUTER_ADDRESS || !DEMO_REDACTED_ADDRESS || !ETH_TESTNET_RPC_URL) {
+      return res.status(503).json({
+        error: 'Approval check not available',
+        hasApproval: false,
+      });
+    }
+
+    // Check allowance
+    const { encodeFunctionData, createPublicClient, http } = await import('viem');
+    const { sepolia } = await import('viem/chains');
+
+    const publicClient = createPublicClient({
+      chain: sepolia,
+      transport: http(ETH_TESTNET_RPC_URL),
+    });
+
+    const allowanceAbi = [
+      {
+        name: 'allowance',
+        type: 'function',
+        stateMutability: 'view',
+        inputs: [
+          { name: 'owner', type: 'address' },
+          { name: 'spender', type: 'address' },
+        ],
+        outputs: [{ name: '', type: 'uint256' }],
+      },
+    ] as const;
+
+    const data = encodeFunctionData({
+      abi: allowanceAbi,
+      functionName: 'allowance',
+      args: [userAddress as `0x${string}`, EXECUTION_ROUTER_ADDRESS.trim() as `0x${string}`],
+    });
+
+    const result = await publicClient.call({
+      to: DEMO_REDACTED_ADDRESS as `0x${string}`,
+      data: data as `0x${string}`,
+    });
+
+    const allowance = result.data ? BigInt(result.data) : 0n;
+    const hasApproval = allowance > 0n;
+
+    res.json({
+      ok: true,
+      hasApproval,
+      allowance: allowance.toString(),
+      tokenAddress: DEMO_REDACTED_ADDRESS,
+      spenderAddress: EXECUTION_ROUTER_ADDRESS.trim(),
+    });
+  } catch (error: any) {
+    console.error('[api/setup/check-approval] Error:', error);
+    res.status(500).json({
+      error: 'Failed to check approval',
+      message: error.message,
+      hasApproval: false,
+    });
+  }
+});
+
+/**
  * POST /api/setup/approve
  * Prepare ERC20 approval transaction
  */

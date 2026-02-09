@@ -94,20 +94,29 @@ const collectFallbackUrls = () => {
     return [...new Set(urls)].filter(u => u !== primary && u.length > 0);
 };
 export const ETH_RPC_FALLBACK_URLS = collectFallbackUrls();
-export const EXECUTION_ROUTER_ADDRESS = process.env.EXECUTION_ROUTER_ADDRESS;
-export const MOCK_SWAP_ADAPTER_ADDRESS = process.env.MOCK_SWAP_ADAPTER_ADDRESS;
+export const EXECUTION_ROUTER_ADDRESS = process.env.EXECUTION_ROUTER_ADDRESS?.trim();
+export const MOCK_SWAP_ADAPTER_ADDRESS = process.env.MOCK_SWAP_ADAPTER_ADDRESS?.trim();
 export const UNISWAP_V3_ADAPTER_ADDRESS = process.env.UNISWAP_V3_ADAPTER_ADDRESS;
 export const WETH_WRAP_ADAPTER_ADDRESS = process.env.WETH_WRAP_ADAPTER_ADDRESS;
 export const REDACTED_ADDRESS_SEPOLIA = process.env.REDACTED_ADDRESS_SEPOLIA;
 export const WETH_ADDRESS_SEPOLIA = process.env.WETH_ADDRESS_SEPOLIA;
-// Solana devnet config (for cross-chain intents)
-export const SOLANA_RPC_URL = process.env.SOLANA_RPC_URL || 'https://api.devnet.solana.com';
+// Solana config (for cross-chain intents)
+// Prefer mainnet-beta for liquidity (devnet has none)
+export const SOLANA_NETWORK = (process.env.SOLANA_NETWORK || 'devnet');
+export const SOLANA_RPC_URL = process.env.SOLANA_RPC_URL ||
+    (SOLANA_NETWORK === 'mainnet-beta'
+        ? 'https://api.mainnet-beta.solana.com'
+        : 'https://api.devnet.solana.com');
 export const SOLANA_PROGRAM_ID = process.env.SOLANA_PROGRAM_ID;
+export const SOLANA_BUSDC_MINT = process.env.SOLANA_BUSDC_MINT;
+export const SOLANA_BUSDC_DECIMALS = parseInt(process.env.SOLANA_BUSDC_DECIMALS || '6', 10);
+export const SOLANA_MINT_AUTHORITY_PRIVATE_KEY = process.env.SOLANA_MINT_AUTHORITY_PRIVATE_KEY || process.env.SOLANA_PRIVATE_KEY;
+export const SOLANA_BUSDC_VAULT_ADDRESS = process.env.SOLANA_BUSDC_VAULT_ADDRESS;
 // Demo swap venue (deterministic for investor demos)
-// Default addresses for Sepolia (safe fallback)
+// Default addresses for Sepolia bUSDC (safe fallback) - relayer has these tokens
 const DEFAULT_DEMO_TOKENS = {
     sepolia: {
-        usdc: '0x942eF9C37469a43077C6Fb5f23a258a6D88599cD',
+        usdc: '0x6751001fD8207c494703C062139784abCa099bB9', // bUSDC - relayer funded
         weth: '0x5FB58E6E0adB7002a6E0792BE3aBE084922c9939',
     }
 };
@@ -129,6 +138,12 @@ export const DEMO_PERP_ADAPTER_ADDRESS = process.env.DEMO_PERP_ADAPTER_ADDRESS;
 // Demo events/prediction market venue (real on-chain event markets for testnet)
 export const DEMO_EVENT_ENGINE_ADDRESS = process.env.DEMO_EVENT_ENGINE_ADDRESS;
 export const DEMO_EVENT_ADAPTER_ADDRESS = process.env.DEMO_EVENT_ADAPTER_ADDRESS;
+// Collateral token for perp/event adapters (may differ from DEMO_REDACTED_ADDRESS)
+// Default to the deployed DemoPerpEngine's collateral token on Sepolia
+export const DEMO_PERP_COLLATERAL_ADDRESS = (process.env.DEMO_PERP_COLLATERAL_ADDRESS || '0x6751001fD8207c494703C062139784abCa099bB9');
+// Default event market ID (must be a valid market in DemoEventMarket contract)
+// This is used when the intent parser doesn't specify a specific market ID
+export const DEMO_EVENT_MARKET_ID = process.env.DEMO_EVENT_MARKET_ID || '0x1226b7463e5736847636fa62571d53037f286df793b8f984fc2a38c0f2d7a3ca';
 // Proof-of-execution adapter (fallback for perps/events when demo adapters not deployed)
 export const PROOF_ADAPTER_ADDRESS = process.env.PROOF_ADAPTER_ADDRESS;
 // dFlow Integration
@@ -144,7 +159,9 @@ export const DFLOW_EVENTS_QUOTE_PATH = process.env.DFLOW_EVENTS_QUOTE_PATH;
 export const DFLOW_SWAPS_QUOTE_PATH = process.env.DFLOW_SWAPS_QUOTE_PATH;
 export const DFLOW_REQUIRE = process.env.DFLOW_REQUIRE === 'true';
 // Lending configuration
-export const LENDING_EXECUTION_MODE = process.env.LENDING_EXECUTION_MODE || 'demo';
+// Force demo mode on Vercel (testnet doesn't need real Aave, and relayer lacks Aave USDC)
+const isVercelDeployment = process.env.VERCEL === '1';
+export const LENDING_EXECUTION_MODE = isVercelDeployment ? 'demo' : process.env.LENDING_EXECUTION_MODE || 'demo';
 export const AAVE_POOL_ADDRESS = process.env.AAVE_POOL_ADDRESS; // Optional, for real mode later
 export const LENDING_RATE_SOURCE = process.env.LENDING_RATE_SOURCE || 'defillama';
 // Aave Sepolia integration (testnet V1)
@@ -297,6 +314,10 @@ export const HYPERLIQUID_BUILDER_ADDRESS = process.env.HYPERLIQUID_BUILDER_ADDRE
 export const HYPERLIQUID_BUILDER_PRIVATE_KEY = process.env.HYPERLIQUID_BUILDER_PRIVATE_KEY;
 // Mock HYPE token address on testnet (for bonding)
 export const HYPERLIQUID_MOCK_HYPE_ADDRESS = process.env.HYPERLIQUID_MOCK_HYPE_ADDRESS;
+// Hyperliquid bUSDC minting configuration (testnet)
+export const HYPERLIQUID_BUSDC_ADDRESS = process.env.HYPERLIQUID_BUSDC_ADDRESS;
+export const HYPERLIQUID_BUSDC_DECIMALS = parseInt(process.env.HYPERLIQUID_BUSDC_DECIMALS || '6', 10);
+export const HYPERLIQUID_MINT_AUTHORITY_PRIVATE_KEY = process.env.HYPERLIQUID_MINT_AUTHORITY_PRIVATE_KEY || HYPERLIQUID_BUILDER_PRIVATE_KEY;
 // Hyperliquid Rate Limits (per-endpoint)
 export const HYPERLIQUID_RATE_LIMIT_MARKET_CREATION = parseInt(process.env.HYPERLIQUID_RATE_LIMIT_MARKET_CREATION || '5', 10); // Max market creations per day
 export const HYPERLIQUID_RATE_LIMIT_POSITION = parseInt(process.env.HYPERLIQUID_RATE_LIMIT_POSITION || '20', 10); // Max position operations per minute

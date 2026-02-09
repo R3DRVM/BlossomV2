@@ -163,7 +163,9 @@ async function writeContractWithNonceRetry(
         abi: params.abi,
         functionName: params.functionName,
         args: params.args,
-        nonce
+        nonce,
+        chain: client.chain,
+        account: client.account!,
       });
     } catch (error: any) {
       const msg = `${error?.shortMessage || error?.message || ''}`.toLowerCase();

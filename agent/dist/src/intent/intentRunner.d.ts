@@ -19,7 +19,7 @@
  */
 type IntentKind = 'perp' | 'perp_create' | 'deposit' | 'swap' | 'bridge' | 'event' | 'unknown';
 type IntentFailureStage = 'plan' | 'route' | 'execute' | 'confirm' | 'quote';
-export type ChainTarget = 'ethereum' | 'solana' | 'both';
+export type ChainTarget = 'ethereum' | 'solana' | 'hyperliquid' | 'both';
 export interface ParsedIntent {
     kind: IntentKind;
     action: string;
@@ -33,8 +33,8 @@ export interface ParsedIntent {
     rawParams: Record<string, any>;
 }
 export interface RouteDecision {
-    chain: 'ethereum' | 'solana';
-    network: 'sepolia' | 'devnet';
+    chain: 'ethereum' | 'solana' | 'hyperliquid';
+    network: 'sepolia' | 'devnet' | 'hyperliquid_testnet';
     venue: string;
     adapter?: string;
     executionType: 'real' | 'proof_only';

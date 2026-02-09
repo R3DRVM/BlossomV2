@@ -27,8 +27,8 @@
  *     explorerUrl: 'https://sepolia.etherscan.io/tx/0x...',
  *   });
  */
-export type Chain = 'ethereum' | 'solana';
-export type Network = 'sepolia' | 'devnet' | 'mainnet';
+export type Chain = 'ethereum' | 'solana' | 'hyperliquid';
+export type Network = 'sepolia' | 'devnet' | 'mainnet' | 'hyperliquid_testnet';
 export type ExecutionStatus = 'pending' | 'submitted' | 'confirmed' | 'finalized' | 'failed';
 export type ExecutionKind = 'perp' | 'deposit' | 'bridge' | 'swap' | 'proof' | 'relay' | 'transfer';
 export type ExecutionVenue = 'drift' | 'hl' | 'hyperliquid' | 'perp_demo' | 'aave' | 'kamino' | 'deposit_demo' | 'lifi' | 'wormhole' | 'bridge_demo' | 'uniswap' | 'jupiter' | 'swap_demo' | 'native';

@@ -46,6 +46,7 @@ export default function SessionEnforcementModal({ onSessionEnabled }: SessionEnf
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [showLearnMore, setShowLearnMore] = useState(false);
+  const [approvalStep, setApprovalStep] = useState<'session' | 'token' | 'complete'>('session');
 
   // Check if already authorized (session or manual signing)
   useEffect(() => {
@@ -132,20 +133,110 @@ export default function SessionEnforcementModal({ onSessionEnabled }: SessionEnf
         throw new Error('Session creation is still pending. Please retry in a few seconds.');
       }
 
-      // Store authorization + sessionId (match OneClickExecution.tsx)
-      localStorage.setItem(getEnabledKey(address), 'true');
-      localStorage.setItem(getAuthorizedKey(address), 'true');
-      localStorage.setItem(`blossom_oneclick_sessionid_${address.toLowerCase()}`, sessionId);
-      localStorage.setItem(`blossom_session_${address.toLowerCase()}`, sessionId);
+      // Session created successfully - now check for token approval
+      console.log('[SessionEnforcement] Session created, checking token approval...');
+      setApprovalStep('token');
+      setIsLoading(false);
 
-      console.log('[SessionEnforcement] Session enabled for', address);
-      onSessionEnabled();
+      // Check if token approval is needed
+      const approvalResponse = await callAgent('/api/setup/check-approval', {
+        method: 'POST',
+        body: JSON.stringify({ userAddress: address }),
+      });
+
+      if (!approvalResponse.ok) {
+        // If check fails, proceed anyway (maybe approval endpoint doesn't exist)
+        console.warn('[SessionEnforcement] Could not check approval status, proceeding...');
+        finalizeSessionSetup(address, sessionId);
+        return;
+      }
+
+      const approvalData = await approvalResponse.json();
+      const hasApproval = approvalData?.hasApproval ?? false;
+
+      if (hasApproval) {
+        // Already approved, complete setup
+        console.log('[SessionEnforcement] Token already approved');
+        finalizeSessionSetup(address, sessionId);
+        return;
+      }
+
+      // Need token approval - prepare approval transaction
+      console.log('[SessionEnforcement] Token approval needed');
+      setIsLoading(true);
+
+      const prepareApprovalResponse = await callAgent('/api/setup/approve', {
+        method: 'POST',
+        body: JSON.stringify({
+          userAddress: address,
+          tokenAddress: approvalData.tokenAddress,
+          spenderAddress: approvalData.spenderAddress,
+          amount: '115792089237316195423570985008687907853269984665640564039457584007913129639935', // max uint256
+        }),
+      });
+
+      if (!prepareApprovalResponse.ok) {
+        throw new Error('Failed to prepare token approval');
+      }
+
+      const approvalTxData = await prepareApprovalResponse.json();
+      const approvalTxHash = await sendTransaction({
+        to: approvalTxData.to,
+        data: approvalTxData.data,
+        value: '0x0',
+      });
+
+      if (!approvalTxHash) {
+        throw new Error('Token approval transaction was rejected');
+      }
+
+      // Wait for approval confirmation
+      let approvalConfirmed = false;
+      for (let i = 0; i < 30; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        try {
+          const statusResponse = await callAgent(`/api/execute/status?txHash=${encodeURIComponent(approvalTxHash)}`, {
+            method: 'GET',
+          });
+          if (!statusResponse.ok) continue;
+          const statusData = await statusResponse.json();
+          const status = String(statusData?.status || '').toLowerCase();
+          if (status === 'confirmed') {
+            approvalConfirmed = true;
+            break;
+          }
+          if (status === 'reverted' || status === 'failed') {
+            throw new Error('Token approval transaction reverted');
+          }
+        } catch {
+          // keep polling
+        }
+      }
+
+      if (!approvalConfirmed) {
+        throw new Error('Token approval is still pending. Your session is ready but you may need to approve tokens manually.');
+      }
+
+      // Both session and approval complete
+      finalizeSessionSetup(address, sessionId);
     } catch (err: any) {
       console.warn('[SessionEnforcement] Session setup failed:', err.message);
       setError(err.message || 'Session setup failed. Please try again.');
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const finalizeSessionSetup = (addr: string, sessionId: string) => {
+    // Store authorization + sessionId (match OneClickExecution.tsx)
+    localStorage.setItem(getEnabledKey(addr), 'true');
+    localStorage.setItem(getAuthorizedKey(addr), 'true');
+    localStorage.setItem(`blossom_oneclick_sessionid_${addr.toLowerCase()}`, sessionId);
+    localStorage.setItem(`blossom_session_${addr.toLowerCase()}`, sessionId);
+
+    console.log('[SessionEnforcement] Session and token approval complete for', addr);
+    setApprovalStep('complete');
+    onSessionEnabled();
   };
 
   // Don't show if wallet not connected
@@ -172,10 +263,14 @@ export default function SessionEnforcementModal({ onSessionEnabled }: SessionEnf
               <Zap className="h-7 w-7 text-pink-500" />
             </div>
             <h2 className="text-xl font-semibold text-slate-900">
-              Enable One-Click Session
+              {approvalStep === 'session' && 'Enable One-Click Session'}
+              {approvalStep === 'token' && 'Approve Token Spending'}
+              {approvalStep === 'complete' && 'Setup Complete!'}
             </h2>
             <p className="mt-2 text-sm text-slate-600">
-              For seamless execution, enable session mode with a one-time approval transaction.
+              {approvalStep === 'session' && 'For seamless execution, enable session mode with a one-time approval transaction.'}
+              {approvalStep === 'token' && 'One more step: approve the router to spend your tokens for automated execution.'}
+              {approvalStep === 'complete' && 'Your account is ready for one-click execution!'}
             </p>
           </div>
 
@@ -220,18 +315,25 @@ export default function SessionEnforcementModal({ onSessionEnabled }: SessionEnf
           <div className="px-6 py-4 space-y-3">
             <Button
               onClick={handleEnableSession}
-              disabled={isLoading}
-              className="w-full h-11 bg-gradient-to-r from-pink-500 to-pink-600 hover:from-pink-600 hover:to-pink-700 text-white font-medium rounded-xl"
+              disabled={isLoading || approvalStep === 'complete'}
+              className="w-full h-11 bg-gradient-to-r from-pink-500 to-pink-600 hover:from-pink-600 hover:to-pink-700 text-white font-medium rounded-xl disabled:opacity-50"
             >
               {isLoading ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                  Waiting for approval...
+                  {approvalStep === 'session' && 'Creating session...'}
+                  {approvalStep === 'token' && 'Approving tokens...'}
+                </>
+              ) : approvalStep === 'complete' ? (
+                <>
+                  <ShieldCheck className="h-4 w-4 mr-2" />
+                  Setup Complete
                 </>
               ) : (
                 <>
                   <ShieldCheck className="h-4 w-4 mr-2" />
-                  Enable Session
+                  {approvalStep === 'session' && 'Enable Session'}
+                  {approvalStep === 'token' && 'Approve Tokens'}
                 </>
               )}
             </Button>

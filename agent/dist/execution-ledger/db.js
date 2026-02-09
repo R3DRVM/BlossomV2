@@ -125,7 +125,7 @@ export function createExecution(params) {
       token, amount_units, amount_display, usd_estimate, usd_estimate_is_estimate,
       relayer_address, session_id, status, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
-  `).run(id, params.chain, params.network, params.kind ?? null, params.venue ?? null, params.intent, params.action, params.fromAddress.toLowerCase(), params.toAddress?.toLowerCase() ?? null, params.token ?? null, params.amountUnits ?? null, params.amountDisplay ?? null, params.usdEstimate ?? null, params.usdEstimateIsEstimate === false ? 0 : 1, // Default to estimate=true
+  `).run(id, params.chain, params.network, params.kind ?? null, params.venue ?? null, params.intent, params.action, params.fromAddress?.toLowerCase() ?? null, params.toAddress?.toLowerCase() ?? null, params.token ?? null, params.amountUnits ?? null, params.amountDisplay ?? null, params.usdEstimate ?? null, params.usdEstimateIsEstimate === false ? 0 : 1, // Default to estimate=true
     params.relayerAddress?.toLowerCase() ?? null, params.sessionId ?? null, now, now);
     return {
         id,
@@ -135,7 +135,7 @@ export function createExecution(params) {
         venue: params.venue,
         intent: params.intent,
         action: params.action,
-        from_address: params.fromAddress.toLowerCase(),
+        from_address: params.fromAddress?.toLowerCase() ?? '',
         to_address: params.toAddress?.toLowerCase(),
         token: params.token,
         amount_units: params.amountUnits,
@@ -724,9 +724,10 @@ export function getSummaryStats() {
     const lastExecResult = db.prepare(`
     SELECT MAX(created_at) as lastAt FROM executions
   `).get();
-    // Unique wallets
+    // Unique wallets (only count confirmed/finalized executions)
     const uniqueWalletsResult = db.prepare(`
-    SELECT COUNT(DISTINCT from_address) as count FROM executions WHERE from_address IS NOT NULL
+    SELECT COUNT(DISTINCT from_address) as count FROM executions
+    WHERE from_address IS NOT NULL AND status IN ('confirmed', 'finalized')
   `).get();
     const uniqueWallets = uniqueWalletsResult.count;
     // Calculate raw success rate (includes all failures)
@@ -1160,11 +1161,20 @@ export async function updateIntentStatusAsync(id, updates) {
  * Async-capable execution creation (uses Postgres if DATABASE_URL is set)
  */
 export async function createExecutionAsync(params) {
+    console.log('[db] createExecutionAsync called, dbType:', dbType, 'fromAddress:', params.fromAddress);
     if (dbType === 'postgres') {
-        const pgDb = await import('./db-pg.js');
-        return pgDb.createExecution(params);
+        try {
+            const pgDb = await import('./db-pg.js');
+            console.log('[db] Using postgres createExecution');
+            return pgDb.createExecution(params);
+        }
+        catch (pgError) {
+            console.error('[db] Postgres import/execution failed:', pgError.message);
+            // Fall through to SQLite
+        }
     }
     // SQLite: use synchronous version
+    console.log('[db] Using SQLite createExecution');
     return Promise.resolve(createExecution(params));
 }
 /**

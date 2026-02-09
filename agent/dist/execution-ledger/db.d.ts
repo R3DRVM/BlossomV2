@@ -23,8 +23,8 @@ export declare function getDatabase(): Database.Database;
  * Close the database connection
  */
 export declare function closeDatabase(): void;
-export type Chain = 'ethereum' | 'solana';
-export type Network = 'sepolia' | 'devnet' | 'mainnet';
+export type Chain = 'ethereum' | 'solana' | 'hyperliquid';
+export type Network = 'sepolia' | 'devnet' | 'mainnet' | 'hyperliquid_testnet';
 export type ExecutionStatus = 'pending' | 'submitted' | 'confirmed' | 'finalized' | 'failed';
 export type SessionStatus = 'preparing' | 'active' | 'revoked' | 'expired';
 export type ExecutionKind = 'perp' | 'deposit' | 'bridge' | 'swap' | 'proof' | 'relay' | 'transfer';

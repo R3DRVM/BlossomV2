@@ -86,7 +86,7 @@ import { waitForReceipt } from '../executors/evmReceipt';
 import { checkAndRecordMint } from '../utils/mintLimiter';
 import { postStatsEvent } from '../stats';
 // State machine imports for intent path isolation
-import { IntentState, classifyIntentPath, getContext, updateContext, processConfirmation, isConfirmation, isCancellation, resetContextState, logTransition, } from '../intent/intentStateMachine';
+import { IntentState, classifyIntentPathWithValidation, getContext, updateContext, processConfirmation, isConfirmation, isCancellation, resetContextState, logTransition, } from '../intent/intentStateMachine';
 const app = express();
 // Rate limits for high-risk execution endpoints
 const executeRateLimit = rateLimit({
@@ -1199,7 +1199,35 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
             resetContextState(chatSessionId);
         }
         // Classify the intent path early for state machine tracking
-        const intentPath = classifyIntentPath(normalizedUserMessage);
+        // Use validation to detect cross-category mismatches (e.g., "bet on BTC long")
+        const classifyResult = classifyIntentPathWithValidation(normalizedUserMessage);
+        const intentPath = classifyResult.path;
+        // Log PATH_VIOLATION if mismatch detected
+        if (classifyResult.mismatch) {
+            console.warn('[api/chat] PATH_VIOLATION detected:', {
+                userMessage: normalizedUserMessage.substring(0, 100),
+                detectedPath: classifyResult.mismatch.detectedPath,
+                conflictingKeywords: classifyResult.mismatch.conflictingKeywords,
+                suggestedPath: classifyResult.mismatch.suggestedPath,
+            });
+            // Return helpful error to user instead of proceeding with ambiguous intent
+            const portfolioAfter = buildPortfolioSnapshot();
+            return res.json({
+                ok: true,
+                assistantMessage: `I detected a potential mismatch in your intent. ${classifyResult.mismatch.message} Please clarify what you'd like to do.`,
+                actions: [],
+                executionRequest: null,
+                modelOk: true,
+                portfolio: portfolioAfter,
+                executionResults: [],
+                metadata: {
+                    pathViolation: true,
+                    detectedPath: classifyResult.mismatch.detectedPath,
+                    conflictingKeywords: classifyResult.mismatch.conflictingKeywords,
+                    suggestedPath: classifyResult.mismatch.suggestedPath,
+                },
+            });
+        }
         logTransition(chatSessionId, 'INTENT_CLASSIFIED', {
             intentPath,
             currentPath: stateContext.currentPath,
@@ -1570,8 +1598,11 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
         // Detect if this is an event prompt - match patterns like "bet X on Y above/below Z"
         // IMPORTANT: Perp intents take priority - if isPerpPrompt is true, isEventPrompt should be false
         const hasPerpKeywords = /\b(long|short|perp|leverage|\d+x)\b/i.test(normalizedUserMessage);
-        const isEventPrompt = !isPerpPrompt && !hasPerpKeywords &&
-            /bet|wager|risk.*on|event|prediction\s*market/i.test(normalizedUserMessage) &&
+        // Extended event keywords: "bet/wager/risk on/event/prediction market" OR "YES/NO on" patterns OR "take YES/NO"
+        const hasEventKeywords = /bet|wager|risk.*on|event|prediction\s*market/i.test(normalizedUserMessage) ||
+            /\b(yes|no)\s+on\b/i.test(normalizedUserMessage) ||
+            /\btake\s+(yes|no)\b/i.test(normalizedUserMessage);
+        const isEventPrompt = !isPerpPrompt && !hasPerpKeywords && hasEventKeywords &&
             (normalizedUserMessage.toLowerCase().includes('yes') ||
                 normalizedUserMessage.toLowerCase().includes('no') ||
                 normalizedUserMessage.toLowerCase().includes('fed') ||
@@ -1648,8 +1679,11 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
                     normalizedUserMessage.toLowerCase().includes('leverage'));
             // IMPORTANT: Perp intents take priority - if normalizedIsPerpPrompt is true, isEventPrompt should be false
             const normalizedHasPerpKeywords = /\b(long|short|perp|leverage|\d+x)\b/i.test(normalizedUserMessage);
-            const normalizedIsEventPrompt = !normalizedIsPerpPrompt && !normalizedHasPerpKeywords &&
-                /bet|wager|risk.*on|event|prediction\s*market/i.test(normalizedUserMessage) &&
+            // Extended event keywords: "bet/wager/risk on/event/prediction market" OR "YES/NO on" patterns OR "take YES/NO"
+            const normalizedHasEventKeywords = /bet|wager|risk.*on|event|prediction\s*market/i.test(normalizedUserMessage) ||
+                /\b(yes|no)\s+on\b/i.test(normalizedUserMessage) ||
+                /\btake\s+(yes|no)\b/i.test(normalizedUserMessage);
+            const normalizedIsEventPrompt = !normalizedIsPerpPrompt && !normalizedHasPerpKeywords && normalizedHasEventKeywords &&
                 (normalizedUserMessage.toLowerCase().includes('yes') ||
                     normalizedUserMessage.toLowerCase().includes('no') ||
                     normalizedUserMessage.toLowerCase().includes('fed') ||
@@ -4929,6 +4963,87 @@ app.post('/api/session/status', async (req, res) => {
     }
 });
 /**
+ * POST /api/session/validate
+ * Validate that a stored session is still active on-chain
+ * Used by frontend to verify localStorage session is still valid before using
+ */
+app.post('/api/session/validate', asyncHandler(async (req, res) => {
+    const { userAddress, sessionId } = req.body;
+    if (!userAddress || !sessionId) {
+        return res.json({ valid: false, reason: 'MISSING_FIELDS' });
+    }
+    try {
+        const { EXECUTION_MODE, EXECUTION_AUTH_MODE, ETH_TESTNET_RPC_URL, EXECUTION_ROUTER_ADDRESS } = await import('../config');
+        // Check if session mode is enabled
+        if (EXECUTION_MODE !== 'eth_testnet' || EXECUTION_AUTH_MODE !== 'session') {
+            return res.json({ valid: false, reason: 'SESSION_MODE_DISABLED' });
+        }
+        if (!ETH_TESTNET_RPC_URL || !EXECUTION_ROUTER_ADDRESS) {
+            return res.json({ valid: false, reason: 'NOT_CONFIGURED' });
+        }
+        // Query on-chain session state
+        const { createPublicClient, http } = await import('viem');
+        const { sepolia } = await import('viem/chains');
+        const publicClient = createPublicClient({
+            chain: sepolia,
+            transport: http(ETH_TESTNET_RPC_URL),
+        });
+        const sessionAbi = [
+            {
+                name: 'sessions',
+                type: 'function',
+                stateMutability: 'view',
+                inputs: [{ name: '', type: 'bytes32' }],
+                outputs: [
+                    { name: 'owner', type: 'address' },
+                    { name: 'executor', type: 'address' },
+                    { name: 'expiresAt', type: 'uint64' },
+                    { name: 'maxSpend', type: 'uint256' },
+                    { name: 'spent', type: 'uint256' },
+                    { name: 'active', type: 'bool' },
+                ],
+            },
+        ];
+        // Normalize sessionId
+        const normalizedSessionId = sessionId.startsWith('0x') ? sessionId : `0x${sessionId}`;
+        const sessionResult = await Promise.race([
+            publicClient.readContract({
+                address: EXECUTION_ROUTER_ADDRESS,
+                abi: sessionAbi,
+                functionName: 'sessions',
+                args: [normalizedSessionId],
+            }),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('RPC timeout')), 5000)),
+        ]);
+        const [owner, executor, expiresAt, maxSpend, spent, active] = sessionResult;
+        const now = Math.floor(Date.now() / 1000);
+        const expiresAtNum = Number(expiresAt);
+        // Check if session is valid
+        if (!active) {
+            return res.json({ valid: false, reason: 'SESSION_NOT_ACTIVE' });
+        }
+        if (expiresAtNum > 0 && expiresAtNum < now) {
+            return res.json({ valid: false, reason: 'SESSION_EXPIRED' });
+        }
+        // Session is valid
+        return res.json({
+            valid: true,
+            sessionId: normalizedSessionId,
+            expiresAt: expiresAtNum,
+            remainingMs: expiresAtNum > 0 ? (expiresAtNum - now) * 1000 : null,
+            owner: owner.toLowerCase(),
+            executor: executor.toLowerCase(),
+        });
+    }
+    catch (error) {
+        console.warn('[api/session/validate] Error validating session:', error.message);
+        return res.json({
+            valid: false,
+            reason: error.message?.includes('timeout') ? 'RPC_ERROR' : 'VALIDATION_ERROR',
+        });
+    }
+}));
+/**
  * GET /api/debug/session (read-only, gated by DEBUG_DIAGNOSTICS=true)
  * Returns session config and optional on-chain session presence. No secrets; only boolean flags and prefixes.
  * Session state (enabledKey, authorizedKey, sessionId) lives in client localStorage; server cannot see it unless
@@ -5666,6 +5781,115 @@ app.post('/api/demo/faucet', maybeCheckAccess, async (req, res) => {
     }
 });
 /**
+ * POST /api/mint-busdc
+ * Alias for /api/mint - Mint bUSDC for testnet use
+ * Endpoint name requested by QuickStartPanel UI
+ */
+function normalizeMintChain(raw) {
+    if (!raw)
+        return 'ethereum';
+    const normalized = raw.toLowerCase();
+    if (['sol', 'solana', 'devnet'].includes(normalized))
+        return 'solana';
+    if (['hl', 'hyperliquid', 'hyperliquid_testnet'].includes(normalized))
+        return 'hyperliquid';
+    if (['eth', 'ethereum', 'sepolia'].includes(normalized))
+        return 'ethereum';
+    return 'ethereum';
+}
+function isValidMintAddress(chain, address) {
+    if (chain === 'solana') {
+        return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address);
+    }
+    return /^0x[a-fA-F0-9]{40}$/.test(address);
+}
+app.post('/api/mint-busdc', mintRateLimit, maybeCheckAccess, async (req, res) => {
+    try {
+        const { EXECUTION_MODE } = await import('../config');
+        if (EXECUTION_MODE !== 'eth_testnet') {
+            return res.status(400).json({
+                ok: false,
+                error: 'Mint only available in eth_testnet mode'
+            });
+        }
+        const { userAddress, amount, chain, recipientAddress, solanaAddress } = req.body || {};
+        const targetChain = normalizeMintChain(chain);
+        const targetAddress = targetChain === 'solana'
+            ? (solanaAddress || recipientAddress || userAddress)
+            : (userAddress || recipientAddress);
+        if (!targetAddress || typeof targetAddress !== 'string') {
+            return res.status(400).json({
+                ok: false,
+                error: 'userAddress is required'
+            });
+        }
+        if (!isValidMintAddress(targetChain, targetAddress)) {
+            return res.status(400).json({
+                ok: false,
+                error: 'Invalid userAddress format'
+            });
+        }
+        // Default to random 100-500 bUSDC if not provided
+        const defaultAmount = Math.floor(100 + Math.random() * 401);
+        const amountNum = Number(amount ?? defaultAmount);
+        if (!Number.isFinite(amountNum) || amountNum <= 0 || amountNum > 10000) {
+            return res.status(400).json({
+                ok: false,
+                error: 'Invalid amount (must be 1-10000)'
+            });
+        }
+        const limitCheck = await checkAndRecordMint(targetAddress, amountNum, targetChain);
+        if (!limitCheck.ok) {
+            return res.status(429).json({
+                ok: false,
+                error: 'Daily mint limit exceeded',
+                remaining: limitCheck.remaining,
+                cap: limitCheck.cap
+            });
+        }
+        console.log(`[api/mint-busdc] Minting ${amountNum} bUSDC to ${targetAddress} on ${targetChain}...`);
+        let txHash;
+        let signature;
+        let explorerUrl;
+        if (targetChain === 'solana') {
+            const { mintSolanaBusdc } = await import('../utils/solanaBusdcMinter');
+            const result = await mintSolanaBusdc(targetAddress, amountNum);
+            signature = result.signature;
+            explorerUrl = result.explorerUrl;
+        }
+        else if (targetChain === 'hyperliquid') {
+            const { mintHyperliquidBusdc } = await import('../utils/hyperliquidBusdcMinter');
+            const result = await mintHyperliquidBusdc(targetAddress, amountNum);
+            txHash = result.txHash;
+        }
+        else {
+            const { mintBusdc } = await import('../utils/demoTokenMinter');
+            const result = await mintBusdc(targetAddress, amountNum);
+            txHash = result.txHash;
+        }
+        console.log(`[api/mint-busdc] Success: ${txHash || signature}`);
+        res.json({
+            ok: true,
+            success: true,
+            chain: targetChain,
+            txHash,
+            signature,
+            explorerUrl,
+            amount: amountNum,
+            remaining: limitCheck.remaining,
+            message: `Minted ${amountNum} bUSDC to your wallet`
+        });
+    }
+    catch (error) {
+        console.error('[api/mint-busdc] Error:', error);
+        res.status(500).json({
+            ok: false,
+            error: 'Failed to mint bUSDC',
+            details: error.message
+        });
+    }
+});
+/**
  * POST /api/mint
  * Mint bUSDC for testnet use with a daily cap (default 1000/day)
  */
@@ -5678,27 +5902,32 @@ app.post('/api/mint', mintRateLimit, maybeCheckAccess, async (req, res) => {
                 error: 'Mint only available in eth_testnet mode'
             });
         }
-        const { userAddress, amount } = req.body || {};
-        if (!userAddress || typeof userAddress !== 'string') {
+        const { userAddress, amount, chain, recipientAddress, solanaAddress } = req.body || {};
+        const targetChain = normalizeMintChain(chain);
+        const targetAddress = targetChain === 'solana'
+            ? (solanaAddress || recipientAddress || userAddress)
+            : (userAddress || recipientAddress);
+        if (!targetAddress || typeof targetAddress !== 'string') {
             return res.status(400).json({
                 ok: false,
                 error: 'userAddress is required'
             });
         }
-        if (!/^0x[a-fA-F0-9]{40}$/i.test(userAddress)) {
+        if (!isValidMintAddress(targetChain, targetAddress)) {
             return res.status(400).json({
                 ok: false,
                 error: 'Invalid userAddress format'
             });
         }
-        const amountNum = Number(amount ?? 1000);
-        if (!Number.isFinite(amountNum) || amountNum <= 0) {
+        const defaultAmount = Math.floor(100 + Math.random() * 401);
+        const amountNum = Number(amount ?? defaultAmount);
+        if (!Number.isFinite(amountNum) || amountNum <= 0 || amountNum > 10000) {
             return res.status(400).json({
                 ok: false,
-                error: 'Invalid amount'
+                error: 'Invalid amount (must be 1-10000)'
             });
         }
-        const limitCheck = await checkAndRecordMint(userAddress, amountNum);
+        const limitCheck = await checkAndRecordMint(targetAddress, amountNum, targetChain);
         if (!limitCheck.ok) {
             return res.status(429).json({
                 ok: false,
@@ -5707,13 +5936,34 @@ app.post('/api/mint', mintRateLimit, maybeCheckAccess, async (req, res) => {
                 cap: limitCheck.cap
             });
         }
-        const { mintBusdc } = await import('../utils/demoTokenMinter');
-        const result = await mintBusdc(userAddress, amountNum);
+        console.log(`[api/mint] Minting ${amountNum} bUSDC to ${targetAddress} on ${targetChain}...`);
+        let txHash;
+        let signature;
+        let explorerUrl;
+        if (targetChain === 'solana') {
+            const { mintSolanaBusdc } = await import('../utils/solanaBusdcMinter');
+            const result = await mintSolanaBusdc(targetAddress, amountNum);
+            signature = result.signature;
+            explorerUrl = result.explorerUrl;
+        }
+        else if (targetChain === 'hyperliquid') {
+            const { mintHyperliquidBusdc } = await import('../utils/hyperliquidBusdcMinter');
+            const result = await mintHyperliquidBusdc(targetAddress, amountNum);
+            txHash = result.txHash;
+        }
+        else {
+            const { mintBusdc } = await import('../utils/demoTokenMinter');
+            const result = await mintBusdc(targetAddress, amountNum);
+            txHash = result.txHash;
+        }
         res.json({
             ok: true,
             success: true,
-            txHash: result.txHash,
-            amount: result.amount,
+            chain: targetChain,
+            txHash,
+            signature,
+            explorerUrl,
+            amount: amountNum,
             remaining: limitCheck.remaining
         });
     }
@@ -5723,6 +5973,35 @@ app.post('/api/mint', mintRateLimit, maybeCheckAccess, async (req, res) => {
             ok: false,
             error: 'Failed to mint bUSDC',
             details: error.message
+        });
+    }
+});
+/**
+ * GET /api/demo/relayer
+ * Returns the relayer address (for automated testing scripts)
+ */
+app.get('/api/demo/relayer', maybeCheckAccess, async (req, res) => {
+    try {
+        const { RELAYER_PRIVATE_KEY, EXECUTION_ROUTER_ADDRESS } = await import('../config');
+        if (!RELAYER_PRIVATE_KEY) {
+            return res.status(503).json({
+                ok: false,
+                error: 'Relayer not configured',
+            });
+        }
+        const { privateKeyToAccount } = await import('viem/accounts');
+        const relayerAccount = privateKeyToAccount(RELAYER_PRIVATE_KEY);
+        res.json({
+            ok: true,
+            relayerAddress: relayerAccount.address.toLowerCase(),
+            routerAddress: EXECUTION_ROUTER_ADDRESS?.toLowerCase(),
+        });
+    }
+    catch (error) {
+        res.status(500).json({
+            ok: false,
+            error: 'Failed to get relayer info',
+            details: error.message,
         });
     }
 });
@@ -5935,6 +6214,34 @@ app.post('/api/demo/execute-direct', maybeCheckAccess, async (req, res) => {
             status: receipt.status,
             gasUsed: receipt.gasUsed.toString(),
         });
+        // Record execution to database for stats tracking
+        if (receipt.status === 'success') {
+            try {
+                const { recordExecutionWithResult } = await import('../ledger/ledger');
+                // Use recordAsAddress for unique wallet tracking (allows sims to pass agent wallet addresses)
+                // Falls back to effectivePlan.user (relayer) if not provided
+                const recordAddress = req.body.recordAsAddress || effectivePlan.user;
+                const execId = await recordExecutionWithResult({
+                    chain: 'ethereum',
+                    network: 'sepolia',
+                    kind: req.body.kind || 'swap',
+                    venue: req.body.venue || 'demo_dex',
+                    fromAddress: recordAddress,
+                    intent: req.body.amountDisplay || 'demo-execute-direct',
+                    action: req.body.kind || 'swap',
+                    usdEstimate: req.body.usdEstimate || 10,
+                    amountDisplay: req.body.amountDisplay || 'Relayer execution',
+                    relayerAddress: effectivePlan.user,
+                }, {
+                    success: true,
+                    txHash,
+                });
+                console.log('[api/demo/execute-direct] Recorded execution:', execId, 'for address:', recordAddress);
+            }
+            catch (recordError) {
+                console.warn('[api/demo/execute-direct] Failed to record execution:', recordError.message);
+            }
+        }
         res.json({
             ok: true,
             success: receipt.status === 'success',
