@@ -3104,16 +3104,26 @@ async function executeProofOnly(
       data: proofHex as `0x${string}`,
     });
 
-    // Wait for confirmation
-    const receipt = await publicClient.waitForTransactionReceipt({
-      hash: txHash,
-      timeout: 15000,
-    });
+    // Wait for confirmation (tolerate timeouts as pending, similar to perp flow)
+    let receipt: any = null;
+    let receiptStatus: 'confirmed' | 'pending' | 'failed' = 'pending';
+
+    try {
+      receipt = await publicClient.waitForTransactionReceipt({
+        hash: txHash,
+        timeout: 15000,
+      });
+      receiptStatus = receipt.status === 'success' ? 'confirmed' : 'failed';
+    } catch (receiptError: any) {
+      // Timeout waiting for receipt - tx is pending, not failed
+      console.log(`[executeProofOnly] Receipt wait timed out for ${txHash}, marking as pending`);
+      receiptStatus = 'pending';
+    }
 
     const latencyMs = Date.now() - startTime;
     const explorerUrl = buildExplorerUrl('ethereum', 'sepolia', txHash);
 
-    if (receipt.status === 'success') {
+    if (receiptStatus === 'confirmed') {
       await updateExecutionAsync(execution.id, {
         status: 'confirmed',
         txHash,
@@ -3149,7 +3159,7 @@ async function executeProofOnly(
           warnings: route.warnings,
         },
       };
-    } else {
+    } else if (receiptStatus === 'failed') {
       await updateExecutionAsync(execution.id, {
         status: 'failed',
         txHash,
@@ -3176,6 +3186,41 @@ async function executeProofOnly(
           stage: 'confirm',
           code: 'TX_REVERTED',
           message: 'Proof transaction reverted',
+        },
+      };
+    } else {
+      // receiptStatus === 'pending' - tx submitted but confirmation timed out
+      await updateExecutionAsync(execution.id, {
+        status: 'pending',
+        txHash,
+        explorerUrl,
+        latencyMs,
+      });
+
+      await updateIntentStatusAsync(intentId, {
+        status: 'pending',
+        metadataJson: mergeMetadata(existingMetadataJson, {
+          parsed,
+          route,
+          executedKind: 'proof_only',
+          executionId: execution.id,
+          txHash,
+          explorerUrl,
+          latencyMs,
+          warnings: route.warnings,
+        }),
+      });
+
+      return {
+        ok: true,
+        intentId,
+        status: 'pending',
+        executionId: execution.id,
+        txHash,
+        explorerUrl,
+        metadata: {
+          executedKind: 'proof_only',
+          warnings: route.warnings,
         },
       };
     }
@@ -3478,9 +3523,13 @@ async function executeProofOnlyHyperliquid(
     HYPERLIQUID_TESTNET_CHAIN_ID,
     HYPERLIQUID_MINT_AUTHORITY_PRIVATE_KEY,
     HYPERLIQUID_BUILDER_PRIVATE_KEY,
+    RELAYER_PRIVATE_KEY,
   } = await import('../config');
 
-  const signerKey = HYPERLIQUID_MINT_AUTHORITY_PRIVATE_KEY || HYPERLIQUID_BUILDER_PRIVATE_KEY;
+  const signerKey =
+    HYPERLIQUID_MINT_AUTHORITY_PRIVATE_KEY ||
+    HYPERLIQUID_BUILDER_PRIVATE_KEY ||
+    RELAYER_PRIVATE_KEY;
 
   if (!signerKey || !HYPERLIQUID_TESTNET_RPC_URL) {
     await updateIntentStatusAsync(intentId, {

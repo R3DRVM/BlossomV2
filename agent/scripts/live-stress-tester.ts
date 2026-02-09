@@ -73,6 +73,8 @@ const VERBOSE = hasFlag('verbose');
 const ALLOW_NON_PROD = hasFlag('allow-non-prod') || process.env.ALLOW_NON_PROD === '1';
 const MINT_CHAINS_RAW = arg('mint-chains') || process.env.STRESS_MINT_CHAINS || 'ethereum,solana,hyperliquid';
 const MINT_CHAINS = MINT_CHAINS_RAW.split(',').map(s => s.trim()).filter(Boolean) as Chain[];
+const SWAP_CHAINS_RAW = arg('swap-chains') || process.env.STRESS_SWAP_CHAINS || 'ethereum,solana';
+const SWAP_CHAINS = SWAP_CHAINS_RAW.split(',').map(s => s.trim()).filter(Boolean) as Chain[];
 
 const STRESS_EVM_ADDRESS = process.env.STRESS_TEST_EVM_ADDRESS || process.env.TEST_WALLET_ADDRESS || process.env.RELAYER_PUBLIC_ADDRESS || '';
 const STRESS_SOLANA_ADDRESS = process.env.STRESS_TEST_SOLANA_ADDRESS || '';
@@ -123,7 +125,7 @@ function buildActionId(category: Category, sessionIndex: number) {
 }
 
 function buildSwapAction(sessionIndex: number): Action {
-  const chain: Chain = sessionIndex % 2 === 0 ? 'ethereum' : 'solana';
+  const chain: Chain = pick(SWAP_CHAINS.length ? SWAP_CHAINS : ['ethereum']);
   const amount = randInt(10, 50);
   const asset = chain === 'solana' ? 'SOL' : 'WETH';
   const chainHint = chain === 'solana' ? ' on Solana' : '';
@@ -569,6 +571,7 @@ async function main() {
   log(`   Concurrency: ${CONCURRENCY}`);
   log(`   Dry run: ${DRY_RUN ? 'yes' : 'no'}`);
   log(`   Mint chains: ${MINT_CHAINS.join(', ')}`);
+  log(`   Swap chains: ${SWAP_CHAINS.join(', ')}`);
   if (!STRESS_EVM_ADDRESS) log('   ⚠️  Missing STRESS_TEST_EVM_ADDRESS (mint to Ethereum may be skipped)');
   if (!STRESS_SOLANA_ADDRESS) log('   ⚠️  Missing STRESS_TEST_SOLANA_ADDRESS (mint to Solana may be skipped)');
   if (!STRESS_HYPERLIQUID_ADDRESS) log('   ⚠️  Missing STRESS_TEST_HYPERLIQUID_ADDRESS (mint to Hyperliquid may be skipped)');
