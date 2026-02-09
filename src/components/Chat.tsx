@@ -4925,20 +4925,26 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
                     }`}
                   >
                     <span>{sendLabel}</span>
-                    <svg
-                      className="ml-2 h-4 w-4"
-                      viewBox="0 0 20 20"
-                      fill="none"
-                      xmlns="http://www.w3.org/2000/svg"
-                    >
-                      <path
-                        d="M4 10h9.5M11 6l3.5 4L11 14"
-                        stroke="currentColor"
-                        strokeWidth="1.6"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
+                    {isTyping ? (
+                      <div className="ml-2 animate-spin">
+                        <BlossomLogo size={16} />
+                      </div>
+                    ) : (
+                      <svg
+                        className="ml-2 h-4 w-4"
+                        viewBox="0 0 20 20"
+                        fill="none"
+                        xmlns="http://www.w3.org/2000/svg"
+                      >
+                        <path
+                          d="M4 10h9.5M11 6l3.5 4L11 14"
+                          stroke="currentColor"
+                          strokeWidth="1.6"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    )}
                   </button>
                 );
               })()}
