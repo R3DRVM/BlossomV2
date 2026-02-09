@@ -3632,15 +3632,24 @@ async function executeProofOnlyHyperliquid(
       data: proofHex as `0x${string}`,
     });
 
-    const receipt = await publicClient.waitForTransactionReceipt({
-      hash: txHash,
-      timeout: 15000,
-    });
+    let receipt: any = null;
+    let receiptStatus: 'confirmed' | 'pending' | 'failed' = 'pending';
+
+    try {
+      receipt = await publicClient.waitForTransactionReceipt({
+        hash: txHash,
+        timeout: 15000,
+      });
+      receiptStatus = receipt.status === 'success' ? 'confirmed' : 'failed';
+    } catch (receiptError: any) {
+      console.log(`[executeProofOnlyHyperliquid] Receipt wait timed out for ${txHash}, marking as pending`);
+      receiptStatus = 'pending';
+    }
 
     const latencyMs = Date.now() - startTime;
     const explorerUrl = buildExplorerUrl('hyperliquid', 'hyperliquid_testnet', txHash);
 
-    if (receipt.status === 'success') {
+    if (receiptStatus === 'confirmed') {
       await updateExecutionAsync(execution.id, {
         status: 'confirmed',
         txHash,
@@ -3678,32 +3687,69 @@ async function executeProofOnlyHyperliquid(
       };
     }
 
+    if (receiptStatus === 'failed') {
+      await updateExecutionAsync(execution.id, {
+        status: 'failed',
+        txHash,
+        explorerUrl,
+        errorCode: 'TX_REVERTED',
+        errorMessage: 'Proof transaction reverted',
+      });
+
+      await updateIntentStatusAsync(intentId, {
+        status: 'failed',
+        failureStage: 'confirm',
+        errorCode: 'TX_REVERTED',
+        errorMessage: 'Proof transaction reverted on-chain',
+      });
+
+      return {
+        ok: false,
+        intentId,
+        status: 'failed',
+        executionId: execution.id,
+        txHash,
+        explorerUrl,
+        error: {
+          stage: 'confirm',
+          code: 'TX_REVERTED',
+          message: 'Proof transaction reverted',
+        },
+      };
+    }
+
+    // receiptStatus === 'pending' - tx submitted but confirmation timed out
     await updateExecutionAsync(execution.id, {
-      status: 'failed',
+      status: 'pending',
       txHash,
       explorerUrl,
-      errorCode: 'TX_REVERTED',
-      errorMessage: 'Proof transaction reverted',
+      latencyMs,
     });
 
     await updateIntentStatusAsync(intentId, {
-      status: 'failed',
-      failureStage: 'confirm',
-      errorCode: 'TX_REVERTED',
-      errorMessage: 'Proof transaction reverted on-chain',
+      status: 'pending',
+      metadataJson: mergeMetadata(existingMetadataJson, {
+        parsed,
+        route,
+        executedKind: 'proof_only',
+        executionId: execution.id,
+        txHash,
+        explorerUrl,
+        warnings: route.warnings,
+      }),
     });
 
     return {
-      ok: false,
+      ok: true,
       intentId,
-      status: 'failed',
+      status: 'pending',
       executionId: execution.id,
       txHash,
       explorerUrl,
-      error: {
-        stage: 'confirm',
-        code: 'TX_REVERTED',
-        message: 'Proof transaction reverted',
+      metadata: {
+        executedKind: 'proof_only',
+        pending: true,
+        warnings: route.warnings,
       },
     };
   } catch (error: any) {
@@ -3836,16 +3882,25 @@ async function executeEthereum(
 
     const txHash = await sendWithNonceRetry();
 
-    // Wait for confirmation
-    const receipt = await publicClient.waitForTransactionReceipt({
-      hash: txHash,
-      timeout: 15000,
-    });
+    // Wait for confirmation (treat timeouts as pending)
+    let receipt: any = null;
+    let receiptStatus: 'confirmed' | 'pending' | 'failed' = 'pending';
+
+    try {
+      receipt = await publicClient.waitForTransactionReceipt({
+        hash: txHash,
+        timeout: 15000,
+      });
+      receiptStatus = receipt.status === 'success' ? 'confirmed' : 'failed';
+    } catch (receiptError: any) {
+      console.log(`[executeEthereum] Receipt wait timed out for ${txHash}, marking as pending`);
+      receiptStatus = 'pending';
+    }
 
     const explorerUrl = `https://sepolia.etherscan.io/tx/${txHash}`;
     const latencyMs = Date.now() - (now * 1000);
 
-    if (receipt.status === 'success') {
+    if (receiptStatus === 'confirmed') {
       // ATOMIC TRANSACTION: Create execution row + update intent to confirmed
       const result = await finalizeExecutionTransactionAsync({
         intentId,
@@ -3879,7 +3934,7 @@ async function executeEthereum(
           executedKind: 'real',
         },
       };
-    } else {
+    } else if (receiptStatus === 'failed') {
       // ATOMIC TRANSACTION: Create execution row + update intent to failed
       const result = await finalizeExecutionTransactionAsync({
         intentId,
@@ -3910,6 +3965,41 @@ async function executeEthereum(
           stage: 'confirm',
           code: 'TX_REVERTED',
           message: 'Transaction reverted on-chain',
+        },
+      };
+    } else {
+      // receiptStatus === 'pending' - tx submitted but confirmation timed out
+      const result = await finalizeExecutionTransactionAsync({
+        intentId,
+        execution: {
+          ...executionData,
+          txHash,
+          explorerUrl,
+          status: 'pending',
+        },
+        intentStatus: {
+          status: 'pending',
+          metadataJson: mergeMetadata(existingMetadataJson, {
+            parsed,
+            route,
+            executedKind: 'real',
+            txHash,
+            explorerUrl,
+            latencyMs,
+          }),
+        },
+      });
+
+      return {
+        ok: true,
+        intentId,
+        status: 'pending',
+        executionId: result.executionId,
+        txHash,
+        explorerUrl,
+        metadata: {
+          executedKind: 'real',
+          pending: true,
         },
       };
     }
