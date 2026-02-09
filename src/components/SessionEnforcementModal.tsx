@@ -46,7 +46,7 @@ export default function SessionEnforcementModal({ onSessionEnabled }: SessionEnf
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [showLearnMore, setShowLearnMore] = useState(false);
-  const [approvalStep, setApprovalStep] = useState<'session' | 'token' | 'complete'>('session');
+  const [approvalStep, setApprovalStep] = useState<'session' | 'token' | 'mint' | 'complete'>('session');
 
   // Check if already authorized (session or manual signing)
   useEffect(() => {
@@ -217,14 +217,96 @@ export default function SessionEnforcementModal({ onSessionEnabled }: SessionEnf
         throw new Error('Token approval is still pending. Your session is ready but you may need to approve tokens manually.');
       }
 
-      // Both session and approval complete
-      finalizeSessionSetup(address, sessionId);
+      // Both session and approval complete - now check balance
+      await checkAndMintIfNeeded(address, sessionId);
     } catch (err: any) {
       console.warn('[SessionEnforcement] Session setup failed:', err.message);
       setError(err.message || 'Session setup failed. Please try again.');
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const checkAndMintIfNeeded = async (addr: string, sessionId: string) => {
+    try {
+      console.log('[SessionEnforcement] Checking balance...');
+      setIsLoading(true);
+
+      // Check balance
+      const balanceResponse = await callAgent('/api/setup/check-balance', {
+        method: 'POST',
+        body: JSON.stringify({ userAddress: addr }),
+      });
+
+      if (!balanceResponse.ok) {
+        console.warn('[SessionEnforcement] Balance check failed, proceeding anyway');
+        finalizeSessionSetup(addr, sessionId);
+        return;
+      }
+
+      const balanceData = await balanceResponse.json();
+      const hasBalance = balanceData?.hasBalance ?? false;
+
+      if (hasBalance) {
+        // User has tokens, complete setup
+        console.log('[SessionEnforcement] User has balance, setup complete');
+        finalizeSessionSetup(addr, sessionId);
+        return;
+      }
+
+      // No balance - offer to mint
+      console.log('[SessionEnforcement] No balance, offering mint...');
+      setApprovalStep('mint');
+      setIsLoading(false);
+    } catch (error: any) {
+      console.warn('[SessionEnforcement] Balance check error:', error);
+      // On error, just complete setup
+      finalizeSessionSetup(addr, sessionId);
+    }
+  };
+
+  const handleMintTokens = async () => {
+    if (!address) return;
+
+    setIsLoading(true);
+    setError('');
+
+    try {
+      console.log('[SessionEnforcement] Minting tokens...');
+
+      // Mint tokens (backend will auto-detect chain)
+      const mintResponse = await callAgent('/api/mint-busdc', {
+        method: 'POST',
+        body: JSON.stringify({
+          userAddress: address,
+          amount: 1000, // Default 1000 bUSDC
+          chain: 'ethereum', // Default to ethereum, can be made dynamic
+        }),
+      });
+
+      if (!mintResponse.ok) {
+        const errorData = await mintResponse.json().catch(() => ({}));
+        throw new Error(errorData?.error || 'Failed to mint tokens');
+      }
+
+      const mintData = await mintResponse.json();
+      console.log('[SessionEnforcement] Mint successful:', mintData);
+
+      // Retrieve sessionId from localStorage
+      const sessionId = localStorage.getItem(`blossom_oneclick_sessionid_${address.toLowerCase()}`) || '';
+      finalizeSessionSetup(address, sessionId);
+    } catch (error: any) {
+      console.error('[SessionEnforcement] Mint failed:', error);
+      setError(error.message || 'Failed to mint tokens. You can skip this step and add tokens manually later.');
+      setIsLoading(false);
+    }
+  };
+
+  const handleSkipMint = () => {
+    if (!address) return;
+    const sessionId = localStorage.getItem(`blossom_oneclick_sessionid_${address.toLowerCase()}`) || '';
+    console.log('[SessionEnforcement] User skipped mint');
+    finalizeSessionSetup(address, sessionId);
   };
 
   const finalizeSessionSetup = (addr: string, sessionId: string) => {
@@ -234,7 +316,7 @@ export default function SessionEnforcementModal({ onSessionEnabled }: SessionEnf
     localStorage.setItem(`blossom_oneclick_sessionid_${addr.toLowerCase()}`, sessionId);
     localStorage.setItem(`blossom_session_${addr.toLowerCase()}`, sessionId);
 
-    console.log('[SessionEnforcement] Session and token approval complete for', addr);
+    console.log('[SessionEnforcement] Full setup complete for', addr);
     setApprovalStep('complete');
     onSessionEnabled();
   };
@@ -265,11 +347,13 @@ export default function SessionEnforcementModal({ onSessionEnabled }: SessionEnf
             <h2 className="text-xl font-semibold text-slate-900">
               {approvalStep === 'session' && 'Enable One-Click Session'}
               {approvalStep === 'token' && 'Approve Token Spending'}
+              {approvalStep === 'mint' && 'Get Test Tokens'}
               {approvalStep === 'complete' && 'Setup Complete!'}
             </h2>
             <p className="mt-2 text-sm text-slate-600">
               {approvalStep === 'session' && 'For seamless execution, enable session mode with a one-time approval transaction.'}
               {approvalStep === 'token' && 'One more step: approve the router to spend your tokens for automated execution.'}
+              {approvalStep === 'mint' && 'Your wallet needs test tokens to start trading. Get 1,000 bUSDC for free!'}
               {approvalStep === 'complete' && 'Your account is ready for one-click execution!'}
             </p>
           </div>
@@ -314,7 +398,7 @@ export default function SessionEnforcementModal({ onSessionEnabled }: SessionEnf
           {/* Actions */}
           <div className="px-6 py-4 space-y-3">
             <Button
-              onClick={handleEnableSession}
+              onClick={approvalStep === 'mint' ? handleMintTokens : handleEnableSession}
               disabled={isLoading || approvalStep === 'complete'}
               className="w-full h-11 bg-gradient-to-r from-pink-500 to-pink-600 hover:from-pink-600 hover:to-pink-700 text-white font-medium rounded-xl disabled:opacity-50"
             >
@@ -323,6 +407,7 @@ export default function SessionEnforcementModal({ onSessionEnabled }: SessionEnf
                   <Loader2 className="h-4 w-4 animate-spin mr-2" />
                   {approvalStep === 'session' && 'Creating session...'}
                   {approvalStep === 'token' && 'Approving tokens...'}
+                  {approvalStep === 'mint' && 'Minting tokens...'}
                 </>
               ) : approvalStep === 'complete' ? (
                 <>
@@ -334,9 +419,20 @@ export default function SessionEnforcementModal({ onSessionEnabled }: SessionEnf
                   <ShieldCheck className="h-4 w-4 mr-2" />
                   {approvalStep === 'session' && 'Enable Session'}
                   {approvalStep === 'token' && 'Approve Tokens'}
+                  {approvalStep === 'mint' && 'Get 1,000 bUSDC'}
                 </>
               )}
             </Button>
+
+            {/* Skip mint option */}
+            {approvalStep === 'mint' && !isLoading && (
+              <button
+                onClick={handleSkipMint}
+                className="w-full h-10 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-medium rounded-xl transition-colors"
+              >
+                Skip — I'll add tokens later
+              </button>
+            )}
 
             {/* Manual Signing Option */}
             <button

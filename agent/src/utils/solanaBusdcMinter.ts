@@ -1,5 +1,5 @@
 import { Connection, Keypair, PublicKey } from '@solana/web3.js';
-import { getOrCreateAssociatedTokenAccount, mintTo } from '@solana/spl-token';
+import { getOrCreateAssociatedTokenAccount, mintTo, getAccount } from '@solana/spl-token';
 import bs58 from 'bs58';
 import {
   SOLANA_RPC_URL,
@@ -60,4 +60,36 @@ export async function mintSolanaBusdc(recipientAddress: string, amount: number) 
     amount,
     recipient: recipientAddress,
   };
+}
+
+/**
+ * Get Solana bUSDC balance for an address
+ */
+export async function getSolanaBalance(recipientAddress: string): Promise<number> {
+  if (!SOLANA_BUSDC_MINT) {
+    throw new Error('SOLANA_BUSDC_MINT not configured');
+  }
+
+  const rpcUrl = SOLANA_RPC_URL || 'https://api.devnet.solana.com';
+  const connection = new Connection(rpcUrl, 'confirmed');
+
+  const mint = new PublicKey(SOLANA_BUSDC_MINT);
+  const recipient = new PublicKey(recipientAddress);
+
+  try {
+    // Get associated token account address
+    const { getAssociatedTokenAddressSync, getAccount } = await import('@solana/spl-token');
+    const ata = getAssociatedTokenAddressSync(mint, recipient);
+
+    // Get account info
+    const accountInfo = await getAccount(connection, ata);
+    const balance = Number(accountInfo.amount) / (10 ** SOLANA_BUSDC_DECIMALS);
+    return balance;
+  } catch (error: any) {
+    // Account doesn't exist or other error - return 0
+    if (error.message?.includes('could not find account')) {
+      return 0;
+    }
+    throw error;
+  }
 }

@@ -2764,6 +2764,105 @@ app.post('/api/execute/prepare', requireAuth, maybeCheckAccess, async (req, res)
 });
 
 /**
+ * POST /api/setup/check-balance
+ * Check user's bUSDC balance across supported chains
+ */
+app.post('/api/setup/check-balance', maybeCheckAccess, async (req, res) => {
+  try {
+    const { userAddress, solanaAddress } = req.body;
+
+    if (!userAddress) {
+      return res.status(400).json({
+        error: 'userAddress is required',
+      });
+    }
+
+    const { DEMO_REDACTED_ADDRESS, ETH_TESTNET_RPC_URL } = await import('../config');
+
+    const balances: { chain: string; balance: string; hasBalance: boolean }[] = [];
+
+    // Check Ethereum Sepolia balance
+    if (DEMO_REDACTED_ADDRESS && ETH_TESTNET_RPC_URL) {
+      try {
+        const { encodeFunctionData, createPublicClient, http, formatUnits } = await import('viem');
+        const { sepolia } = await import('viem/chains');
+
+        const publicClient = createPublicClient({
+          chain: sepolia,
+          transport: http(ETH_TESTNET_RPC_URL),
+        });
+
+        const balanceOfAbi = [
+          {
+            name: 'balanceOf',
+            type: 'function',
+            stateMutability: 'view',
+            inputs: [{ name: 'account', type: 'address' }],
+            outputs: [{ name: '', type: 'uint256' }],
+          },
+        ] as const;
+
+        const data = encodeFunctionData({
+          abi: balanceOfAbi,
+          functionName: 'balanceOf',
+          args: [userAddress as `0x${string}`],
+        });
+
+        const result = await publicClient.call({
+          to: DEMO_REDACTED_ADDRESS as `0x${string}`,
+          data: data as `0x${string}`,
+        });
+
+        const balance = result.data ? BigInt(result.data) : 0n;
+        const balanceFormatted = formatUnits(balance, 6);
+
+        balances.push({
+          chain: 'ethereum',
+          balance: balanceFormatted,
+          hasBalance: balance > 0n,
+        });
+      } catch (error) {
+        console.warn('[check-balance] Ethereum check failed:', error);
+      }
+    }
+
+    // Check Solana balance (if solanaAddress provided)
+    if (solanaAddress) {
+      try {
+        const { getSolanaBalance } = await import('../utils/solanaBusdcMinter');
+        const solBalance = await getSolanaBalance(solanaAddress);
+        balances.push({
+          chain: 'solana',
+          balance: solBalance.toString(),
+          hasBalance: solBalance > 0,
+        });
+      } catch (error) {
+        console.warn('[check-balance] Solana check failed:', error);
+      }
+    }
+
+    // Check Hyperliquid balance (uses same EVM address)
+    // Note: Hyperliquid testnet check would go here if needed
+
+    const hasAnyBalance = balances.some((b) => b.hasBalance);
+
+    res.json({
+      ok: true,
+      hasBalance: hasAnyBalance,
+      balances,
+      needsMint: !hasAnyBalance,
+    });
+  } catch (error: any) {
+    console.error('[api/setup/check-balance] Error:', error);
+    res.status(500).json({
+      error: 'Failed to check balance',
+      message: error.message,
+      hasBalance: false,
+    });
+  }
+});
+
+/**
  * POST /api/setup/check-approval
  * Check if user has approved ExecutionRouter to spend tokens
  */
