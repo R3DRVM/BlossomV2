@@ -3,16 +3,26 @@
  * Deployment Verification Script
  *
  * Verifies production deployment health for:
- * - Vercel frontend (blossom.onl)
- * - Fly.io backend (api.blossom.onl / blossom-agent.fly.dev)
+ * - Vercel frontend + API (blossom.onl) - SOLE PRODUCTION
  * - Security endpoints
  * - ERC-8004 endpoints
  * - Sub-agent orchestration
+ *
+ * NOTE: Fly.io DEPRECATED - all traffic goes through Vercel only
  */
 
 const VERCEL_DOMAIN = process.env.VERCEL_DOMAIN || 'https://blossom.onl';
-const API_DOMAIN = process.env.API_DOMAIN || 'https://api.blossom.onl';
-const FLYIO_DOMAIN = process.env.FLYIO_DOMAIN || 'https://blossom-agent.fly.dev';
+const API_DOMAIN = process.env.API_DOMAIN || 'https://blossom.onl'; // Vercel-only
+
+const FLY_BLOCKLIST = /fly\.dev|fly\.io/i;
+function assertNoFly(url: string, label: string) {
+  if (FLY_BLOCKLIST.test(url)) {
+    throw new Error(`Fly.io is deprecated. ${label} must be Vercel-only. Got: ${url}`);
+  }
+}
+
+assertNoFly(VERCEL_DOMAIN, 'VERCEL_DOMAIN');
+assertNoFly(API_DOMAIN, 'API_DOMAIN');
 
 interface HealthCheck {
   name: string;
@@ -39,13 +49,7 @@ const healthChecks: HealthCheck[] = [
     timeout: 10000,
     checkResponse: (data) => data.ok === true,
   },
-  {
-    name: 'Fly.io Health',
-    url: `${FLYIO_DOMAIN}/health`,
-    expectedStatus: 200,
-    timeout: 10000,
-    checkResponse: (data) => data.ok === true,
-  },
+  // Fly.io is deprecated - do not add checks here
 
   // Security Endpoints
   {
@@ -177,7 +181,6 @@ async function runAllChecks(): Promise<void> {
   console.log(`\nTimestamp: ${new Date().toISOString()}`);
   console.log(`Frontend: ${VERCEL_DOMAIN}`);
   console.log(`API: ${API_DOMAIN}`);
-  console.log(`Fly.io: ${FLYIO_DOMAIN}`);
   console.log('\n' + '-'.repeat(60));
 
   const results: CheckResult[] = [];

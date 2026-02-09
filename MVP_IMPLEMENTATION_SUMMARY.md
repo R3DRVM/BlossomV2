@@ -43,7 +43,7 @@ This document summarizes the implementation work done on the MVP Readiness Audit
 
 **Changes**:
 - Added STATS_API_URL environment variable documentation
-- Default: https://blossom-telemetry.fly.dev
+- Default: https://blossom.onl
 - Added to Observability section
 
 **Impact**: Clarifies where stats events are posted

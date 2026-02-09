@@ -59,6 +59,7 @@ export default function RightPanel(_props: RightPanelProps) {
   const wagmiChainId = useWagmiChainId();
   const { switchChain } = useSwitchChain();
   const { publicKey: solanaPublicKey, connected: solanaConnected } = useWallet();
+  const solanaAddress = solanaPublicKey?.toBase58() ?? null;
   const walletStatus = useWalletStatus();
 
   // Wallet connection state machine (eth_testnet mode only)
@@ -1079,6 +1080,7 @@ export default function RightPanel(_props: RightPanelProps) {
               return (
                 <MintBUSDC
                   walletAddress={walletAddress}
+                  solanaAddress={solanaAddress}
                   disabled={!faucetConfigured}
                   onMinted={() => {
                     if (walletAddress) {

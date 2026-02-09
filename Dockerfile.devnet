@@ -26,8 +26,8 @@ COPY . .
 RUN cp src/routes/AppRouter.devnet.tsx src/routes/AppRouter.tsx
 
 # Set build-time environment variables for Vite
-ARG VITE_AGENT_API_BASE_URL=https://blossom-telemetry.fly.dev
-ENV VITE_AGENT_API_BASE_URL=${VITE_AGENT_API_BASE_URL}
+ARG VITE_AGENT_BASE_URL=https://blossom.onl
+ENV VITE_AGENT_BASE_URL=${VITE_AGENT_BASE_URL}
 
 # Build application
 RUN npm run build

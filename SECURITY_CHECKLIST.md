@@ -182,7 +182,7 @@ Before deploying to production, verify:
   k6 run tests/load.js
   ```
 - [ ] Verify Sentry is receiving error events
-- [ ] Check Fly.io agent health endpoint: `curl https://[app].fly.dev/api/health`
+- [ ] Check Vercel agent health endpoint: `curl https://blossom.onl/health`
 
 ### Pre-Deployment (Day 2)
 

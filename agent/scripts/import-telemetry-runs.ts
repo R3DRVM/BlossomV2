@@ -3,7 +3,7 @@
  *
  * This script:
  * 1. Reads runs from local SQLite DB
- * 2. Exports them as JSON for use with fly ssh import
+ * 2. Exports them as SQL for manual import into Vercel Postgres
  * 3. Marks them with source='local_import' and imported_at timestamp
  *
  * Usage:
@@ -14,10 +14,8 @@
 
 import Database from 'better-sqlite3';
 import * as path from 'path';
-import * as fs from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
-import { execSync } from 'child_process';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -25,8 +23,17 @@ const __dirname = dirname(__filename);
 // Local DB path
 const LOCAL_DB_PATH = process.env.LOCAL_DB_PATH || path.join(__dirname, '../telemetry/telemetry.db');
 
-// Production API
-const PROD_API_URL = process.env.PROD_API_URL || 'https://blossom-telemetry.fly.dev';
+// Production API (Vercel-only)
+const PROD_API_URL = process.env.PROD_API_URL || 'https://blossom.onl';
+const FLY_BLOCKLIST = /fly\.dev|fly\.io/i;
+
+function assertNoFly(url: string): void {
+  if (FLY_BLOCKLIST.test(url)) {
+    throw new Error(`Fly.io is deprecated. Set PROD_API_URL to Vercel (blossom.onl). Got: ${url}`);
+  }
+}
+
+assertNoFly(PROD_API_URL);
 
 interface DevnetRun {
   id: number;
@@ -108,7 +115,7 @@ async function main() {
     return;
   }
 
-  // Build import script for fly ssh
+  // Automated import is deprecated. Export SQL for manual import.
   const importedAt = Math.floor(Date.now() / 1000);
   const source = 'local_import';
 
@@ -137,91 +144,16 @@ async function main() {
     return `INSERT OR IGNORE INTO runs (run_id, stage, users, concurrency, duration, total_requests, success_rate, p50_ms, p95_ms, http_5xx, top_error_code, started_at, ended_at, report_path, created_at, source, imported_at) VALUES (${values});`;
   });
 
-  if (exportOnly) {
-    console.log('Generated SQL statements:');
-    console.log('');
-    sqlStatements.forEach(sql => console.log(sql));
-    console.log('');
-    console.log('EXPORT-ONLY complete. Run these on prod DB manually.');
-    localDb.close();
-    return;
-  }
-
-  // Execute via fly ssh
-  console.log('Importing runs to production via fly ssh...');
-
-  const importScript = `
-const Database = require('better-sqlite3');
-const db = new Database('/data/telemetry.sqlite');
-const importedAt = ${importedAt};
-const source = '${source}';
-
-const runs = ${JSON.stringify(runsToImport)};
-let successCount = 0;
-
-const stmt = db.prepare(\`
-  INSERT OR IGNORE INTO runs
-  (run_id, stage, users, concurrency, duration, total_requests, success_rate,
-   p50_ms, p95_ms, http_5xx, top_error_code, started_at, ended_at, report_path,
-   created_at, source, imported_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-\`);
-
-for (const run of runs) {
-  try {
-    const result = stmt.run(
-      run.run_id, run.stage, run.users, run.concurrency, run.duration,
-      run.total_requests, run.success_rate, run.p50_ms, run.p95_ms, run.http_5xx,
-      run.top_error_code, run.started_at, run.ended_at, run.report_path,
-      run.created_at, source, importedAt
-    );
-    if (result.changes > 0) {
-      console.log('Imported: ' + run.run_id);
-      successCount++;
-    } else {
-      console.log('Skipped (exists): ' + run.run_id);
-    }
-  } catch (e) {
-    console.error('Error importing ' + run.run_id + ': ' + e.message);
-  }
-}
-
-console.log('');
-console.log('Import complete: ' + successCount + ' new runs added');
-db.close();
-`;
-
-  // Write script to temp file
-  const tempScriptPath = '/tmp/import-runs.js';
-  fs.writeFileSync(tempScriptPath, importScript);
-
-  try {
-    // Execute via fly ssh
-    console.log('');
-    const result = execSync(`fly ssh console -a blossom-telemetry -C "node -e \\"$(cat ${tempScriptPath})\\""`, {
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    console.log(result);
-  } catch (error: any) {
-    console.error('Error during fly ssh import:');
-    console.error(error.stderr || error.message);
-
-    // Fallback: show the script for manual execution
-    console.log('');
-    console.log('FALLBACK: Run this command manually:');
-    console.log('fly ssh console -a blossom-telemetry');
-    console.log('Then paste the following:');
-    console.log('');
-    console.log('node -e "' + importScript.replace(/"/g, '\\"').replace(/\n/g, ' ') + '"');
-  }
-
+  console.log('Generated SQL statements:');
   console.log('');
-  console.log('='.repeat(60));
-  console.log('Import process complete');
-  console.log('='.repeat(60));
-
+  sqlStatements.forEach(sql => console.log(sql));
+  console.log('');
+  console.log(exportOnly
+    ? 'EXPORT-ONLY complete. Run these on prod DB manually.'
+    : 'Automated import is disabled. Run these on prod DB manually.'
+  );
   localDb.close();
+  return;
 }
 
 main().catch(console.error);

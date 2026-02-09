@@ -29,8 +29,8 @@
  */
 
 // Type definitions (copied to avoid import issues)
-export type Chain = 'ethereum' | 'solana';
-export type Network = 'sepolia' | 'devnet' | 'mainnet';
+export type Chain = 'ethereum' | 'solana' | 'hyperliquid';
+export type Network = 'sepolia' | 'devnet' | 'mainnet' | 'hyperliquid_testnet';
 export type ExecutionStatus = 'pending' | 'submitted' | 'confirmed' | 'finalized' | 'failed';
 export type ExecutionKind = 'perp' | 'deposit' | 'bridge' | 'swap' | 'proof' | 'relay' | 'transfer';
 export type ExecutionVenue =
@@ -181,6 +181,11 @@ export function buildExplorerUrl(
     } else if (network === 'mainnet') {
       return `https://explorer.solana.com/tx/${txHash}`;
     }
+  } else if (chain === 'hyperliquid') {
+    if (network === 'hyperliquid_testnet') {
+      return `https://testnet.purrsec.com/tx/${txHash}`;
+    }
+    return `https://purrsec.com/tx/${txHash}`;
   }
   return '';
 }

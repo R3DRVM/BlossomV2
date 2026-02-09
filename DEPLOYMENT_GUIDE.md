@@ -45,10 +45,9 @@ The frontend is deployed to Vercel and auto-deploys on `main` branch.
 4. Set output directory: `dist`
 5. Add environment variables:
    ```
-   VITE_BACKEND_URL=https://blossom-agent.fly.dev
-   VITE_STATS_URL=https://blossom-telemetry.fly.dev
+   VITE_AGENT_BASE_URL=https://blossom.onl
    ```
-6. Deploy branch: `main`
+6. Deploy branch: `mvp`
 
 **Verify:**
 
@@ -57,66 +56,28 @@ The frontend is deployed to Vercel and auto-deploys on `main` branch.
 curl https://blossom.onl/
 ```
 
-### Phase 2: Fly.io Backend (Agent) Deployment
+### Phase 2: Vercel API Deployment
 
-The backend agent is containerized and deployed to Fly.io.
+The backend API is deployed on Vercel alongside the frontend.
 
-**Configure Fly.io:**
+**Configure Vercel (API + Frontend):**
+
+1. Ensure `mvp` is the production branch in Vercel.
+2. Set backend secrets in Vercel environment variables (RPC URLs, relayer key, model provider keys, admin key).
+3. Deploy (Vercel auto-deploys on push to `mvp`).
+
+**Verify:**
 
 ```bash
-# 1. Install Fly CLI
-curl -L https://fly.io/install.sh | sh
-
-# 2. Log in
-fly auth login
-
-# 3. Create app (first time only)
-cd agent
-fly apps create blossom-agent
-
-# 4. Set secrets (from your .env.local)
-fly secrets set \
-  ETH_TESTNET_RPC_URL="<YOUR_RPC_URL>" \
-  RELAYER_PRIVATE_KEY="<YOUR_RELAYER_KEY>" \
-  BLOSSOM_MODEL_PROVIDER="gemini" \
-  BLOSSOM_GEMINI_API_KEY="<YOUR_KEY>" \
-  ADMIN_KEY="<YOUR_ADMIN_KEY>"
-
-# 5. Deploy
-fly deploy
-
-# 6. Verify
-fly open
-curl https://blossom-agent.fly.dev/api/health
+curl https://blossom.onl/health
 ```
 
-**Monitor:**
+### Phase 3: Stats/Telemetry (Vercel)
+
+Stats are served from the Vercel API.
 
 ```bash
-# View logs
-fly logs -a blossom-agent
-
-# Check status
-fly status -a blossom-agent
-
-# Metrics
-fly metrics
-```
-
-### Phase 3: Fly.io Telemetry Dashboard Deployment
-
-The stats dashboard displays execution telemetry.
-
-```bash
-# 1. Deploy dashboard
-cd devnet-dashboard
-fly deploy -a blossom-telemetry
-
-# 2. Verify
-curl https://blossom-telemetry.fly.dev/
-
-# 3. Check it's receiving stats
-# Should see execution events appearing in real-time
+curl https://blossom.onl/api/stats/public
 ```
 
 ## Post-Deployment Verification
@@ -129,12 +90,8 @@ curl https://blossom.onl/ -I
 # Should return 200
 
 # Backend
-curl https://blossom-agent.fly.dev/api/health -H "Accept: application/json"
+curl https://blossom.onl/health -H "Accept: application/json"
 # Should return { ok: true }
-
-# Telemetry Dashboard
-curl https://blossom-telemetry.fly.dev/ -I
-# Should return 200
 ```
 
 ### 2. Functional Testing (Day 1)
@@ -152,7 +109,7 @@ curl https://blossom-telemetry.fly.dev/ -I
 ```bash
 # Rapid fire requests should be rate limited
 for i in {1..15}; do
-  curl -X POST https://blossom-agent.fly.dev/api/mint \
+  curl -X POST https://blossom.onl/api/mint \
     -H "Content-Type: application/json" \
     -d '{"userAddress":"0xYOUR_ADDRESS","amount":1}' &
 done
@@ -167,11 +124,7 @@ wait
 
 1. Create account at https://sentry.io
 2. Create new project for Blossom
-3. Add DSN to Fly secrets:
-   ```bash
-   fly secrets set SENTRY_DSN="<YOUR_SENTRY_DSN>"
-   fly deploy
-   ```
+3. Add DSN to Vercel environment variables and redeploy.
 4. Verify errors are being captured
 
 **Uptime Monitoring:**
@@ -180,7 +133,7 @@ Set up a simple uptime monitor:
 
 ```bash
 # Create a cron job to check health
-*/5 * * * * curl -f https://blossom-agent.fly.dev/api/health || \
+*/5 * * * * curl -f https://blossom.onl/health || \
   (echo "Blossom agent down!" | mail -s "Alert" admin@example.com)
 ```
 
@@ -189,11 +142,8 @@ Set up a simple uptime monitor:
 **Check telemetry database:**
 
 ```bash
-# SSH into Fly app and check database
-fly ssh console -a blossom-agent
-
-# Inside the container:
-sqlite3 agent/telemetry/telemetry.db
+# Check Postgres via DATABASE_URL (Vercel Postgres)
+psql "$DATABASE_URL"
 > SELECT COUNT(*) FROM executions;
 > SELECT COUNT(*) FROM mint_records;
 ```
@@ -212,7 +162,7 @@ k6 run tests/load.js \
   --ramp-up 1m
 
 # Or using ab (Apache Bench):
-ab -n 1000 -c 100 https://blossom-agent.fly.dev/api/health
+ab -n 1000 -c 100 https://blossom.onl/health
 ```
 
 **Target:**
@@ -223,19 +173,6 @@ ab -n 1000 -c 100 https://blossom-agent.fly.dev/api/health
 ## Rollback Plan
 
 If issues occur:
-
-### Quick Rollback
-
-```bash
-# Revert to previous Fly deployment
-fly releases
-fly releases rollback <VERSION>
-
-# Or manually redeploy from stable commit
-git checkout <STABLE_COMMIT>
-cd agent
-fly deploy
-```
 
 ### Vercel Rollback
 
@@ -250,26 +187,25 @@ fly deploy
 
 ### Issue: "RPC rate limited"
 
-**Solution:** Update RPC URL in Fly secrets
+**Solution:** Update RPC URL in Vercel environment variables
 ```bash
-fly secrets set ETH_TESTNET_RPC_URL="<NEW_RPC_URL>"
-fly deploy
+# Vercel Dashboard -> Settings -> Environment Variables
+# Update ETH_TESTNET_RPC_URL and redeploy
 ```
 
 ### Issue: "Session enforcement failed"
 
-**Solution:** Check agent logs
+**Solution:** Check API logs
 ```bash
-fly logs -a blossom-agent | grep -i session
+# Vercel Dashboard -> Logs
 ```
 
 ### Issue: "Mint endpoint returning 500"
 
-**Solution:** Check database state
+**Solution:** Check database state (Vercel Postgres)
 ```bash
-fly ssh console -a blossom-agent
-sqlite3 agent/telemetry/telemetry.db
-> PRAGMA integrity_check;
+psql "$DATABASE_URL"
+> SELECT 1;
 ```
 
 ### Issue: "CORS error from frontend"
@@ -301,7 +237,7 @@ Before production launch, verify:
 4. **Environment Variables**
    ```bash
    # Verify sensitive vars are NOT logged
-   fly logs | grep -i "private_key\|secret\|password" | wc -l
+   # Review Vercel logs for accidental secret leaks
    # Should be 0
    ```
 

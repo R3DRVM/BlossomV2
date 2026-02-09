@@ -132,8 +132,8 @@ function runColumnMigrations(database: Database.Database): void {
 // Type Definitions
 // ============================================
 
-export type Chain = 'ethereum' | 'solana';
-export type Network = 'sepolia' | 'devnet' | 'mainnet';
+export type Chain = 'ethereum' | 'solana' | 'hyperliquid';
+export type Network = 'sepolia' | 'devnet' | 'mainnet' | 'hyperliquid_testnet';
 export type ExecutionStatus = 'pending' | 'submitted' | 'confirmed' | 'finalized' | 'failed';
 export type SessionStatus = 'preparing' | 'active' | 'revoked' | 'expired';
 

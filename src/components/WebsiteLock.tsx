@@ -1,6 +1,6 @@
 /**
  * Website Lock Overlay
- * Lightweight password gate for production deployment (blossomv2.fly.dev)
+ * Lightweight password gate for production deployment (app.blossom.onl)
  */
 
 import { useState, useEffect } from 'react';
@@ -11,7 +11,7 @@ const PASSWORD = 'bloom'; // case-insensitive
 
 // Hosts where gate should be enabled
 const GATED_HOSTS = new Set([
-  'blossomv2.fly.dev',
+  'app.blossom.onl',
 ]);
 
 interface WebsiteLockProps {

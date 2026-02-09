@@ -9,15 +9,24 @@ function getTodayKey(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-async function getMintedToday(address: string): Promise<number> {
+function normalizeMintKey(address: string, chain: 'ethereum' | 'solana' | 'hyperliquid'): string {
+  if (!address) return `${chain}:unknown`;
+  const trimmed = address.trim();
+  const isEvm = trimmed.startsWith('0x') && trimmed.length === 42;
+  const normalizedAddress = isEvm ? trimmed.toLowerCase() : trimmed;
+  return `${chain}:${normalizedAddress}`;
+}
+
+async function getMintedToday(address: string, chain: 'ethereum' | 'solana' | 'hyperliquid'): Promise<number> {
   try {
     const { getDatabase } = await import('../../telemetry/db');
     const db = getDatabase();
     const today = getTodayKey();
+    const key = normalizeMintKey(address, chain);
 
     const result = db.prepare(
       'SELECT amount_minted FROM mint_records WHERE user_address = ? AND mint_date = ?'
-    ).get(address.toLowerCase(), today) as { amount_minted: number } | undefined;
+    ).get(key, today) as { amount_minted: number } | undefined;
 
     return result?.amount_minted || 0;
   } catch (e) {
@@ -26,26 +35,31 @@ async function getMintedToday(address: string): Promise<number> {
   }
 }
 
-async function recordMint(address: string, amount: number): Promise<void> {
+async function recordMint(address: string, amount: number, chain: 'ethereum' | 'solana' | 'hyperliquid'): Promise<void> {
   try {
     const { getDatabase } = await import('../../telemetry/db');
     const db = getDatabase();
     const today = getTodayKey();
+    const key = normalizeMintKey(address, chain);
 
     db.prepare(`
       INSERT INTO mint_records (user_address, mint_date, amount_minted)
       VALUES (?, ?, ?)
       ON CONFLICT(user_address, mint_date) DO UPDATE SET
         amount_minted = amount_minted + excluded.amount_minted
-    `).run(address.toLowerCase(), today, amount);
+    `).run(key, today, amount);
   } catch (e) {
     console.warn('[mintLimiter] Failed to record mint in DB:', e);
     // Fail open - don't block minting if DB is unavailable
   }
 }
 
-export async function checkAndRecordMint(address: string, amount: number) {
-  const mintedToday = await getMintedToday(address);
+export async function checkAndRecordMint(
+  address: string,
+  amount: number,
+  chain: 'ethereum' | 'solana' | 'hyperliquid' = 'ethereum'
+) {
+  const mintedToday = await getMintedToday(address, chain);
   const nextTotal = mintedToday + amount;
 
   if (nextTotal > DAILY_CAP) {
@@ -56,7 +70,7 @@ export async function checkAndRecordMint(address: string, amount: number) {
     };
   }
 
-  await recordMint(address, amount);
+  await recordMint(address, amount, chain);
   return {
     ok: true,
     remaining: Math.max(DAILY_CAP - nextTotal, 0),

@@ -135,6 +135,11 @@ export const SOLANA_RPC_URL = process.env.SOLANA_RPC_URL ||
     ? 'https://api.mainnet-beta.solana.com'
     : 'https://api.devnet.solana.com');
 export const SOLANA_PROGRAM_ID = process.env.SOLANA_PROGRAM_ID;
+export const SOLANA_BUSDC_MINT = process.env.SOLANA_BUSDC_MINT;
+export const SOLANA_BUSDC_DECIMALS = parseInt(process.env.SOLANA_BUSDC_DECIMALS || '6', 10);
+export const SOLANA_MINT_AUTHORITY_PRIVATE_KEY =
+  process.env.SOLANA_MINT_AUTHORITY_PRIVATE_KEY || process.env.SOLANA_PRIVATE_KEY;
+export const SOLANA_BUSDC_VAULT_ADDRESS = process.env.SOLANA_BUSDC_VAULT_ADDRESS;
 
 // Demo swap venue (deterministic for investor demos)
 // Default addresses for Sepolia bUSDC (safe fallback) - relayer has these tokens
@@ -406,6 +411,12 @@ export const HYPERLIQUID_BUILDER_PRIVATE_KEY = process.env.HYPERLIQUID_BUILDER_P
 
 // Mock HYPE token address on testnet (for bonding)
 export const HYPERLIQUID_MOCK_HYPE_ADDRESS = process.env.HYPERLIQUID_MOCK_HYPE_ADDRESS as Address | undefined;
+
+// Hyperliquid bUSDC minting configuration (testnet)
+export const HYPERLIQUID_BUSDC_ADDRESS = process.env.HYPERLIQUID_BUSDC_ADDRESS as Address | undefined;
+export const HYPERLIQUID_BUSDC_DECIMALS = parseInt(process.env.HYPERLIQUID_BUSDC_DECIMALS || '6', 10);
+export const HYPERLIQUID_MINT_AUTHORITY_PRIVATE_KEY =
+  process.env.HYPERLIQUID_MINT_AUTHORITY_PRIVATE_KEY || HYPERLIQUID_BUILDER_PRIVATE_KEY;
 
 // Hyperliquid Rate Limits (per-endpoint)
 export const HYPERLIQUID_RATE_LIMIT_MARKET_CREATION = parseInt(

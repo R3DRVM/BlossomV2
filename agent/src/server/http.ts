@@ -6498,6 +6498,22 @@ app.post('/api/demo/faucet', maybeCheckAccess, async (req, res) => {
  * Alias for /api/mint - Mint bUSDC for testnet use
  * Endpoint name requested by QuickStartPanel UI
  */
+function normalizeMintChain(raw?: string): 'ethereum' | 'solana' | 'hyperliquid' {
+  if (!raw) return 'ethereum';
+  const normalized = raw.toLowerCase();
+  if (['sol', 'solana', 'devnet'].includes(normalized)) return 'solana';
+  if (['hl', 'hyperliquid', 'hyperliquid_testnet'].includes(normalized)) return 'hyperliquid';
+  if (['eth', 'ethereum', 'sepolia'].includes(normalized)) return 'ethereum';
+  return 'ethereum';
+}
+
+function isValidMintAddress(chain: 'ethereum' | 'solana' | 'hyperliquid', address: string): boolean {
+  if (chain === 'solana') {
+    return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address);
+  }
+  return /^0x[a-fA-F0-9]{40}$/.test(address);
+}
+
 app.post('/api/mint-busdc', mintRateLimit, maybeCheckAccess, async (req, res) => {
   try {
     const { EXECUTION_MODE } = await import('../config');
@@ -6509,24 +6525,30 @@ app.post('/api/mint-busdc', mintRateLimit, maybeCheckAccess, async (req, res) =>
       });
     }
 
-    const { userAddress, amount } = req.body || {};
+    const { userAddress, amount, chain, recipientAddress, solanaAddress } = req.body || {};
+    const targetChain = normalizeMintChain(chain);
+    const targetAddress =
+      targetChain === 'solana'
+        ? (solanaAddress || recipientAddress || userAddress)
+        : (userAddress || recipientAddress);
 
-    if (!userAddress || typeof userAddress !== 'string') {
+    if (!targetAddress || typeof targetAddress !== 'string') {
       return res.status(400).json({
         ok: false,
         error: 'userAddress is required'
       });
     }
 
-    if (!/^0x[a-fA-F0-9]{40}$/i.test(userAddress)) {
+    if (!isValidMintAddress(targetChain, targetAddress)) {
       return res.status(400).json({
         ok: false,
         error: 'Invalid userAddress format'
       });
     }
 
-    // Default to 500 bUSDC (reasonable testnet amount)
-    const amountNum = Number(amount ?? 500);
+    // Default to random 100-500 bUSDC if not provided
+    const defaultAmount = Math.floor(100 + Math.random() * 401);
+    const amountNum = Number(amount ?? defaultAmount);
     if (!Number.isFinite(amountNum) || amountNum <= 0 || amountNum > 10000) {
       return res.status(400).json({
         ok: false,
@@ -6534,7 +6556,7 @@ app.post('/api/mint-busdc', mintRateLimit, maybeCheckAccess, async (req, res) =>
       });
     }
 
-    const limitCheck = await checkAndRecordMint(userAddress, amountNum);
+    const limitCheck = await checkAndRecordMint(targetAddress, amountNum, targetChain);
     if (!limitCheck.ok) {
       return res.status(429).json({
         ok: false,
@@ -6544,18 +6566,37 @@ app.post('/api/mint-busdc', mintRateLimit, maybeCheckAccess, async (req, res) =>
       });
     }
 
-    console.log(`[api/mint-busdc] Minting ${amountNum} bUSDC to ${userAddress}...`);
+    console.log(`[api/mint-busdc] Minting ${amountNum} bUSDC to ${targetAddress} on ${targetChain}...`);
 
-    const { mintBusdc } = await import('../utils/demoTokenMinter');
-    const result = await mintBusdc(userAddress, amountNum);
+    let txHash: string | undefined;
+    let signature: string | undefined;
+    let explorerUrl: string | undefined;
 
-    console.log(`[api/mint-busdc] Success: ${result.txHash}`);
+    if (targetChain === 'solana') {
+      const { mintSolanaBusdc } = await import('../utils/solanaBusdcMinter');
+      const result = await mintSolanaBusdc(targetAddress, amountNum);
+      signature = result.signature;
+      explorerUrl = result.explorerUrl;
+    } else if (targetChain === 'hyperliquid') {
+      const { mintHyperliquidBusdc } = await import('../utils/hyperliquidBusdcMinter');
+      const result = await mintHyperliquidBusdc(targetAddress, amountNum);
+      txHash = result.txHash;
+    } else {
+      const { mintBusdc } = await import('../utils/demoTokenMinter');
+      const result = await mintBusdc(targetAddress, amountNum);
+      txHash = result.txHash;
+    }
+
+    console.log(`[api/mint-busdc] Success: ${txHash || signature}`);
 
     res.json({
       ok: true,
       success: true,
-      txHash: result.txHash,
-      amount: result.amount,
+      chain: targetChain,
+      txHash,
+      signature,
+      explorerUrl,
+      amount: amountNum,
       remaining: limitCheck.remaining,
       message: `Minted ${amountNum} bUSDC to your wallet`
     });
@@ -6584,31 +6625,37 @@ app.post('/api/mint', mintRateLimit, maybeCheckAccess, async (req, res) => {
       });
     }
 
-    const { userAddress, amount } = req.body || {};
+    const { userAddress, amount, chain, recipientAddress, solanaAddress } = req.body || {};
+    const targetChain = normalizeMintChain(chain);
+    const targetAddress =
+      targetChain === 'solana'
+        ? (solanaAddress || recipientAddress || userAddress)
+        : (userAddress || recipientAddress);
 
-    if (!userAddress || typeof userAddress !== 'string') {
+    if (!targetAddress || typeof targetAddress !== 'string') {
       return res.status(400).json({
         ok: false,
         error: 'userAddress is required'
       });
     }
 
-    if (!/^0x[a-fA-F0-9]{40}$/i.test(userAddress)) {
+    if (!isValidMintAddress(targetChain, targetAddress)) {
       return res.status(400).json({
         ok: false,
         error: 'Invalid userAddress format'
       });
     }
 
-    const amountNum = Number(amount ?? 1000);
-    if (!Number.isFinite(amountNum) || amountNum <= 0) {
+    const defaultAmount = Math.floor(100 + Math.random() * 401);
+    const amountNum = Number(amount ?? defaultAmount);
+    if (!Number.isFinite(amountNum) || amountNum <= 0 || amountNum > 10000) {
       return res.status(400).json({
         ok: false,
-        error: 'Invalid amount'
+        error: 'Invalid amount (must be 1-10000)'
       });
     }
 
-    const limitCheck = await checkAndRecordMint(userAddress, amountNum);
+    const limitCheck = await checkAndRecordMint(targetAddress, amountNum, targetChain);
     if (!limitCheck.ok) {
       return res.status(429).json({
         ok: false,
@@ -6618,14 +6665,35 @@ app.post('/api/mint', mintRateLimit, maybeCheckAccess, async (req, res) => {
       });
     }
 
-    const { mintBusdc } = await import('../utils/demoTokenMinter');
-    const result = await mintBusdc(userAddress, amountNum);
+    console.log(`[api/mint] Minting ${amountNum} bUSDC to ${targetAddress} on ${targetChain}...`);
+
+    let txHash: string | undefined;
+    let signature: string | undefined;
+    let explorerUrl: string | undefined;
+
+    if (targetChain === 'solana') {
+      const { mintSolanaBusdc } = await import('../utils/solanaBusdcMinter');
+      const result = await mintSolanaBusdc(targetAddress, amountNum);
+      signature = result.signature;
+      explorerUrl = result.explorerUrl;
+    } else if (targetChain === 'hyperliquid') {
+      const { mintHyperliquidBusdc } = await import('../utils/hyperliquidBusdcMinter');
+      const result = await mintHyperliquidBusdc(targetAddress, amountNum);
+      txHash = result.txHash;
+    } else {
+      const { mintBusdc } = await import('../utils/demoTokenMinter');
+      const result = await mintBusdc(targetAddress, amountNum);
+      txHash = result.txHash;
+    }
 
     res.json({
       ok: true,
       success: true,
-      txHash: result.txHash,
-      amount: result.amount,
+      chain: targetChain,
+      txHash,
+      signature,
+      explorerUrl,
+      amount: amountNum,
       remaining: limitCheck.remaining
     });
   } catch (error: any) {
@@ -8738,7 +8806,7 @@ app.post('/api/ledger/intents/execute', checkLedgerSecret, async (req, res) => {
 
     // Run the intent through the pipeline
     const result = await runIntent(intentText, {
-      chain: chain as 'ethereum' | 'solana' | 'both',
+      chain: chain as 'ethereum' | 'solana' | 'hyperliquid' | 'both',
       planOnly: Boolean(planOnly),
       metadata: enrichedMetadata,
     });

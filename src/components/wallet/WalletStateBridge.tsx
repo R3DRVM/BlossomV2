@@ -13,11 +13,19 @@ import { sepolia } from 'wagmi/chains';
 
 // Update the legacy walletAdapter's explicit connection state
 // This is a minimal bridge that keeps existing code working
+function normalizeStoredAddress(address: string): string {
+  const trimmed = address.trim();
+  if (trimmed.startsWith('0x') && trimmed.length === 42) {
+    return trimmed.toLowerCase();
+  }
+  return trimmed;
+}
+
 function setExplicitlyConnected(connected: boolean, address: string | null) {
   // Store in localStorage for cross-tab sync (existing pattern)
   if (connected && address) {
     localStorage.setItem('blossom_wallet_explicit_connected', 'true');
-    localStorage.setItem('blossom_wallet_address', address.toLowerCase());
+    localStorage.setItem('blossom_wallet_address', normalizeStoredAddress(address));
   } else {
     localStorage.removeItem('blossom_wallet_explicit_connected');
     localStorage.removeItem('blossom_wallet_address');

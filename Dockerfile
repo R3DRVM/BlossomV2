@@ -4,7 +4,7 @@
 ARG NODE_VERSION=20.18.0
 FROM node:${NODE_VERSION}-slim AS base
 
-LABEL fly_launch_runtime="Vite"
+LABEL runtime="Vite"
 
 # Vite app lives here
 WORKDIR /app
@@ -29,8 +29,8 @@ COPY . .
 
 # Set build-time environment variables for Vite
 # Use telemetry-only agent for public frontend (blocks execution endpoints)
-ARG VITE_AGENT_API_BASE_URL=https://blossom-telemetry.fly.dev
-ENV VITE_AGENT_API_BASE_URL=${VITE_AGENT_API_BASE_URL}
+ARG VITE_AGENT_BASE_URL=https://blossom.onl
+ENV VITE_AGENT_BASE_URL=${VITE_AGENT_BASE_URL}
 
 # Build application
 RUN npm run build

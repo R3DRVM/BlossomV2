@@ -2,35 +2,62 @@
  * API Client Configuration
  * Centralized base URL for agent API calls
  *
- * PRODUCTION: Uses https://api.blossom.onl (backend is on separate subdomain)
+ * PRODUCTION: Uses Vercel-only base (api.blossom.onl)
  * LOCAL DEV: Uses VITE_AGENT_BASE_URL or falls back to http://localhost:3001
  */
 
 // Module-level flag to ensure logging happens only once
 let _hasLogged = false;
 
-// Production backend URL (frontend is app.blossom.onl, backend is api.blossom.onl)
+const FLY_BLOCKLIST = /fly\.dev|fly\.io/i;
+
+// Production backend URL (Vercel-only)
 const PRODUCTION_BACKEND_URL = 'https://api.blossom.onl';
+
+function assertNoFly(url: string): void {
+  if (FLY_BLOCKLIST.test(url)) {
+    throw new Error(`[apiClient] Fly.io endpoints are deprecated. Invalid base URL: ${url}`);
+  }
+}
 
 export function getAgentApiBaseUrl(): string {
   // PRODUCTION: Must use explicit backend URL since frontend and backend are different subdomains
   if (typeof window !== 'undefined') {
     const hostname = window.location.hostname;
-    const isProduction = hostname.includes('blossom.onl') || hostname.includes('vercel.app');
+    const isBlossomHost = hostname.endsWith('blossom.onl');
+    const isVercelHost = hostname.endsWith('vercel.app');
 
-    if (isProduction) {
-      // Production requires explicit backend URL (app.blossom.onl -> api.blossom.onl)
+    if (isBlossomHost) {
+      // If already on api.blossom.onl, use same origin; otherwise route to API subdomain.
+      const origin = window.location.origin;
+      if (hostname.startsWith('api.')) {
+        assertNoFly(origin);
+        return origin;
+      }
+      assertNoFly(PRODUCTION_BACKEND_URL);
+      return PRODUCTION_BACKEND_URL;
+    }
+
+    if (isVercelHost) {
+      assertNoFly(PRODUCTION_BACKEND_URL);
       return PRODUCTION_BACKEND_URL;
     }
   }
 
   // LOCAL DEV: Check env vars or default to localhost
   const devUrl = import.meta.env.VITE_AGENT_BASE_URL ?? import.meta.env.VITE_AGENT_API_URL ?? 'http://localhost:3001';
+  assertNoFly(devUrl);
 
   // Safety check: If somehow in production mode but hostname check didn't catch it
   if (typeof window !== 'undefined' && window.location && import.meta.env.PROD) {
     const hostname = window.location.hostname;
-    if (hostname.includes('blossom.onl') || hostname.includes('vercel.app')) {
+    if (hostname.endsWith('blossom.onl')) {
+      const origin = window.location.origin;
+      assertNoFly(origin);
+      return origin;
+    }
+    if (hostname.endsWith('vercel.app')) {
+      assertNoFly(PRODUCTION_BACKEND_URL);
       return PRODUCTION_BACKEND_URL;
     }
   }
@@ -43,7 +70,7 @@ export const AGENT_API_BASE_URL = getAgentApiBaseUrl();
 // Log backend URL ONCE ONLY (idempotent) + validate in production
 if (typeof window !== 'undefined' && !_hasLogged) {
   _hasLogged = true;
-  const isProduction = window.location.hostname.includes('blossom.onl') || window.location.hostname.includes('vercel.app');
+  const isProduction = window.location.hostname.endsWith('blossom.onl') || window.location.hostname.endsWith('vercel.app');
   console.log(`🔗 [apiClient] Backend API base URL: "${AGENT_API_BASE_URL}"`);
   console.log(`   Environment: ${isProduction ? 'PRODUCTION' : 'DEV'}`);
   console.log(`   Hostname: ${window.location.hostname}`);
@@ -51,7 +78,7 @@ if (typeof window !== 'undefined' && !_hasLogged) {
   // CRITICAL: Validate backend URL is not empty in production
   if (isProduction && (!AGENT_API_BASE_URL || AGENT_API_BASE_URL === '')) {
     console.error('🚨 [apiClient] CRITICAL: Backend API URL is empty in production! This will cause API failures.');
-    console.error('   Expected: https://api.blossom.onl');
+      console.error('   Expected: https://api.blossom.onl');
   }
 
   // Only log env var in DEV mode (not spammy in production)

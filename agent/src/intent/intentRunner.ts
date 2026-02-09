@@ -180,7 +180,7 @@ type IntentFailureStage = 'plan' | 'route' | 'execute' | 'confirm' | 'quote';
 type ExecutionKind = 'perp' | 'perp_create' | 'deposit' | 'bridge' | 'swap' | 'proof' | 'relay' | 'transfer';
 
 // Chain type for clarity
-export type ChainTarget = 'ethereum' | 'solana' | 'both';
+export type ChainTarget = 'ethereum' | 'solana' | 'hyperliquid' | 'both';
 
 // Parsed intent structure
 export interface ParsedIntent {
@@ -198,8 +198,8 @@ export interface ParsedIntent {
 
 // Route decision
 export interface RouteDecision {
-  chain: 'ethereum' | 'solana';
-  network: 'sepolia' | 'devnet';
+  chain: 'ethereum' | 'solana' | 'hyperliquid';
+  network: 'sepolia' | 'devnet' | 'hyperliquid_testnet';
   venue: string;
   adapter?: string;
   executionType: 'real' | 'proof_only';
@@ -1204,6 +1204,7 @@ function isChainName(str: string): boolean {
     'ethereum', 'eth', 'solana', 'sol', 'arbitrum', 'arb', 'optimism', 'op',
     'base', 'polygon', 'matic', 'avalanche', 'avax', 'bsc', 'bnb',
     'sepolia', 'devnet', 'goerli', 'arb-one', 'op-mainnet', 'l2',
+    'hyperliquid', 'hl', 'hyper',
   ];
   return chains.includes(str.toLowerCase());
 }
@@ -1361,17 +1362,35 @@ export function routeIntent(
   const { kind, venue, sourceChain, destChain, rawParams } = parsed;
 
   // Determine target chain
-  let targetChain: 'ethereum' | 'solana' = 'ethereum';
-  if (preferredChain === 'solana') {
+  const normalizedRawChain = rawParams?.chain ? normalizeChainName(rawParams.chain) : undefined;
+  const normalizedVenue = typeof venue === 'string' ? venue.toLowerCase() : undefined;
+  const wantsHyperliquid =
+    normalizedRawChain === 'hyperliquid' ||
+    normalizedVenue === 'hyperliquid' ||
+    rawParams?.venue === 'hyperliquid' ||
+    kind === 'perp_create';
+
+  let targetChain: 'ethereum' | 'solana' | 'hyperliquid' = 'ethereum';
+  if (preferredChain === 'hyperliquid' || wantsHyperliquid) {
+    targetChain = 'hyperliquid';
+  } else if (preferredChain === 'solana') {
     targetChain = 'solana';
   } else if (kind === 'bridge') {
     // Bridge: source chain determines where we start
-    if (sourceChain === 'solana') {
+    const normalizedSource = sourceChain ? normalizeChainName(sourceChain) : undefined;
+    if (normalizedSource === 'hyperliquid') {
+      targetChain = 'hyperliquid';
+    } else if (normalizedSource === 'solana') {
       targetChain = 'solana';
     }
   }
 
-  const network = targetChain === 'ethereum' ? 'sepolia' : 'devnet';
+  const network =
+    targetChain === 'ethereum'
+      ? 'sepolia'
+      : targetChain === 'solana'
+        ? 'devnet'
+        : 'hyperliquid_testnet';
 
   // Handle special intent types that need specific integrations
 
@@ -1439,18 +1458,73 @@ export function routeIntent(
   // Check venue implementation
   const implementedVenues = IMPLEMENTED_VENUES[targetChain][kind] || [];
 
+  // Handle HIP-3 perp market creation (Hyperliquid)
+  if (kind === 'perp_create') {
+    const hyperliquidEnabled = process.env.HYPERLIQUID_ENABLED === 'true';
+
+    if (!hyperliquidEnabled) {
+      return {
+        chain: 'hyperliquid',
+        network: 'hyperliquid_testnet',
+        venue: 'hip3',
+        executionType: 'proof_only',
+        warnings: [
+          'PROOF_ONLY: Hyperliquid testnet is not enabled. Set HYPERLIQUID_ENABLED=true for real execution.',
+          'HIP-3 market creation requires Hyperliquid testnet configuration.',
+        ],
+      };
+    }
+
+    return {
+      chain: 'hyperliquid',
+      network: 'hyperliquid_testnet',
+      venue: 'hip3',
+      executionType: 'proof_only',
+      warnings: [
+        'PROOF_ONLY: HIP-3 market creation execution is not wired to on-chain submission yet.',
+        'Provide Hyperliquid RegisterAsset2 contract details to enable real execution.',
+      ],
+    };
+  }
+
   // Handle perp intents
   if (kind === 'perp') {
     const requestedVenue = venue?.toLowerCase();
 
     // If they request a specific venue like drift/hl, fail clearly
-    if (requestedVenue && ['drift', 'hl', 'hyperliquid', 'dydx'].includes(requestedVenue)) {
+    if (requestedVenue && ['drift', 'dydx'].includes(requestedVenue)) {
       return {
         error: {
           stage: 'route',
           code: 'VENUE_NOT_IMPLEMENTED',
           message: `Perp venue "${requestedVenue}" is not yet integrated. Recording as proof-only.`,
         },
+      };
+    }
+
+    if (requestedVenue && ['hl', 'hyperliquid'].includes(requestedVenue)) {
+      return {
+        chain: 'hyperliquid',
+        network: 'hyperliquid_testnet',
+        venue: 'hyperliquid',
+        executionType: 'proof_only',
+        warnings: [
+          'PROOF_ONLY: Hyperliquid perp execution not yet wired to on-chain submission.',
+          'Provide Hyperliquid execution API/contract details to enable real execution.',
+        ],
+      };
+    }
+
+    if (targetChain === 'hyperliquid') {
+      return {
+        chain: 'hyperliquid',
+        network: 'hyperliquid_testnet',
+        venue: 'hyperliquid',
+        executionType: 'proof_only',
+        warnings: [
+          'PROOF_ONLY: Hyperliquid perp execution not yet wired to on-chain submission.',
+          'Provide Hyperliquid execution API/contract details to enable real execution.',
+        ],
       };
     }
 
@@ -1490,6 +1564,16 @@ export function routeIntent(
 
   // Handle bridge intents
   if (kind === 'bridge') {
+    if (targetChain === 'hyperliquid') {
+      return {
+        chain: 'hyperliquid',
+        network: 'hyperliquid_testnet',
+        venue: 'bridge_proof',
+        executionType: 'proof_only',
+        warnings: ['PROOF_ONLY: Hyperliquid bridging not implemented. Recording intent proof on-chain.'],
+      };
+    }
+
     // Check if bridging between different chains
     if (sourceChain && destChain && sourceChain !== destChain) {
       // Bridge is quote-only for now
@@ -1506,6 +1590,19 @@ export function routeIntent(
   // Handle deposit intents
   if (kind === 'deposit') {
     const requestedVenue = venue?.toLowerCase();
+
+    if (targetChain === 'hyperliquid') {
+      return {
+        chain: 'hyperliquid',
+        network: 'hyperliquid_testnet',
+        venue: 'hyperliquid',
+        executionType: 'proof_only',
+        warnings: [
+          'PROOF_ONLY: Hyperliquid vault integration not yet implemented.',
+          'Provide Hyperliquid vault adapter details to enable real deposits.',
+        ],
+      };
+    }
 
     // Check for unimplemented venues - route to proof_only instead of failing
     if (requestedVenue && ['kamino', 'drift'].includes(requestedVenue)) {
@@ -1554,6 +1651,18 @@ export function routeIntent(
   if (kind === 'swap') {
     // Check if Solana executor is configured for real swaps
     const solanaPrivateKey = process.env.SOLANA_PRIVATE_KEY;
+
+    if (targetChain === 'hyperliquid') {
+      return {
+        chain: 'hyperliquid',
+        network: 'hyperliquid_testnet',
+        venue: 'hyperliquid',
+        executionType: 'proof_only',
+        warnings: [
+          'PROOF_ONLY: Hyperliquid swap routing not implemented.',
+        ],
+      };
+    }
 
     if (targetChain === 'solana') {
       // Enable real Solana swaps if private key is configured
@@ -2912,6 +3021,9 @@ async function executeProofOnly(
   if (route.chain === 'solana') {
     return await executeProofOnlySolana(intentId, parsed, route);
   }
+  if (route.chain === 'hyperliquid') {
+    return await executeProofOnlyHyperliquid(intentId, parsed, route);
+  }
 
   // Default: Ethereum Sepolia proof tx
   const {
@@ -3332,6 +3444,211 @@ async function executeProofOnlySolana(
       error: {
         stage: 'execute',
         code: 'SOLANA_PROOF_TX_FAILED',
+        message: error.message,
+      },
+    };
+  }
+}
+
+/**
+ * Execute proof-only transaction on Hyperliquid testnet (EVM)
+ */
+async function executeProofOnlyHyperliquid(
+  intentId: string,
+  parsed: ParsedIntent,
+  route: RouteDecision
+): Promise<IntentExecutionResult> {
+  const {
+    getIntentAsync,
+    updateIntentStatusAsync,
+    createExecutionAsync,
+    updateExecutionAsync,
+    linkExecutionToIntentAsync,
+  } = await import('../../execution-ledger/db');
+  const { buildExplorerUrl } = await import('../ledger/ledger');
+
+  const intent = await getIntentAsync(intentId);
+  const existingMetadataJson = intent?.metadata_json;
+
+  const now = Math.floor(Date.now() / 1000);
+  const startTime = Date.now();
+
+  const {
+    HYPERLIQUID_TESTNET_RPC_URL,
+    HYPERLIQUID_TESTNET_CHAIN_ID,
+    HYPERLIQUID_MINT_AUTHORITY_PRIVATE_KEY,
+    HYPERLIQUID_BUILDER_PRIVATE_KEY,
+  } = await import('../config');
+
+  const signerKey = HYPERLIQUID_MINT_AUTHORITY_PRIVATE_KEY || HYPERLIQUID_BUILDER_PRIVATE_KEY;
+
+  if (!signerKey || !HYPERLIQUID_TESTNET_RPC_URL) {
+    await updateIntentStatusAsync(intentId, {
+      status: 'failed',
+      failureStage: 'execute',
+      errorCode: 'CONFIG_MISSING',
+      errorMessage: 'Hyperliquid relayer key or RPC not configured',
+    });
+
+    return {
+      ok: false,
+      intentId,
+      status: 'failed',
+      error: {
+        stage: 'execute',
+        code: 'CONFIG_MISSING',
+        message: 'Hyperliquid relayer key or RPC not configured',
+      },
+    };
+  }
+
+  try {
+    const { createPublicClient, createWalletClient, http, toHex } = await import('viem');
+    const { privateKeyToAccount } = await import('viem/accounts');
+
+    const chainId = HYPERLIQUID_TESTNET_CHAIN_ID || 998;
+    const hyperliquidChain = {
+      id: chainId,
+      name: 'Hyperliquid Testnet',
+      network: 'hyperliquid-testnet',
+      nativeCurrency: { name: 'HYPE', symbol: 'HYPE', decimals: 18 },
+      rpcUrls: {
+        default: { http: [HYPERLIQUID_TESTNET_RPC_URL] },
+        public: { http: [HYPERLIQUID_TESTNET_RPC_URL] },
+      },
+    } as const;
+
+    const account = privateKeyToAccount(signerKey as `0x${string}`);
+    const publicClient = createPublicClient({
+      chain: hyperliquidChain,
+      transport: http(HYPERLIQUID_TESTNET_RPC_URL),
+    });
+    const walletClient = createWalletClient({
+      account,
+      chain: hyperliquidChain,
+      transport: http(HYPERLIQUID_TESTNET_RPC_URL),
+    });
+
+    const execution = await createExecutionAsync({
+      chain: 'hyperliquid',
+      network: 'hyperliquid_testnet',
+      kind: 'proof',
+      venue: route.venue as any,
+      intent: parsed.rawParams.original || 'Intent proof',
+      action: 'proof',
+      fromAddress: account.address,
+      token: parsed.amountUnit,
+      usdEstimate: estimateIntentUsd(parsed),
+      usdEstimateIsEstimate: true,
+    });
+
+    await linkExecutionToIntentAsync(execution.id, intentId);
+
+    const proofData = {
+      type: 'BLOSSOM_INTENT_PROOF',
+      intentId: intentId.slice(0, 8),
+      kind: parsed.kind,
+      action: parsed.action,
+      asset: parsed.targetAsset || parsed.amountUnit,
+      timestamp: now,
+    };
+    const proofHex = toHex(JSON.stringify(proofData));
+
+    const txHash = await walletClient.sendTransaction({
+      to: account.address,
+      value: BigInt(1),
+      data: proofHex as `0x${string}`,
+    });
+
+    const receipt = await publicClient.waitForTransactionReceipt({
+      hash: txHash,
+      timeout: 15000,
+    });
+
+    const latencyMs = Date.now() - startTime;
+    const explorerUrl = buildExplorerUrl('hyperliquid', 'hyperliquid_testnet', txHash);
+
+    if (receipt.status === 'success') {
+      await updateExecutionAsync(execution.id, {
+        status: 'confirmed',
+        txHash,
+        explorerUrl,
+        blockNumber: Number(receipt.blockNumber),
+        gasUsed: receipt.gasUsed.toString(),
+        latencyMs,
+      });
+
+      await updateIntentStatusAsync(intentId, {
+        status: 'confirmed',
+        confirmedAt: Math.floor(Date.now() / 1000),
+        metadataJson: mergeMetadata(existingMetadataJson, {
+          parsed,
+          route,
+          executedKind: 'proof_only',
+          executionId: execution.id,
+          txHash,
+          explorerUrl,
+          warnings: route.warnings,
+        }),
+      });
+
+      return {
+        ok: true,
+        intentId,
+        status: 'confirmed',
+        executionId: execution.id,
+        txHash,
+        explorerUrl,
+        metadata: {
+          executedKind: 'proof_only',
+          warnings: route.warnings,
+        },
+      };
+    }
+
+    await updateExecutionAsync(execution.id, {
+      status: 'failed',
+      txHash,
+      explorerUrl,
+      errorCode: 'TX_REVERTED',
+      errorMessage: 'Proof transaction reverted',
+    });
+
+    await updateIntentStatusAsync(intentId, {
+      status: 'failed',
+      failureStage: 'confirm',
+      errorCode: 'TX_REVERTED',
+      errorMessage: 'Proof transaction reverted on-chain',
+    });
+
+    return {
+      ok: false,
+      intentId,
+      status: 'failed',
+      executionId: execution.id,
+      txHash,
+      explorerUrl,
+      error: {
+        stage: 'confirm',
+        code: 'TX_REVERTED',
+        message: 'Proof transaction reverted',
+      },
+    };
+  } catch (error: any) {
+    await updateIntentStatusAsync(intentId, {
+      status: 'failed',
+      failureStage: 'execute',
+      errorCode: 'HYPERLIQUID_PROOF_TX_FAILED',
+      errorMessage: error.message?.slice(0, 200),
+    });
+
+    return {
+      ok: false,
+      intentId,
+      status: 'failed',
+      error: {
+        stage: 'execute',
+        code: 'HYPERLIQUID_PROOF_TX_FAILED',
         message: error.message,
       },
     };
