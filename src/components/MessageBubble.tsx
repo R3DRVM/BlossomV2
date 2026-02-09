@@ -1164,40 +1164,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
             )}
           </div>
         )}
-        
-        {/* Follow-up Suggestions */}
-        {!isUser && strategy && (
-          <div className="mt-1.5 flex flex-wrap gap-1">
-            <button
-              onClick={() => handleSuggestionClick(`Simulate PnL for this strategy if ${strategy.market.replace('-PERP', '')} moves ±10%`)}
-              className="px-2.5 py-1 text-[11px] font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-full transition-colors"
-            >
-              Simulate PnL if price moves ±10%
-            </button>
-            <button
-              onClick={() => handleSuggestionClick('Show liquidation risk for this strategy')}
-              className="px-2.5 py-1 text-[11px] font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-full transition-colors"
-            >
-              Show liquidation risk
-            </button>
-            <button
-              onClick={() => handleSuggestionClick(`Hedge this ${strategy.market} ${strategy.side.toLowerCase()} exposure`)}
-              className="px-2.5 py-1 text-[11px] font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-full transition-colors"
-            >
-              Hedge this exposure
-            </button>
-            <button
-              onClick={() => {
-                setSelectedStrategyId(strategyId || null);
-                setActiveTab('portfolio');
-              }}
-              className="px-2.5 py-1 text-[11px] font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-full transition-colors"
-            >
-              Show portfolio impact
-            </button>
-          </div>
-        )}
-        
+
         {/* DeFi Plan Card */}
         {!isUser && defiProposal && (
           <div className="mt-1.5 w-full max-w-md bg-white rounded-2xl shadow-sm border border-blossom-outline strategy-card">
@@ -1338,30 +1305,6 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
         )}
 
         {/* Cross-tab CTAs for executed strategies */}
-        {!isUser && strategy && isExecuted && strategyId && (
-          <div className="mt-2 flex flex-wrap gap-3 text-xs">
-            <button
-              type="button"
-              className="text-blossom-pink hover:underline hover:text-blossom-pink/80"
-              onClick={() => {
-                setSelectedStrategyId(strategyId);
-                setActiveTab('risk');
-              }}
-            >
-              View this strategy's impact in Risk Center →
-            </button>
-            <button
-              type="button"
-              className="underline hover:text-purple-900"
-              onClick={() => {
-                setSelectedStrategyId(strategyId);
-                setActiveTab('portfolio');
-              }}
-            >
-              See portfolio breakdown →
-            </button>
-          </div>
-        )}
         <div className="text-[11px] text-slate-400 mt-1">
           {timestamp}
         </div>

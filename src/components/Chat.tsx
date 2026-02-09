@@ -3497,16 +3497,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
     txHash: string,
     targetChatId: string
   ) => {
-    // Immediately append "Submitted" message
-    const submittedMessage: ChatMessage = {
-      id: `tx-submitted-${txHash}-${Date.now()}`,
-      text: `Submitted on Sepolia: ${txHash.substring(0, 10)}...${txHash.substring(txHash.length - 8)}`,
-      isUser: false,
-      timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
-    };
-    appendMessageToChat(targetChatId, submittedMessage);
-
-    // Poll for status (every 2s for up to 60s)
+    // Poll for status (every 2s for up to 60s) - no immediate message
     const maxAttempts = 30; // 30 * 2s = 60s
     let attempts = 0;
     const statusMessageId = `tx-status-${txHash}-${Date.now()}`;
@@ -3522,9 +3513,10 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
         if (!statusResponse.ok) {
           if (attempts >= maxAttempts) {
             clearInterval(pollInterval);
+            const explorerUrl = `https://sepolia.etherscan.io/tx/${txHash}`;
             const timeoutMessage: ChatMessage = {
               id: statusMessageId,
-              text: `Still pending: ${txHash.substring(0, 10)}...${txHash.substring(txHash.length - 8)} (check explorer)`,
+              text: `Transaction still pending. [View on Sepolia Explorer](${explorerUrl})`,
               isUser: false,
               timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
             };
@@ -3539,9 +3531,10 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
           // Keep waiting
           if (attempts >= maxAttempts) {
             clearInterval(pollInterval);
+            const explorerUrl = `https://sepolia.etherscan.io/tx/${txHash}`;
             const timeoutMessage: ChatMessage = {
               id: statusMessageId,
-              text: `Still pending: ${txHash.substring(0, 10)}...${txHash.substring(txHash.length - 8)} (check explorer)`,
+              text: `Transaction still pending. [View on Sepolia Explorer](${explorerUrl})`,
               isUser: false,
               timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
             };
@@ -3553,13 +3546,16 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
         // Transaction is confirmed or reverted
         clearInterval(pollInterval);
 
+        const explorerUrl = `https://sepolia.etherscan.io/tx/${txHash}`;
         let statusText: string;
+
         if (statusData.status === 'confirmed') {
-          statusText = `Confirmed on Sepolia: ${txHash.substring(0, 10)}...${txHash.substring(txHash.length - 8)}`;
+          // Single consolidated message for successful execution
+          statusText = `🎉 Transaction executed on Sepolia! [View on Explorer](${explorerUrl})`;
         } else if (statusData.status === 'reverted') {
-          statusText = `Reverted on Sepolia: ${txHash.substring(0, 10)}...${txHash.substring(txHash.length - 8)}`;
+          statusText = `❌ Transaction reverted on Sepolia. [View on Explorer](${explorerUrl})`;
         } else {
-          statusText = `Status: ${statusData.status} - ${txHash.substring(0, 10)}...${txHash.substring(txHash.length - 8)}`;
+          statusText = `Transaction status: ${statusData.status}. [View on Explorer](${explorerUrl})`;
         }
 
         const statusMessage: ChatMessage = {
@@ -4052,16 +4048,6 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
               timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
             };
             appendMessageToChat(targetChatId, routingMessage);
-          } else if (result.txHash) {
-            // Fallback: just show tx link
-            const explorerUrl = result.explorerUrl || `https://sepolia.etherscan.io/tx/${result.txHash}`;
-            const txMessage: ChatMessage = {
-              id: `tx-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-              text: `✅ Transaction submitted: ${explorerUrl}`,
-              isUser: false,
-              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
-            };
-            appendMessageToChat(targetChatId, txMessage);
           }
 
             // Start polling transaction status
@@ -4599,16 +4585,6 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
               timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
             };
             appendMessageToChat(targetChatId, routingMessage);
-          } else if (result.txHash) {
-            // Fallback: just show tx link
-            const explorerUrl = result.explorerUrl || `https://sepolia.etherscan.io/tx/${result.txHash}`;
-            const txMessage: ChatMessage = {
-              id: `tx-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-              text: `✅ Transaction submitted: ${explorerUrl}`,
-              isUser: false,
-              timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
-            };
-            appendMessageToChat(targetChatId, txMessage);
           }
 
           // Start polling transaction status

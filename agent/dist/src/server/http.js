@@ -89,11 +89,20 @@ import { postStatsEvent } from '../stats';
 import { IntentState, classifyIntentPathWithValidation, getContext, updateContext, processConfirmation, isConfirmation, isCancellation, resetContextState, logTransition, } from '../intent/intentStateMachine';
 const app = express();
 // Rate limits for high-risk execution endpoints
+// Increased limits for testing and legitimate usage
 const executeRateLimit = rateLimit({
     windowMs: 60 * 1000,
-    max: 10,
+    max: 50, // Increased from 10 to 50 requests/minute
     standardHeaders: true,
     legacyHeaders: false,
+    handler: (req, res) => {
+        res.status(429).json({
+            ok: false,
+            error: 'Rate limit exceeded. Please wait a moment before trying again.',
+            errorCode: 'RATE_LIMIT_EXCEEDED',
+            retryAfter: 60,
+        });
+    },
     keyGenerator: (req) => {
         const wallet = req.headers['x-wallet-address'];
         if (Array.isArray(wallet))
@@ -103,9 +112,17 @@ const executeRateLimit = rateLimit({
 });
 const sessionRateLimit = rateLimit({
     windowMs: 60 * 1000,
-    max: 10,
+    max: 50, // Increased from 10 to 50 requests/minute
     standardHeaders: true,
     legacyHeaders: false,
+    handler: (req, res) => {
+        res.status(429).json({
+            ok: false,
+            error: 'Rate limit exceeded. Please wait a moment before trying again.',
+            errorCode: 'RATE_LIMIT_EXCEEDED',
+            retryAfter: 60,
+        });
+    },
     keyGenerator: (req) => {
         const wallet = req.headers['x-wallet-address'];
         if (Array.isArray(wallet))
@@ -116,9 +133,17 @@ const sessionRateLimit = rateLimit({
 // Rate limit for mint endpoint - prevent DoS attacks on token minting
 const mintRateLimit = rateLimit({
     windowMs: 60 * 1000, // 1 minute window
-    max: 5, // Max 5 mint requests per minute per wallet
+    max: 20, // Increased from 5 to 20 requests per minute (users may retry)
     standardHeaders: true,
     legacyHeaders: false,
+    handler: (req, res) => {
+        res.status(429).json({
+            ok: false,
+            error: 'Too many mint requests. Please wait a moment before trying again.',
+            errorCode: 'RATE_LIMIT_EXCEEDED',
+            retryAfter: 60,
+        });
+    },
     keyGenerator: (req) => {
         const wallet = req.headers['x-wallet-address'];
         if (Array.isArray(wallet))
@@ -130,13 +155,16 @@ const mintRateLimit = rateLimit({
 // This catches attackers who spread requests across multiple endpoints
 const globalRateLimit = rateLimit({
     windowMs: 60 * 1000, // 1 minute window
-    max: 100, // 100 requests per minute per IP (generous but protective)
+    max: 200, // Increased from 100 to 200 requests per minute (more generous for legitimate users)
     standardHeaders: true,
     legacyHeaders: false,
-    message: {
-        ok: false,
-        error: 'Too many requests. Please slow down.',
-        errorCode: 'RATE_LIMIT_EXCEEDED',
+    handler: (req, res) => {
+        res.status(429).json({
+            ok: false,
+            error: 'Too many requests. Please slow down.',
+            errorCode: 'RATE_LIMIT_EXCEEDED',
+            retryAfter: 60,
+        });
     },
     // Skip rate limiting for health checks
     skip: (req) => req.path === '/health' || req.path === '/api/health' || req.path === '/api/rpc/health',
