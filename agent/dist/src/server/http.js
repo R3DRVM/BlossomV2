@@ -3342,7 +3342,8 @@ app.post('/api/session/prepare', async (req, res) => {
         // Set session parameters
         const expiresAt = BigInt(Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60); // 7 days
         // Session spend cap uses token units (bUSDC 6 decimals)
-        const maxSpendBusdc = process.env.SESSION_MAX_SPEND_BUSDC || '10000';
+        // Generous limit: 1M bUSDC allows users to open any reasonable position size
+        const maxSpendBusdc = process.env.SESSION_MAX_SPEND_BUSDC || '1000000';
         const maxSpend = BigInt(parseUnits(maxSpendBusdc, 6));
         // Build allowed adapters list (include all configured adapters that are globally allowlisted in router)
         const configuredAdapters = [
@@ -4028,12 +4029,13 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
                             error: `Token ${tokenOut} not allowed. Allowed tokens: ${Array.from(allowedTokens).join(', ')}`,
                         });
                     }
-                    // Guard 5: Validate max amountIn per swap (e.g. 1 ETH worth)
+                    // Guard 5: Validate max amountIn per swap
+                    // Generous limit: 100 ETH worth allows large trades
                     const amountIn = decoded[3];
-                    const maxAmountIn = BigInt(parseUnits('1', 18)); // 1 ETH max per swap
+                    const maxAmountIn = BigInt(parseUnits('100', 18)); // 100 ETH max per swap
                     if (amountIn > maxAmountIn) {
                         return res.status(400).json({
-                            error: `Swap amountIn exceeds maximum (1 ETH). Got ${amountIn.toString()}`,
+                            error: `Swap amountIn exceeds maximum (100 ETH). Got ${amountIn.toString()}`,
                         });
                     }
                 }
@@ -4043,15 +4045,16 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
                 }
             }
         }
-        // Guard 6: Validate value (max 1 ETH for WRAP actions)
+        // Guard 6: Validate value (max for WRAP actions and ETH transfers)
+        // Generous limit: 100 ETH allows large wraps and transfers
         const planValue = BigInt(req.body.value || '0x0');
-        const maxValue = BigInt(parseUnits('1', 18)); // 1 ETH max
+        const maxValue = BigInt(parseUnits('100', 18)); // 100 ETH max
         if (planValue > maxValue) {
             return res.status(400).json({
                 ok: false,
                 error: {
                     code: 'POLICY_EXCEEDED',
-                    message: `Plan value exceeds maximum (1 ETH). Got ${planValue.toString()}`,
+                    message: `Plan value exceeds maximum (100 ETH). Got ${planValue.toString()}`,
                 },
                 correlationId,
             });
