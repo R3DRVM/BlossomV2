@@ -3098,11 +3098,34 @@ async function executeProofOnly(
     // Send proof tx (self-transfer with metadata in data field)
     const transferAmount = BigInt(1); // 1 wei as proof marker
 
-    const txHash = await walletClient.sendTransaction({
-      to: account.address,
-      value: transferAmount,
-      data: proofHex as `0x${string}`,
-    });
+    const isNonceError = (err: any) => {
+      const message = `${err?.message || err}`.toLowerCase();
+      return message.includes('nonce') || message.includes('already known');
+    };
+
+    const sendWithNonceRetry = async () => {
+      try {
+        return await walletClient.sendTransaction({
+          to: account.address,
+          value: transferAmount,
+          data: proofHex as `0x${string}`,
+        });
+      } catch (err: any) {
+        if (!isNonceError(err)) throw err;
+        const pendingNonce = await publicClient.getTransactionCount({
+          address: account.address,
+          blockTag: 'pending',
+        });
+        return await walletClient.sendTransaction({
+          to: account.address,
+          value: transferAmount,
+          data: proofHex as `0x${string}`,
+          nonce: pendingNonce,
+        });
+      }
+    };
+
+    const txHash = await sendWithNonceRetry();
 
     // Wait for confirmation (tolerate timeouts as pending, similar to perp flow)
     let receipt: any = null;
@@ -3786,10 +3809,32 @@ async function executeEthereum(
     // For demo purposes, send a small ETH transfer to self as proof
     const transferAmount = BigInt(1000000000000); // 0.000001 ETH
 
-    const txHash = await walletClient.sendTransaction({
-      to: account.address,
-      value: transferAmount,
-    });
+    const isNonceError = (err: any) => {
+      const message = `${err?.message || err}`.toLowerCase();
+      return message.includes('nonce') || message.includes('already known');
+    };
+
+    const sendWithNonceRetry = async () => {
+      try {
+        return await walletClient.sendTransaction({
+          to: account.address,
+          value: transferAmount,
+        });
+      } catch (err: any) {
+        if (!isNonceError(err)) throw err;
+        const pendingNonce = await publicClient.getTransactionCount({
+          address: account.address,
+          blockTag: 'pending',
+        });
+        return await walletClient.sendTransaction({
+          to: account.address,
+          value: transferAmount,
+          nonce: pendingNonce,
+        });
+      }
+    };
+
+    const txHash = await sendWithNonceRetry();
 
     // Wait for confirmation
     const receipt = await publicClient.waitForTransactionReceipt({

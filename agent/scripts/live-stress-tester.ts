@@ -666,11 +666,26 @@ async function runSessionPrepare(agent: AgentState): Promise<ActionResult> {
         // If pending, continue to validation
       }
 
-      const validateRes = await fetchJson('/api/session/validate', {
-        method: 'POST',
-        headers: buildHeaders(agent),
-        body: JSON.stringify({ userAddress: agent.walletAddress, sessionId }),
-      });
+      const validateOnce = async () =>
+        fetchJson('/api/session/validate', {
+          method: 'POST',
+          headers: buildHeaders(agent),
+          body: JSON.stringify({ userAddress: agent.walletAddress, sessionId }),
+        });
+
+      let validateRes = await validateOnce();
+      if (!validateRes.ok || validateRes.json?.valid !== true) {
+        const initialReason =
+          validateRes.json?.reason || validateRes.json?.error || validateRes.text || 'Session not active after signing';
+        const reasonText = `${initialReason}`.toLowerCase();
+        if (reasonText.includes('session_not_active') || reasonText.includes('not active')) {
+          for (let attempt = 0; attempt < 5; attempt += 1) {
+            await sleep(3000);
+            validateRes = await validateOnce();
+            if (validateRes.ok && validateRes.json?.valid === true) break;
+          }
+        }
+      }
 
       if (!validateRes.ok || validateRes.json?.valid !== true) {
         return {
