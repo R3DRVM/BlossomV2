@@ -370,7 +370,7 @@ async function ensureAccess(agent: AgentState): Promise<void> {
   log(`⚠️  Access code failed for ${agent.id}: ${res.json?.error || res.text}`);
 }
 
-function buildMintPayload(chain: Chain) {
+function buildMintPayload(chain: Chain, agent?: AgentState) {
   const amount = randInt(100, 500);
   if (chain === 'solana') {
     if (!STRESS_SOLANA_ADDRESS) return null;
@@ -380,15 +380,16 @@ function buildMintPayload(chain: Chain) {
     if (!STRESS_HYPERLIQUID_ADDRESS) return null;
     return { userAddress: STRESS_HYPERLIQUID_ADDRESS, chain: 'hyperliquid', amount };
   }
-  if (!STRESS_EVM_ADDRESS) return null;
-  return { userAddress: STRESS_EVM_ADDRESS, chain: 'ethereum', amount };
+  const target = agent?.walletAddress || STRESS_EVM_ADDRESS;
+  if (!target) return null;
+  return { userAddress: target, chain: 'ethereum', amount };
 }
 
 async function runMint(agent: AgentState, sessionId: string, chain: Chain): Promise<ActionResult> {
   const actionId = buildActionId('mint', 0);
   const started = Date.now();
 
-  const payload = buildMintPayload(chain);
+  const payload = buildMintPayload(chain, agent);
   if (!payload) {
     return {
       actionId,
