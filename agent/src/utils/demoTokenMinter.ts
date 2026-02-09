@@ -52,7 +52,7 @@ export async function mintDemoTokens(recipientAddress: string) {
 
   // Mint bUSDC (10,000 with 6 decimals)
   const usdcAmount = BigInt(10000 * 10**6);
-  const usdcTxHash = await client.writeContract({
+  const usdcTxHash = await writeContractWithNonceRetry(client, {
     address: busdcAddress as `0x${string}`,
     abi: mintAbi,
     functionName: 'mint',
@@ -64,7 +64,7 @@ export async function mintDemoTokens(recipientAddress: string) {
 
   // Mint WETH (5 with 18 decimals)
   const wethAmount = BigInt(5 * 10**18);
-  const wethTxHash = await client.writeContract({
+  const wethTxHash = await writeContractWithNonceRetry(client, {
     address: DEMO_WETH_ADDRESS as `0x${string}`,
     abi: mintAbi,
     functionName: 'mint',
@@ -131,7 +131,7 @@ export async function mintBusdc(recipientAddress: string, amount: number) {
   ] as const;
 
   const amountUnits = BigInt(Math.floor(amount * 10**6));
-  const txHash = await client.writeContract({
+  const txHash = await writeContractWithNonceRetry(client, {
     address: busdcAddress as `0x${string}`,
     abi: mintAbi,
     functionName: 'mint',
@@ -140,4 +140,42 @@ export async function mintBusdc(recipientAddress: string, amount: number) {
 
   await client.waitForTransactionReceipt({ hash: txHash });
   return { txHash, amount };
+}
+
+async function writeContractWithNonceRetry(
+  client: ReturnType<typeof createWalletClient> & ReturnType<typeof publicActions>,
+  params: {
+    address: `0x${string}`;
+    abi: any;
+    functionName: string;
+    args: readonly unknown[];
+  }
+): Promise<`0x${string}`> {
+  let lastError: any;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const nonce = await client.getTransactionCount({
+      address: client.account!.address,
+      blockTag: 'pending'
+    });
+    try {
+      return await client.writeContract({
+        address: params.address,
+        abi: params.abi,
+        functionName: params.functionName,
+        args: params.args,
+        nonce
+      });
+    } catch (error: any) {
+      const msg = `${error?.shortMessage || error?.message || ''}`.toLowerCase();
+      const nonceConflict =
+        msg.includes('nonce') || msg.includes('replacement transaction underpriced') || msg.includes('already known');
+      lastError = error;
+      if (!nonceConflict) {
+        throw error;
+      }
+      await new Promise(resolve => setTimeout(resolve, 1200 * (attempt + 1)));
+    }
+  }
+
+  throw lastError;
 }
