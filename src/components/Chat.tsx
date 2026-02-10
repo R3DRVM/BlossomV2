@@ -116,7 +116,9 @@ function classifyMessage(text: string): ClassifyResult {
       forced: true,
       strippedText: strippedText || text
     };
-    console.log('[Chat Router] decision=execute reason=force_execute forced=true');
+    if (import.meta.env.VITE_DEBUG_CHAT === 'true') {
+      console.log('[Chat Router] decision=execute reason=force_execute forced=true');
+    }
     return result;
   }
 
@@ -132,7 +134,9 @@ function classifyMessage(text: string): ClassifyResult {
         strippedText: strippedText || text
       };
       if (result.forced) {
-        console.log('[Chat Router] decision=chat reason=escape_hatch forced=true');
+        if (import.meta.env.VITE_DEBUG_CHAT === 'true') {
+          console.log('[Chat Router] decision=chat reason=escape_hatch forced=true');
+        }
       }
       return result;
     }
@@ -155,7 +159,9 @@ function classifyMessage(text: string): ClassifyResult {
   // 5. Check for EXPLICIT execution patterns - these are the ONLY ones that execute
   for (const pattern of EXECUTE_PATTERNS) {
     if (pattern.test(normalized)) {
-      console.log('[Chat Router] decision=execute reason=explicit_action confidence=high');
+      if (import.meta.env.VITE_DEBUG_CHAT === 'true') {
+        console.log('[Chat Router] decision=execute reason=explicit_action confidence=high');
+      }
       return { decision: 'execute', reason: 'explicit_action', confidence: 'high' };
     }
   }
@@ -275,9 +281,27 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
   // Wallet connection status for intent execution
   const walletStatus = useWalletStatus();
 
+  const chatDebugEnabled = import.meta.env.VITE_DEBUG_CHAT === 'true';
+  const conversationIdRef = useRef<string | null>(null);
+  const historyLimit = 16;
+
   // Derive current session and messages from context
   const currentSession = chatSessions.find(s => s.id === activeChatId) || null;
   const messages = currentSession?.messages ?? [];
+
+  useEffect(() => {
+    if (conversationIdRef.current) {
+      return;
+    }
+    const stored = localStorage.getItem('blossom_conversation_id');
+    if (stored) {
+      conversationIdRef.current = stored;
+      return;
+    }
+    const newId = `conv-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    conversationIdRef.current = newId;
+    localStorage.setItem('blossom_conversation_id', newId);
+  }, []);
   
   // Track if we've shown welcome message for current session
   const hasShownWelcomeRef = useRef<Set<string>>(new Set());
@@ -1177,25 +1201,33 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
     const classification = classifyMessage(userText);
     const ledgerSecretConfigured = Boolean(import.meta.env.VITE_DEV_LEDGER_SECRET);
 
+    const actionKeywordRe = /\b(swap|trade|long|short|leverage|perps?|close|tp|sl|take\s*profit|stop\s*loss|deposit|withdraw|hedge|execute|simulate|pnl|liquidation|bridge|bet)\b/i;
+    const heuristicDecision = actionKeywordRe.test(userText) ? 'execute' : 'chat';
+    const finalDecision = classification.confidence === 'low'
+      ? (classification.decision === heuristicDecision ? classification.decision : heuristicDecision)
+      : classification.decision;
+
     // Use stripped text if available (for /chat or /execute commands)
     const effectiveText = classification.strippedText || userText;
 
     // Log routing decision for debugging and analytics
-    console.log('[Chat Router]', {
-      message: effectiveText.slice(0, 50) + (effectiveText.length > 50 ? '...' : ''),
-      decision: classification.decision,
-      reason: classification.reason,
-      confidence: classification.confidence,
-      forced: classification.forced || false,
-      timestamp: new Date().toISOString(),
-    });
+    if (chatDebugEnabled) {
+      console.log('[Chat Router]', {
+        message: effectiveText.slice(0, 50) + (effectiveText.length > 50 ? '...' : ''),
+        decision: finalDecision,
+        reason: classification.reason,
+        confidence: classification.confidence,
+        forced: classification.forced || false,
+        timestamp: new Date().toISOString(),
+      });
+    }
 
     // Only route to legacy ledger-intent system when explicitly forced via `/execute`.
     // Default execute intents should go through backend chat planning so all venues
     // (perps/defi/events) use the same execution path and avoid proof-only regressions.
     const useLegacyLedgerIntentPath =
       ledgerSecretConfigured &&
-      classification.decision === 'execute' &&
+      finalDecision === 'execute' &&
       classification.forced === true;
 
     if (useLegacyLedgerIntentPath) {
@@ -1557,7 +1589,20 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
 
     if (USE_AGENT_BACKEND) {
       // Agent mode: call backend (production default)
-      console.log('[Chat] Using backend agent for chat - sending to /api/chat');
+      if (chatDebugEnabled) {
+        console.log('[Chat] Using backend agent for chat - sending to /api/chat');
+      }
+      const conversationId = conversationIdRef.current;
+      const history = messages
+        .slice(-historyLimit)
+        .map(msg => ({ role: msg.isUser ? 'user' : 'assistant', content: msg.text }));
+      if (chatDebugEnabled) {
+        console.log('[Chat Debug] Request context', {
+          conversationId,
+          historyLength: history.length,
+          route: finalDecision === 'execute' ? 'planner' : 'chat',
+        });
+      }
       try {
         const response = await callBlossomChat({
           userMessage: userText,
@@ -1568,6 +1613,9 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
             openPerpExposureUsd: account.openPerpExposure,
             eventExposureUsd: account.eventExposureUsd,
           },
+          conversationId: conversationId || undefined,
+          history,
+          route: finalDecision === 'execute' ? 'planner' : 'chat',
         });
 
         // Handle error codes for explicit UI states
@@ -1692,9 +1740,11 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
             const parsedMarginUsd = marginFromText ? Number(marginFromText[1]) : undefined;
             const parsedRiskPct = riskFromText ? Number(riskFromText[1]) : undefined;
 
-            const finalLeverage = parsedLeverage || perpReq.leverage || 2;
-            const finalRiskPct = parsedRiskPct || perpReq.riskPct || 2;
-            const finalMarginUsd = parsedMarginUsd || perpReq.marginUsd || (account.accountValue * finalRiskPct / 100);
+            const hasExplicitMargin = parsedMarginUsd !== undefined || perpReq.marginUsd !== undefined;
+            const hasExplicitLeverage = parsedLeverage !== undefined || perpReq.leverage !== undefined;
+            const finalLeverage = parsedLeverage ?? perpReq.leverage ?? 2;
+            const finalRiskPct = parsedRiskPct ?? perpReq.riskPct ?? (!hasExplicitMargin && !hasExplicitLeverage ? 2 : undefined);
+            const finalMarginUsd = parsedMarginUsd ?? perpReq.marginUsd ?? (finalRiskPct !== undefined ? (account.accountValue * finalRiskPct / 100) : 0);
             const finalNotionalUsd = finalMarginUsd * finalLeverage;
             const newDraft = addDraftStrategy({
               side: perpReq.side === 'long' ? 'Long' : 'Short',

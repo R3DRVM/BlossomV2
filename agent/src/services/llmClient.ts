@@ -31,7 +31,9 @@ function getProvider(): ModelProvider {
  */
 export async function callLlm(input: LlmChatInput): Promise<LlmChatOutput> {
   const provider = getProvider();
-  console.log('[llmClient] Using provider:', provider);
+  if (process.env.DEBUG_CHAT === 'true') {
+    console.log('[llmClient] Using provider:', provider);
+  }
 
   if (provider === 'stub') {
     return {
@@ -154,7 +156,7 @@ async function callAnthropic(input: LlmChatInput): Promise<LlmChatOutput> {
  * Call Google Gemini API
  */
 async function callGemini(input: LlmChatInput): Promise<LlmChatOutput> {
-  const apiKey = process.env.BLOSSOM_GEMINI_API_KEY;
+  const apiKey = process.env.BLOSSOM_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
   if (!apiKey) {
     console.warn('[llmClient] Gemini key missing, falling back to stub');
     // Fall back to stub instead of throwing error

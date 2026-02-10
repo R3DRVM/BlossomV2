@@ -9,6 +9,9 @@ export interface ChatRequest {
   userMessage: string;
   venue: 'hyperliquid' | 'event_demo';
   clientPortfolio?: any; // keep flexible for now
+  conversationId?: string;
+  history?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  route?: 'chat' | 'planner';
 }
 
 export interface ExecutionResult {
