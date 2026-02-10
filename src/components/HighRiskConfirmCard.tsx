@@ -32,7 +32,7 @@ export default function HighRiskConfirmCard({ reasons, onProceed, onEdit, onRewr
         )}
         {/* Step 3: Collateral model note */}
         <p className="text-[10px] text-slate-400 italic pt-1 border-t border-slate-100">
-          Demo note: Perps use REDACTED collateral only (no auto-swap in simulation).
+          Demo note: Perps use bUSDC collateral only (no auto-swap in simulation).
         </p>
         <div className="flex gap-2 pt-1">
           <button

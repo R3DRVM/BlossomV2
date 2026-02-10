@@ -11,6 +11,7 @@ type RiskPreference = 'conservative' | 'balanced' | 'aggressive';
 export default function DeFiSummaryCard({ position, onInsertPrompt }: DeFiSummaryCardProps) {
   const { confirmDefiPlan, updateDeFiPlanDeposit, account } = useBlossomContext();
   const [isEditingDeposit, setIsEditingDeposit] = useState(false);
+  const [isExecutingPlan, setIsExecutingPlan] = useState(false);
   const [editDepositValue, setEditDepositValue] = useState('');
   const [editError, setEditError] = useState<string | null>(null);
   const [riskPreference, setRiskPreference] = useState<RiskPreference>('balanced');
@@ -107,18 +108,31 @@ export default function DeFiSummaryCard({ position, onInsertPrompt }: DeFiSummar
               {isProposed && (
                 <>
                   <button
-                    onClick={() => confirmDefiPlan(position.id)}
-                    className="w-full px-3 py-2 text-xs font-medium text-white bg-blossom-pink rounded-lg hover:bg-blossom-pink/90 transition-colors"
+                    onClick={async () => {
+                      if (isExecutingPlan) return;
+                      setIsExecutingPlan(true);
+                      try {
+                        await Promise.resolve(confirmDefiPlan(position.id));
+                      } finally {
+                        setIsExecutingPlan(false);
+                      }
+                    }}
+                    disabled={isExecutingPlan}
+                    className={`w-full px-3 py-2 text-xs font-medium rounded-lg transition-colors ${
+                      !isExecutingPlan
+                        ? 'text-white bg-blossom-pink hover:bg-blossom-pink/90'
+                        : 'bg-blossom-outline/40 text-slate-400 cursor-not-allowed'
+                    }`}
                   >
-                    Execute plan
+                    {isExecutingPlan ? 'Executing...' : 'Execute plan'}
                   </button>
                 </>
               )}
             </>
           ) : (
-            <div className="space-y-3">
-              <div>
-                <label className="block text-xs font-medium text-blossom-ink mb-1">New deposit amount (REDACTED)</label>
+              <div className="space-y-3">
+                <div>
+                <label className="block text-xs font-medium text-blossom-ink mb-1">New deposit amount (bUSDC)</label>
                 <input
                   type="number"
                   value={editDepositValue}
@@ -160,7 +174,7 @@ export default function DeFiSummaryCard({ position, onInsertPrompt }: DeFiSummar
                     
                     // Check if we have enough REDACTED for increase
                     if (depositDelta > 0 && usdcBalance < depositDelta) {
-                      setEditError(`Insufficient REDACTED. Available: $${usdcBalance.toLocaleString()}, needed: $${depositDelta.toLocaleString()}`);
+                      setEditError(`Insufficient bUSDC. Available: $${usdcBalance.toLocaleString()}, needed: $${depositDelta.toLocaleString()}`);
                       return;
                     }
                     
@@ -210,4 +224,3 @@ export default function DeFiSummaryCard({ position, onInsertPrompt }: DeFiSummar
     </div>
   );
 }
-

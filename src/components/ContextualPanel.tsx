@@ -221,7 +221,7 @@ export default function ContextualPanel({ selectedStrategyId, onQuickAction, onI
                       </svg>
                     </div>
                     <h3 className="text-sm font-semibold text-blossom-ink mb-1">No DeFi positions yet</h3>
-                    <p className="text-xs text-blossom-slate">Ask Blossom to move idle REDACTED into yield.</p>
+                    <p className="text-xs text-blossom-slate">Ask Blossom to move idle bUSDC into yield.</p>
                   </div>
                 </div>
               )}
@@ -479,4 +479,3 @@ function EventSummaryCard({ strategy }: { strategy: any }) {
     </div>
   );
 }
-

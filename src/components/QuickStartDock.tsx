@@ -29,8 +29,8 @@ const PERPS_PROMPTS = [
 ];
 
 const DEFI_PROMPTS = [
-  'Park half my idle REDACTED into the safest yield on Kamino',
-  'Build a diversified REDACTED yield ladder with conservative risk',
+  'Park half my idle bUSDC into the safest yield on Kamino',
+  'Build a diversified bUSDC yield ladder with conservative risk',
   'Rotate some yield into higher-risk, higher-APY DeFi positions',
 ];
 
@@ -153,4 +153,3 @@ export default function QuickStartDock({ onInsertPrompt }: QuickStartDockProps) 
     </div>
   );
 }
-

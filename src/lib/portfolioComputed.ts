@@ -58,7 +58,7 @@ export function computeExposureByAsset(
   if (totalForExposure <= 0) {
     // Fallback mock data
     return [
-      { asset: 'REDACTED', percentage: 40, amountUsd: accountValue * 0.4 },
+      { asset: 'bUSDC', percentage: 40, amountUsd: accountValue * 0.4 },
       { asset: 'ETH', percentage: 30, amountUsd: accountValue * 0.3 },
       { asset: 'SOL', percentage: 30, amountUsd: accountValue * 0.3 },
     ];
@@ -68,7 +68,7 @@ export function computeExposureByAsset(
 
   if (spotAndCash > 0) {
     result.push({
-      asset: 'REDACTED / Spot & Cash',
+      asset: 'bUSDC / Spot & Cash',
       percentage: Math.round((spotAndCash / totalForExposure) * 100),
       amountUsd: spotAndCash,
     });
@@ -306,4 +306,3 @@ export function computeMarginMetrics(account: AccountState): {
     availableMargin,
   };
 }
-

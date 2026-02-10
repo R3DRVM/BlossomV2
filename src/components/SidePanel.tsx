@@ -173,7 +173,7 @@ export default function SidePanel({ selectedStrategyId }: SidePanelProps) {
         <div className="card-glass p-5">
           <h2 className="text-xs font-semibold text-blossom-slate uppercase tracking-wide mb-4">DeFi Positions (Sim)</h2>
           {defiPositions.filter(p => p.status === 'active').length === 0 ? (
-            <p className="text-sm text-gray-500">No active DeFi positions yet. Ask the copilot to move idle REDACTED into yield.</p>
+            <p className="text-sm text-gray-500">No active DeFi positions yet. Ask the copilot to move idle bUSDC into yield.</p>
           ) : (
             <div className="space-y-3">
               {defiPositions.filter(p => p.status === 'active').map((position) => (
@@ -331,4 +331,3 @@ export default function SidePanel({ selectedStrategyId }: SidePanelProps) {
     </div>
   );
 }
-

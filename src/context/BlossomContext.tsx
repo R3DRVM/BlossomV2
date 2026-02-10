@@ -1401,7 +1401,7 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
       id: Date.now().toString(),
       command,
       protocol,
-      asset: 'REDACTED yield vault',
+      asset: 'bUSDC yield vault',
       depositUsd,
       apyPct,
       status: 'proposed',

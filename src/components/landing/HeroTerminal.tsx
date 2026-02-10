@@ -29,11 +29,11 @@ const SCENARIOS: TerminalScenario[] = [
   },
   {
     id: 'defi',
-    prompt: 'Park half my idle REDACTED into safest yield on Kamino',
+    prompt: 'Park half my idle bUSDC into safest yield on Kamino',
     steps: [
       { text: 'Scanning Kamino vaults for optimal risk-adjusted yield...', status: 'info' },
-      { text: 'Selected: REDACTED yield vault (TVL: $12.4M, APY: 9.2%)', status: 'success' },
-      { text: 'Allocating $2,000 (50% of idle REDACTED)', status: 'warning' },
+      { text: 'Selected: bUSDC yield vault (TVL: $12.4M, APY: 9.2%)', status: 'success' },
+      { text: 'Allocating $2,000 (50% of idle bUSDC)', status: 'warning' },
       { text: '✓ Deposit confirmed. Tracking yield in portfolio.', status: 'success' },
     ],
   },
@@ -144,4 +144,3 @@ export function HeroTerminal() {
     </div>
   );
 }
-

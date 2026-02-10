@@ -26,11 +26,11 @@ const SCENARIOS: Scenario[] = [
   {
     id: 'defi',
     venue: 'On-chain',
-    command: 'Park half my idle REDACTED into the safest yield on Kamino',
+    command: 'Park half my idle bUSDC into the safest yield on Kamino',
     steps: [
       'Scanning DeFi yields across whitelisted protocols…',
       'Filtering by risk score and TVL…',
-      'Allocating 50% of idle REDACTED to Kamino vault…',
+      'Allocating 50% of idle bUSDC to Kamino vault…',
     ],
     finalState: 'SIM Allocation Complete · APY: 8.5% · Duration: Open',
     finalStateColor: 'text-teal-400',
@@ -162,4 +162,3 @@ export function MarketingAgentTerminal() {
     </div>
   );
 }
-

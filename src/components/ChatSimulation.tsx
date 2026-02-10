@@ -16,8 +16,8 @@ const SCENARIOS: ChatScenario[] = [
   },
   {
     id: 'defi',
-    userMessage: 'Park half my idle REDACTED into the safest yield on Kamino.',
-    blossomResponse: 'Allocating 50% of idle REDACTED ($2,000) to Kamino REDACTED vault. This is a conservative yield strategy with high TVL and low risk. Estimated APY: 9.2%.',
+    userMessage: 'Park half my idle bUSDC into the safest yield on Kamino.',
+    blossomResponse: 'Allocating 50% of idle bUSDC ($2,000) to Kamino bUSDC vault. This is a conservative yield strategy with high TVL and low risk. Estimated APY: 9.2%.',
   },
   {
     id: 'events',
@@ -150,4 +150,3 @@ export function ChatSimulation() {
     </div>
   );
 }
-

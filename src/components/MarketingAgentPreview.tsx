@@ -27,11 +27,11 @@ const SCENARIOS: PreviewScenario[] = [
   },
   {
     id: 'defi',
-    userMessage: 'Park half my idle REDACTED into the safest yield on Kamino',
-    blossomResponse: 'Allocating 50% of idle REDACTED ($2,000) to Kamino REDACTED vault. This is a conservative yield strategy with high TVL and low risk.',
+    userMessage: 'Park half my idle bUSDC into the safest yield on Kamino',
+    blossomResponse: 'Allocating 50% of idle bUSDC ($2,000) to Kamino bUSDC vault. This is a conservative yield strategy with high TVL and low risk.',
     strategyCard: {
       title: 'DeFi Plan',
-      market: 'Kamino REDACTED vault',
+      market: 'Kamino bUSDC vault',
       details: ['Protocol: Kamino', 'Deposit: $2,000', 'Est. APY: 9.2%'],
     },
   },
@@ -141,4 +141,3 @@ export function MarketingAgentPreview() {
     </div>
   );
 }
-

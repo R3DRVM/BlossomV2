@@ -1,22 +1,29 @@
 import { AlertTriangle, X } from 'lucide-react';
 import { useBlossomContext } from '../context/BlossomContext';
 import { formatUsd } from '../lib/format';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 interface ConfirmTradeCardProps {
   draftId: string;
   showRiskWarning: boolean;
   riskReasons?: string[];
-  onConfirm: (draftId: string) => void;
+  onConfirm: (draftId: string) => void | Promise<void>;
   onEdit: () => void;
 }
 
 export default function ConfirmTradeCard({ draftId, showRiskWarning, riskReasons = [], onConfirm, onEdit }: ConfirmTradeCardProps) {
   const { strategies } = useBlossomContext();
   const [riskWarningCollapsed, setRiskWarningCollapsed] = useState(false);
+  const [isConfirming, setIsConfirming] = useState(false);
   
   const draft = strategies.find(s => s.id === draftId);
   if (!draft) return null;
+
+  // Clear pending once the strategy leaves draft, or if it disappears.
+  useEffect(() => {
+    if (!isConfirming) return;
+    if (!draft || draft.status !== 'draft') setIsConfirming(false);
+  }, [isConfirming, draft]);
   
   const marginUsd = draft.marginUsd || 0;
   const notionalUsd = draft.notionalUsd || (marginUsd * (draft.leverage || 1));
@@ -102,10 +109,24 @@ export default function ConfirmTradeCard({ draftId, showRiskWarning, riskReasons
         {/* Action buttons */}
         <div className="flex gap-2 pt-1 border-t border-slate-100">
           <button
-            onClick={() => onConfirm(draftId)}
-            className="flex-1 px-3 py-1.5 bg-blossom-pink text-white text-xs font-medium rounded hover:bg-blossom-pink/90 transition-colors"
+            onClick={async () => {
+              if (isConfirming) return;
+              setIsConfirming(true);
+              try {
+                await Promise.resolve(onConfirm(draftId));
+              } finally {
+                // If the backend errors and the strategy stays draft, allow retry.
+                setIsConfirming(false);
+              }
+            }}
+            disabled={isConfirming}
+            className={`flex-1 px-3 py-1.5 text-xs font-medium rounded transition-colors ${
+              !isConfirming
+                ? 'bg-blossom-pink text-white hover:bg-blossom-pink/90'
+                : 'bg-blossom-outline/40 text-slate-400 cursor-not-allowed'
+            }`}
           >
-            Confirm & Execute
+            {isConfirming ? 'Executing...' : 'Confirm & Execute'}
           </button>
           <button
             onClick={onEdit}
@@ -118,6 +139,5 @@ export default function ConfirmTradeCard({ draftId, showRiskWarning, riskReasons
     </div>
   );
 }
-
 
 

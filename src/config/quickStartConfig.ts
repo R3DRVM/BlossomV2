@@ -54,8 +54,8 @@ export const QUICK_START_CATEGORIES: QuickStartCategory[] = [
     subPrompts: [
       {
         id: 'safest-usdc-kamino',
-        label: 'Safest REDACTED yield (Kamino)',
-        prompt: 'Park half my idle REDACTED into the safest yield on Kamino.'
+        label: 'Safest bUSDC yield (Kamino)',
+        prompt: 'Park half my idle bUSDC into the safest yield on Kamino.'
       },
       {
         id: 'ladder-yield',
@@ -148,4 +148,3 @@ export const QUICK_START_CATEGORIES: QuickStartCategory[] = [
     ]
   }
 ];
-

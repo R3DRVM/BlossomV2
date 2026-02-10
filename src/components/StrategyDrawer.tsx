@@ -142,7 +142,7 @@ export default function StrategyDrawer({ isOpen, onClose, highlightedStrategyId 
               </p>
               <div className="space-y-2 mb-4 text-left max-w-sm mx-auto">
                 <div className="text-xs text-slate-600">– "Long ETH with 2% risk"</div>
-                <div className="text-xs text-slate-600">– "Park my idle REDACTED in yield"</div>
+                <div className="text-xs text-slate-600">– "Park my idle bUSDC in yield"</div>
                 <div className="text-xs text-slate-600">– "Bet 500 on the US election"</div>
               </div>
               <button
@@ -313,7 +313,7 @@ function DefiStrategyCard({
           <button
             onClick={handleMax}
             className="px-1.5 py-1 text-[10px] font-medium text-slate-500 hover:text-slate-700 transition-colors"
-            title="Use all available REDACTED"
+            title="Use all available bUSDC"
           >
             Max
           </button>
@@ -330,4 +330,3 @@ function DefiStrategyCard({
     </div>
   );
 }
-

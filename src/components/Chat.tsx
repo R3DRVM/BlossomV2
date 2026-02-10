@@ -11,6 +11,7 @@ import { callAgent, executeIntent, confirmIntent, type IntentExecutionResult } f
 import { getAddress, connectWallet, sendTransaction, type PreparedTx } from '../lib/walletAdapter';
 import { checkExecutionGuard, mapServerError, ERROR_MESSAGES, type ExecutionError } from '../lib/executionGuard';
 import { callBlossomChat } from '../lib/blossomApi';
+import { brandStableText } from '../lib/tokenBranding';
 import QuickStartPanel from './QuickStartPanel';
 import BlossomHelperOverlay from './BlossomHelperOverlay';
 import { HelpCircle } from 'lucide-react';
@@ -1648,8 +1649,11 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
         });
       }
       try {
+        // Normalize stable token branding in the prompt so the assistant doesn't emit
+        // "USDC"/"REDACTED" in user-facing copy.
+        const brandedUserText = brandStableText(userText);
         const response = await callBlossomChat({
-          userMessage: userText,
+          userMessage: brandedUserText,
           venue,
           clientPortfolio: {
             accountValueUsd: account.accountValue,
@@ -1777,7 +1781,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
             // Create perp draft strategy
             const perpReq = execReq as unknown as { kind: 'perp'; chain: string; market: string; side: 'long' | 'short'; leverage: number; riskPct?: number; marginUsd?: number };
             const leverageFromText = userText.match(/(\d+(?:\.\d+)?)\s*x/i);
-            const marginFromText = userText.match(/\$?(\d+(?:\.\d+)?)\s*(?:usd\s*)?(?:margin|stake|size)\b/i);
+            const marginFromText = userText.match(/\$?(\d+(?:\.\d+)?)\s*(?:(?:usd|usdc|busdc)\s*)?(?:margin|collateral|stake|size)\b/i);
             const riskFromText = userText.match(/(\d+(?:\.\d+)?)\s*%\s*risk/i);
 
             const parsedLeverage = leverageFromText ? Number(leverageFromText[1]) : undefined;
@@ -1881,7 +1885,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
 
             // CRITICAL FIX: Also create DeFi position for MessageBubble to render DeFi card
             // MessageBubble looks in defiPositions array, not strategies array
-            const commandForDefi = `Allocate amountUsd:"${amountUsd}" to protocol:"${defiMarketLabel}" REDACTED yield`;
+            const commandForDefi = `Allocate amountUsd:"${amountUsd}" to protocol:"${defiMarketLabel}" bUSDC yield`;
             const defiProposal = createDefiPlanFromCommand(commandForDefi, defiMarketLabel);
             defiProposalId = defiProposal.id;
 

@@ -465,7 +465,7 @@ function DefiEditorCard({
             <button
               onClick={handleMax}
               className="px-1 py-0.5 text-[10px] font-medium text-slate-500 hover:text-slate-700 transition-colors"
-              title="Use all available REDACTED"
+              title="Use all available bUSDC"
             >
               Max
             </button>
@@ -508,4 +508,3 @@ function DefiEditorCard({
   // Full mode (for drawer) - not implemented here, use existing StrategyDrawer components
   return null;
 }
-

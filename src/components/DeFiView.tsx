@@ -13,7 +13,7 @@ export default function DeFiView() {
   const [commandInput, setCommandInput] = useState('');
 
   const handleGeneratePlan = () => {
-    const command = commandInput.trim() || 'Deploy idle REDACTED into safest yield with max 5% drawdown.';
+    const command = commandInput.trim() || 'Deploy idle bUSDC into safest yield with max 5% drawdown.';
     createDefiPlanFromCommand(command);
     setCommandInput('');
   };
@@ -38,7 +38,7 @@ export default function DeFiView() {
             <textarea
               value={commandInput}
               onChange={(e) => setCommandInput(e.target.value)}
-              placeholder="Deploy idle REDACTED into safest yield with max 5% drawdown."
+              placeholder="Deploy idle bUSDC into safest yield with max 5% drawdown."
               className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent resize-none"
               rows={2}
             />
@@ -50,7 +50,7 @@ export default function DeFiView() {
             </button>
           </div>
           <div className="mt-2 text-xs text-gray-500">
-            Idle REDACTED: ${idleUsdc.toLocaleString()}
+            Idle bUSDC: ${idleUsdc.toLocaleString()}
           </div>
         </div>
 
@@ -85,7 +85,7 @@ export default function DeFiView() {
               <div className="text-xs font-medium text-gray-700 mb-2">Why this route?</div>
               <ul className="space-y-1 text-xs text-gray-600 list-disc pl-5">
                 <li>Uses a conservative yield vault on {latestDefiProposal.protocol}.</li>
-                <li>Keeps at least 50% of REDACTED in cash.</li>
+                <li>Keeps at least 50% of bUSDC in cash.</li>
                 <li>Targets moderate APY with controlled risk.</li>
               </ul>
             </div>
@@ -140,4 +140,3 @@ export default function DeFiView() {
     </div>
   );
 }
-

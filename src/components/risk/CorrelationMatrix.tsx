@@ -14,7 +14,7 @@ function computeCorrelation(asset1: string, asset2: string): number {
   if (asset1 === asset2) return 1.0;
 
   const majors = ['BTC', 'ETH'];
-  const stables = ['REDACTED', 'USDT', 'DAI'];
+  const stables = ['bUSDC', 'USDT', 'DAI'];
 
   const isMajor1 = majors.includes(asset1);
   const isMajor2 = majors.includes(asset2);
@@ -39,7 +39,7 @@ export default function CorrelationMatrix({ account, strategies, defiPositions }
 
   // Get top assets by exposure (excluding cash/spot)
   const topAssets = exposureByAsset
-    .filter(item => !item.asset.includes('REDACTED') && !item.asset.includes('Spot'))
+    .filter(item => !item.asset.includes('bUSDC') && !item.asset.includes('Spot'))
     .slice(0, 8)
     .map(item => {
       // Extract base asset name from label
@@ -136,4 +136,3 @@ export default function CorrelationMatrix({ account, strategies, defiPositions }
     </div>
   );
 }
-

@@ -13,6 +13,7 @@ import { getCachedLiveTicker, marketToSpotSymbol, computeIndicativeTpSl, getLive
 import { getCollapsedPreviewFields, type CollapsedPreviewFields } from '../lib/collapsedPreview';
 import IntentExecutionCard from './IntentExecutionCard';
 import type { IntentExecutionResult } from '../lib/apiClient';
+import { brandStableText } from '../lib/tokenBranding';
 
 function sanitizeMessageText(input: unknown): string {
   const raw = typeof input === 'string'
@@ -255,6 +256,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
     : undefined;
 
   const [isConfirmingDraft, setIsConfirmingDraft] = useState(false);
+  const [confirmingDefiProposalId, setConfirmingDefiProposalId] = useState<string | null>(null);
 
   // Clear draft pending state once the draft is no longer a draft (queued/executing/executed) or strategy changes.
   useEffect(() => {
@@ -329,6 +331,16 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
       }, 2000);
     }, 1500);
   };
+
+  const handleConfirmDefiPlan = async (proposalId: string) => {
+    if (confirmingDefiProposalId) return;
+    setConfirmingDefiProposalId(proposalId);
+    try {
+      await Promise.resolve(confirmDefiPlan(proposalId));
+    } finally {
+      setConfirmingDefiProposalId(null);
+    }
+  };
   
   const handleSuggestionClick = (suggestion: string) => {
     if (onInsertPrompt) {
@@ -361,7 +373,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
             className={`whitespace-pre-wrap m-0 ${isUser ? 'chat-message-text-user' : 'chat-message-text-assistant'}`}
             style={isUser ? { fontWeight: 400 } : { fontWeight: 400 }}
           >
-            {sanitizeMessageText(text)}
+            {brandStableText(sanitizeMessageText(text))}
           </p>
           {/* Intent Execution Card (from ledger system) */}
           {!isUser && intentExecution && (
@@ -1279,7 +1291,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
               </div>
               <div>
                 <div className="text-xs text-blossom-slate mb-0.5">Asset</div>
-                <div className="text-xs font-medium text-blossom-ink">{defiProposal.asset}</div>
+                <div className="text-xs font-medium text-blossom-ink">{brandStableText(defiProposal.asset)}</div>
               </div>
               <div>
                 <div className="text-xs text-blossom-slate mb-0.5">Deposit</div>
@@ -1300,11 +1312,12 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    confirmDefiPlan(defiProposal.id);
+                    handleConfirmDefiPlan(defiProposal.id);
                   }}
+                  disabled={confirmingDefiProposalId === defiProposal.id}
                   className="w-full h-10 px-4 text-sm font-medium rounded-xl bg-blossom-pink text-white hover:bg-blossom-pink/90 hover:shadow-md transition-all shadow-sm"
                 >
-                  Confirm & Execute
+                  {confirmingDefiProposalId === defiProposal.id ? 'Executing...' : 'Confirm & Execute'}
                 </button>
               </div>
             ) : (
@@ -1325,11 +1338,16 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    confirmDefiPlan(defiProposal.id);
+                    handleConfirmDefiPlan(defiProposal.id);
                   }}
-                  className="w-full px-3 py-2 text-xs font-medium rounded-lg bg-blossom-pink text-white hover:bg-blossom-pink/90 shadow-sm transition-colors"
+                  disabled={confirmingDefiProposalId === defiProposal.id}
+                  className={`w-full px-3 py-2 text-xs font-medium rounded-lg transition-colors ${
+                    confirmingDefiProposalId === defiProposal.id
+                      ? 'bg-blossom-outline/40 text-slate-400 cursor-not-allowed'
+                      : 'bg-blossom-pink text-white hover:bg-blossom-pink/90 shadow-sm'
+                  }`}
                 >
-                  Confirm & Execute
+                  {confirmingDefiProposalId === defiProposal.id ? 'Executing...' : 'Confirm & Execute'}
                 </button>
               </div>
             )}

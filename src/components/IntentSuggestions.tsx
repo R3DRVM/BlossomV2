@@ -21,6 +21,7 @@ import {
   Sparkles,
   ChevronRight,
 } from 'lucide-react';
+import { brandStableText } from '../lib/tokenBranding';
 
 // Intent categories
 export type IntentCategory = 'trading' | 'defi' | 'events' | 'portfolio' | 'recent';
@@ -426,11 +427,12 @@ export default function IntentSuggestions({
           const config = CATEGORY_CONFIG[suggestion.category];
           const Icon = config.icon;
           const isSelected = index === selectedIndex;
+          const displayText = brandStableText(suggestion.text);
 
           return (
             <button
               key={suggestion.id}
-              onClick={() => onSelect(suggestion)}
+              onClick={() => onSelect({ ...suggestion, text: displayText })}
               onMouseEnter={() => setSelectedIndex(index)}
               className={`
                 w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors
@@ -445,7 +447,7 @@ export default function IntentSuggestions({
               {/* Content */}
               <div className="flex-1 min-w-0">
                 <div className="text-sm text-slate-900 truncate">
-                  {highlightMatch(suggestion.text, inputValue)}
+                  {highlightMatch(displayText, inputValue)}
                 </div>
                 {suggestion.description && (
                   <div className="text-[10px] text-slate-500 truncate mt-0.5">

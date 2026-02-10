@@ -41,22 +41,22 @@ function getQuickActionsForVenue(venue: Venue): Array<{ title: string; descripti
     {
       title: 'Long BTC Perp',
       description: 'Open a leveraged long position on Bitcoin.',
-      prompt: 'Long BTC with 5x leverage, use 50 USDC as collateral',
+      prompt: 'Long BTC with 5x leverage, use 50 bUSDC as collateral',
     },
     {
       title: 'Swap to ETH',
-      description: 'Convert USDC to ETH via best route.',
-      prompt: 'Swap 25 USDC to ETH',
+      description: 'Convert bUSDC to ETH via best route.',
+      prompt: 'Swap 25 bUSDC to ETH',
     },
     {
       title: 'Deposit to Aave',
-      description: 'Earn yield by lending USDC.',
-      prompt: 'Deposit 100 USDC to Aave to earn interest',
+      description: 'Earn yield by lending bUSDC.',
+      prompt: 'Deposit 100 bUSDC to Aave to earn interest',
     },
     {
       title: 'Short ETH Hedge',
       description: 'Open a short to hedge ETH exposure.',
-      prompt: 'Short ETH with 3x leverage using 30 USDC',
+      prompt: 'Short ETH with 3x leverage using 30 bUSDC',
     },
   ];
 }
@@ -310,4 +310,3 @@ export default function QuickStartPanel({ onSelectPrompt }: QuickStartPanelProps
     </div>
   );
 }
-

@@ -218,7 +218,7 @@ export default function CopilotLayout() {
                     </li>
                     <li className={`flex items-start gap-2 ${hasDefi ? 'text-blossom-slate line-through' : ''}`}>
                       <span className="mt-0.5">{hasDefi ? '✓' : '•'}</span>
-                      <span>Park idle REDACTED into yield (e.g. Park half my idle REDACTED in the safest Kamino vault).</span>
+                      <span>Park idle bUSDC into yield (e.g. Park half my idle bUSDC in the safest Kamino vault).</span>
                     </li>
                     <li className={`flex items-start gap-2 ${hasEvent ? 'text-blossom-slate line-through' : ''}`}>
                       <span className="mt-0.5">{hasEvent ? '✓' : '•'}</span>
@@ -284,7 +284,7 @@ export default function CopilotLayout() {
                 onQuickAction={(action) => {
                   const prompts = {
                     perp: 'Long ETH with 3% risk and manage liquidation for me',
-                    defi: 'Park half my idle REDACTED into the safest yield on Kamino',
+                    defi: 'Park half my idle bUSDC into the safest yield on Kamino',
                     event: 'Risk 2% of my account on the highest-volume prediction market.'
                   };
                   if (insertPromptRef.current) {
@@ -304,4 +304,3 @@ export default function CopilotLayout() {
         </div>
       );
     }
-

@@ -30,9 +30,9 @@ const SCENARIOS: Scenario[] = [
   {
     id: 'defi',
     label: 'DeFi',
-    userMessage: 'Park half my idle REDACTED into the safest yield on Kamino.',
-    blossomMessage: "Allocating 50% of idle REDACTED into a conservative Kamino vault with high TVL and a stable yield profile. I'll monitor APY and rebalance if needed.",
-    executionMessage: 'Executed: 50% of idle REDACTED deployed — 30% into Kamino Conservative REDACTED vault and 20% into Kamino Stable REDACTED vault. Live blended APY and vault health are now tracked in your dashboard.',
+    userMessage: 'Park half my idle bUSDC into the safest yield on Kamino.',
+    blossomMessage: "Allocating 50% of idle bUSDC into a conservative Kamino vault with high TVL and a stable yield profile. I'll monitor APY and rebalance if needed.",
+    executionMessage: 'Executed: 50% of idle bUSDC deployed — 30% into Kamino Conservative bUSDC vault and 20% into Kamino Stable bUSDC vault. Live blended APY and vault health are now tracked in your dashboard.',
   },
   {
     id: 'predictions',

@@ -25,6 +25,13 @@ const ERC20_ABI = [
     outputs: [{ name: '', type: 'uint256' }],
   },
   {
+    name: 'decimals',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint8' }],
+  },
+  {
     name: 'allowance',
     type: 'function',
     stateMutability: 'view',
@@ -108,6 +115,68 @@ export async function erc20_balanceOf(
 }
 
 /**
+ * Get ERC20 token decimals
+ * @param token Token contract address
+ * @returns Token decimals as number
+ */
+export async function erc20_decimals(token: string): Promise<number> {
+  if (!ETH_TESTNET_RPC_URL) {
+    throw new Error('ETH_TESTNET_RPC_URL not configured');
+  }
+
+  const { encodeFunctionData } = await import('viem');
+  const to = token.toLowerCase() as `0x${string}`;
+
+  const data = encodeFunctionData({
+    abi: ERC20_ABI,
+    functionName: 'decimals',
+    args: [],
+  });
+
+  try {
+    const response = await fetch(ETH_TESTNET_RPC_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'eth_call',
+        params: [
+          {
+            to,
+            data,
+          },
+          'latest',
+        ],
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`RPC call failed: ${response.statusText}`);
+    }
+
+    const jsonResult: unknown = await response.json();
+    const result = jsonResult as JsonRpcResponse<string>;
+
+    if (result.error) {
+      throw new Error(`RPC error: ${result.error.message || JSON.stringify(result.error)}`);
+    }
+
+    if (!result.result) {
+      throw new Error('RPC response missing result field');
+    }
+
+    const dec = Number(decodeUint256(result.result));
+    if (!Number.isFinite(dec) || dec < 0 || dec > 255) {
+      throw new Error(`Invalid decimals: ${dec}`);
+    }
+    return dec;
+  } catch (error: any) {
+    throw new Error(`Failed to fetch ERC20 decimals: ${error.message}`);
+  }
+}
+
+/**
  * Get ERC20 token allowance for a spender
  * @param token Token contract address
  * @param owner Owner address
@@ -175,5 +244,4 @@ export async function erc20_allowance(
     throw new Error(`Failed to fetch ERC20 allowance: ${error.message}`);
   }
 }
-
 

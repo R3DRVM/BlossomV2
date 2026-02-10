@@ -7037,14 +7037,23 @@ app.get('/api/wallet/balances', maybeCheckAccess, async (req, res) => {
     // Fetch demo token balances (if configured)
     if (DEMO_REDACTED_ADDRESS) {
       try {
-        const { erc20_balanceOf } = await import('../executors/erc20Rpc');
+        const { erc20_balanceOf, erc20_decimals } = await import('../executors/erc20Rpc');
+        const { formatUnits } = await import('viem');
         const balance = await erc20_balanceOf(DEMO_REDACTED_ADDRESS, address);
+        let decimals = 6;
+        try {
+          decimals = await erc20_decimals(DEMO_REDACTED_ADDRESS);
+        } catch {
+          // Fallback to 6 decimals for stable tokens
+        }
+        const ui = formatUnits(balance, decimals);
+        const uiNum = Number(ui);
         tokens.push({
           address: DEMO_REDACTED_ADDRESS,
           symbol: 'REDACTED',
-          decimals: 6,
+          decimals,
           raw: '0x' + balance.toString(16),
-          formatted: (Number(balance) / 1e6).toFixed(2),
+          formatted: Number.isFinite(uiNum) ? uiNum.toFixed(2) : ui,
         });
       } catch (e: any) {
         notes.push(`REDACTED balance fetch failed: ${e.message}`);
@@ -7055,14 +7064,23 @@ app.get('/api/wallet/balances', maybeCheckAccess, async (req, res) => {
 
     if (DEMO_WETH_ADDRESS) {
       try {
-        const { erc20_balanceOf } = await import('../executors/erc20Rpc');
+        const { erc20_balanceOf, erc20_decimals } = await import('../executors/erc20Rpc');
+        const { formatUnits } = await import('viem');
         const balance = await erc20_balanceOf(DEMO_WETH_ADDRESS, address);
+        let decimals = 18;
+        try {
+          decimals = await erc20_decimals(DEMO_WETH_ADDRESS);
+        } catch {
+          // Fallback to 18 decimals for WETH
+        }
+        const ui = formatUnits(balance, decimals);
+        const uiNum = Number(ui);
         tokens.push({
           address: DEMO_WETH_ADDRESS,
           symbol: 'WETH',
-          decimals: 18,
+          decimals,
           raw: '0x' + balance.toString(16),
-          formatted: (Number(balance) / 1e18).toFixed(6),
+          formatted: Number.isFinite(uiNum) ? uiNum.toFixed(6) : ui,
         });
       } catch (e: any) {
         notes.push(`WETH balance fetch failed: ${e.message}`);
