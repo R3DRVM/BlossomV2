@@ -66,6 +66,7 @@ import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import { BlossomAction, BlossomPortfolioSnapshot, BlossomExecutionRequest, ExecutionResult } from '../types/blossom';
 import { validateActions, buildBlossomPrompts } from '../utils/actionParser';
+import { appendMessage } from '../conversation';
 import { callLlm } from '../services/llmClient';
 import * as perpsSim from '../plugins/perps-sim';
 import * as defiSim from '../plugins/defi-sim';
@@ -1213,6 +1214,9 @@ interface ChatRequest {
   userMessage: string;
   venue: 'hyperliquid' | 'event_demo';
   clientPortfolio?: Partial<BlossomPortfolioSnapshot>;
+  conversationId?: string;
+  history?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  route?: 'chat' | 'planner';
 }
 
 /**
@@ -1258,8 +1262,9 @@ interface ChatResponse {
 app.post('/api/chat', maybeCheckAccess, async (req, res) => {
   const chatStartTime = Date.now();
   try {
-    const { userMessage, venue, clientPortfolio }: ChatRequest = req.body;
+    const { userMessage, venue, clientPortfolio, conversationId, history, route }: ChatRequest = req.body;
 
+    const chatDebugEnabled = process.env.DEBUG_CHAT === 'true';
     // Telemetry: log chat request
     logEvent('chat_request', {
       venue,
@@ -1271,11 +1276,16 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
     }
 
     // Log incoming request for debugging
-    console.log('[api/chat] Received request:', { 
-      userMessage: userMessage ? userMessage.substring(0, 100) : 'undefined', 
-      venue,
-      messageLength: userMessage ? userMessage.length : 0
-    });
+    if (chatDebugEnabled) {
+      console.log('[api/chat] Received request:', { 
+        userMessage: userMessage ? userMessage.substring(0, 100) : 'undefined', 
+        venue,
+        messageLength: userMessage ? userMessage.length : 0,
+        conversationId: conversationId || 'none',
+        historyLength: Array.isArray(history) ? history.length : 0,
+        route: route || 'planner',
+      });
+    }
 
     // Get current portfolio snapshot before applying new actions
     const portfolioBefore = buildPortfolioSnapshot();
@@ -1283,6 +1293,10 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
 
     // Normalize user input first (handle edge cases like "5weth" → "5 weth")
     const normalizedUserMessage = normalizeUserInput(userMessage);
+
+    const conversationSessionId = conversationId
+      ? `conv:${conversationId}`
+      : undefined;
 
     // =============================================================================
     // CONVERSATIONAL BASELINE (P0 Fix: Friendly responses for common queries)
@@ -1293,7 +1307,9 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
     // 1. GREETINGS: "hi", "hello", "hey", "yo", "sup", "good morning", etc.
     const GREETING_RE = /^(hi|hello|hey|yo|sup|howdy|hola|good\s*(morning|afternoon|evening)|what'?s?\s*up|greetings?)[\s!?.]*$/i;
     if (GREETING_RE.test(normalizedUserMessage.trim())) {
-      console.log('[api/chat] Greeting detected - returning friendly response');
+      if (chatDebugEnabled) {
+        console.log('[api/chat] Greeting detected - returning friendly response');
+      }
       const portfolioAfter = buildPortfolioSnapshot();
       const usdcBalance = portfolioAfter.balances.find(b => b.symbol === 'REDACTED')?.balanceUsd || 0;
 
@@ -1324,7 +1340,9 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
     // 2. BALANCE QUERIES: "what's my balance", "whats my balance", "balance", "how much do i have"
     const BALANCE_RE = /^(what'?s?\s*(my\s*)?(balance|money|funds|holdings)|my\s*balance|balance|how\s*much\s*(do\s*i\s*have|money)|show\s*(my\s*)?(balance|funds))[\s?!]*$/i;
     if (BALANCE_RE.test(normalizedUserMessage.trim())) {
-      console.log('[api/chat] Balance query detected');
+      if (chatDebugEnabled) {
+        console.log('[api/chat] Balance query detected');
+      }
       const portfolioAfter = buildPortfolioSnapshot();
       const balances = portfolioAfter.balances || [];
 
@@ -1378,7 +1396,9 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
     // 3. HELP/CAPABILITY QUERIES: "help", "what can you do", "how do you work"
     const HELP_RE = /^(help|what\s*can\s*you\s*(do|help\s*with)|how\s*(do\s*you\s*work|does\s*this\s*work)|what\s*are\s*you|who\s*are\s*you|getting\s*started|how\s*to\s*(start|begin|use))[\s?!]*$/i;
     if (HELP_RE.test(normalizedUserMessage.trim())) {
-      console.log('[api/chat] Help query detected');
+      if (chatDebugEnabled) {
+        console.log('[api/chat] Help query detected');
+      }
       const portfolioAfter = buildPortfolioSnapshot();
 
       const response = "I'm Blossom, your AI trading copilot! Here's what I can help with:\n\n" +
@@ -1530,7 +1550,9 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
       /\b(top\s+5\s+defi|top\s+defi\s+protocols|defi\s+protocols\s+by\s+tvl)\b/i.test(normalizedUserMessage);
 
     if (hasListDefiProtocolsIntent) {
+      if (chatDebugEnabled) {
       console.log('[api/chat] DeFi TVL query detected - fetching top protocols');
+    }
 
       // Extract requested count (default: 5)
       let requestedCount = 5;
@@ -1582,7 +1604,9 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
     const hasPriceQueryIntent = !isSwapIntent && (PRICE_QUERY_RE.test(normalizedUserMessage) || SLANG_PRICE_RE.test(normalizedUserMessage) || PUMP_PRICE_RE.test(normalizedUserMessage));
 
     if (hasPriceQueryIntent) {
-      console.log('[api/chat] Price query detected');
+      if (chatDebugEnabled) {
+        console.log('[api/chat] Price query detected');
+      }
 
       // Extract which asset(s) user is asking about
       const ethMatch = /\b(eth|ethereum)\b/i.test(normalizedUserMessage);
@@ -1652,7 +1676,9 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
                                    EXPOSURE_QUERY_RE.test(normalizedUserMessage);
 
     if (hasPositionQueryIntent) {
-      console.log('[api/chat] Position/exposure query detected');
+      if (chatDebugEnabled) {
+        console.log('[api/chat] Position/exposure query detected');
+      }
 
       // Use clientPortfolio if available, otherwise use server-side portfolio
       const portfolio = clientPortfolio || portfolioBefore;
@@ -1741,7 +1767,9 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
       /\b(show\s+me\s+top\s+(prediction|pred)\s+markets?)\b/i.test(normalizedUserMessage);
 
     if (hasListEventMarketsIntent) {
-      console.log('[api/chat] Event Markets list query detected - fetching top markets');
+      if (chatDebugEnabled) {
+        console.log('[api/chat] Event Markets list query detected - fetching top markets');
+      }
 
       // Extract requested count (default: 5)
       let requestedCount = 5;
@@ -1888,6 +1916,43 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
       venue: venue || 'hyperliquid',
     });
 
+    const boundedHistory = Array.isArray(history) ? history.slice(-16) : [];
+
+    if (conversationSessionId) {
+      appendMessage(conversationSessionId, {
+        role: 'user',
+        content: normalizedUserMessage,
+      });
+    }
+    const historyBlock = boundedHistory.length
+      ? `**Conversation History:**\n${boundedHistory
+          .map(item => `${item.role.toUpperCase()}: ${item.content}`)
+          .join('\n')}\n\n`
+      : '';
+
+    let llmSystemPrompt = systemPrompt;
+    let llmUserPrompt = userPrompt;
+    const routeDecision = route || 'planner';
+    const wantsChatOnly = routeDecision === 'chat';
+
+    if (wantsChatOnly) {
+      llmSystemPrompt = `You are Blossom, a conversational assistant. Answer the user's question directly and helpfully without producing any trading actions. Respond with ONLY a JSON object that includes "assistantMessage", an empty "actions" array, and "executionRequest": null. Do NOT omit executionRequest.\n\n${systemPrompt}`;
+      llmUserPrompt = `${historyBlock}${userPrompt}`;
+    } else if (boundedHistory.length > 0) {
+      llmUserPrompt = `${historyBlock}${userPrompt}`;
+    }
+
+    if (chatDebugEnabled) {
+      const hasGeminiKey = Boolean(process.env.BLOSSOM_GEMINI_API_KEY || process.env.GEMINI_API_KEY);
+      console.log('[api/chat] LLM context debug', {
+        provider: process.env.BLOSSOM_MODEL_PROVIDER || 'stub',
+        hasGeminiKey,
+        conversationId: conversationId || 'none',
+        historyLength: boundedHistory.length,
+        route: routeDecision,
+      });
+    }
+
     let assistantMessage = '';
     let actions: BlossomAction[] = [];
     let modelResponse: ModelResponse | null = null;
@@ -1936,19 +2001,23 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
     const isStubMode = provider === 'stub' || (!hasOpenAIKey && !hasAnthropicKey);
 
     // Log stub mode detection for debugging
-    console.log('[api/chat] Stub mode check:', {
-      provider,
-      hasOpenAIKey,
-      hasAnthropicKey,
-      isStubMode,
-      isPredictionMarketQuery,
-      isSwapPrompt,
-      userMessage: userMessage.substring(0, 100)
-    });
+    if (chatDebugEnabled) {
+      console.log('[api/chat] Stub mode check:', {
+        provider,
+        hasOpenAIKey,
+        hasAnthropicKey,
+        isStubMode,
+        isPredictionMarketQuery,
+        isSwapPrompt,
+        userMessage: userMessage.substring(0, 100)
+      });
+    }
 
     if (isStubMode && isPredictionMarketQuery) {
       // Short-circuit: build deterministic response for prediction markets in stub mode
-      console.log('[api/chat] ✅ STUB SHORT-CIRCUIT: Building deterministic prediction market response');
+      if (chatDebugEnabled) {
+        console.log('[api/chat] ✅ STUB SHORT-CIRCUIT: Building deterministic prediction market response');
+      }
       
       try {
         const { buildPredictionMarketResponse } = await import('../utils/actionParser');
@@ -1966,26 +2035,30 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
           executionRequest: null,
           modelOk: true,
         };
-        console.log('[api/chat] ✅ Stub response built:', { 
-          messageLength: assistantMessage?.length || 0, 
-          actionCount: actions.length,
-          preview: assistantMessage ? assistantMessage.substring(0, 150) : 'N/A'
-        });
+        if (chatDebugEnabled) {
+          console.log('[api/chat] ✅ Stub response built:', { 
+            messageLength: assistantMessage?.length || 0, 
+            actionCount: actions.length,
+            preview: assistantMessage ? assistantMessage.substring(0, 150) : 'N/A'
+          });
+        }
       } catch (error: any) {
         console.error('[api/chat] ❌ Failed to build stub prediction market response:', error.message);
         // Fall through to normal stub LLM call
-        const llmOutput = await callLlm({ systemPrompt, userPrompt });
+        const llmOutput = await callLlm({ systemPrompt: llmSystemPrompt, userPrompt: llmUserPrompt });
         modelResponse = await parseModelResponse(llmOutput.rawJson, isSwapPrompt);
         assistantMessage = modelResponse.assistantMessage;
         actions = modelResponse.actions;
       }
     } else {
       // Normal flow: call LLM (stub or real)
-      console.log('[api/chat] → Normal LLM flow (stub or real)');
+      if (chatDebugEnabled) {
+        console.log('[api/chat] → Normal LLM flow (stub or real)');
+      }
       
       // Normalize user input before processing
       const normalizedUserMessage = normalizeUserInput(userMessage);
-      const normalizedUserPrompt = userPrompt.replace(userMessage, normalizedUserMessage);
+      const normalizedUserPrompt = `${historyBlock}${userPrompt.replace(userMessage, normalizedUserMessage)}`;
       
       // Detect prompts on normalized message
       const normalizedIsSwapPrompt = /swap|exchange|convert/i.test(normalizedUserMessage) && 
@@ -2020,7 +2093,7 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
       
       try {
         // Call LLM with normalized prompt
-        const llmOutput = await callLlm({ systemPrompt, userPrompt: normalizedUserPrompt });
+        const llmOutput = await callLlm({ systemPrompt: llmSystemPrompt, userPrompt: wantsChatOnly ? llmUserPrompt : normalizedUserPrompt });
 
         // Parse JSON response with normalized message for fallback
         modelResponse = await parseModelResponse(llmOutput.rawJson, normalizedIsSwapPrompt, normalizedIsDefiPrompt, normalizedUserMessage, normalizedIsPerpPrompt, normalizedIsEventPrompt);
@@ -2082,6 +2155,13 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
           };
         }
       }
+    }
+
+    if (conversationSessionId) {
+      appendMessage(conversationSessionId, {
+        role: 'assistant',
+        content: assistantMessage || '',
+      });
     }
 
     // Apply validated actions to sims and collect execution results

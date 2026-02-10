@@ -14,7 +14,7 @@ export interface Strategy {
   createdAt: string;
   side: 'Long' | 'Short';
   market: string;
-  riskPercent: number;
+  riskPercent?: number;
   entry: number;
   takeProfit: number;
   stopLoss: number;
@@ -467,6 +467,51 @@ function saveChatSessionsToStorage(sessions: ChatSession[], activeId: string | n
 // Export identity functions for use in other components
 export { getUserIdentityKey, getOrCreateAnonId };
 
+type PersistedExecutionSnapshot = {
+  id: string;
+  venue: Venue;
+  executionMode: string;
+  chainId?: string;
+  symbol: string;
+  side: 'Long' | 'Short';
+  leverage?: number;
+  collateralUsd?: number;
+  entry?: number;
+  takeProfit?: number;
+  stopLoss?: number;
+  txHash?: string;
+  orderId?: string;
+  status: StrategyStatus;
+  timestamp: number;
+};
+
+const EXECUTION_SNAPSHOT_PREFIX = 'blossom_executions';
+
+function getExecutionSnapshotKey(identityKey: string, venue: Venue, mode: string) {
+  return `${EXECUTION_SNAPSHOT_PREFIX}:${identityKey}:${venue}:${mode}`;
+}
+
+function loadExecutionSnapshots(identityKey: string, venue: Venue, mode: string): PersistedExecutionSnapshot[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const stored = localStorage.getItem(getExecutionSnapshotKey(identityKey, venue, mode));
+    if (!stored) return [];
+    const parsed = JSON.parse(stored) as PersistedExecutionSnapshot[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveExecutionSnapshots(identityKey: string, venue: Venue, mode: string, snapshots: PersistedExecutionSnapshot[]) {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(getExecutionSnapshotKey(identityKey, venue, mode), JSON.stringify(snapshots));
+  } catch {
+    // swallow
+  }
+}
+
 // Risk Profile helpers
 const DEFAULT_RISK_PROFILE: RiskProfile = {
   maxPerTradeRiskPct: 3,
@@ -542,7 +587,9 @@ function applyExecutedStrategyToBalances(
   currentAccount: AccountState,
   strategy: Strategy
 ): AccountState {
-  const notional = (currentAccount.accountValue * strategy.riskPercent) / 100;
+  const notional = typeof strategy.riskPercent === 'number'
+    ? (currentAccount.accountValue * strategy.riskPercent) / 100
+    : 0;
   const baseAsset = getBaseAsset(strategy.market);
   
   // Find REDACTED balance
@@ -661,6 +708,7 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
       setAccount(INITIAL_ACCOUNT);
     }
   }, [executionMode, forceDemoPortfolio]);
+
   const [activeTab, setActiveTab] = useState<ActiveTab>('copilot');
   const [venue, setVenue] = useState<Venue>('hyperliquid');
   const [onboarding, setOnboarding] = useState<OnboardingState>({
@@ -669,11 +717,61 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
     openedRiskCenter: false,
     dismissed: false,
   });
+
   const [lastRiskSnapshot, setLastRiskSnapshot] = useState<RiskSnapshot | null>(null);
   const [defiPositions, setDefiPositions] = useState<DefiPosition[]>([]);
   const [latestDefiProposal, setLatestDefiProposal] = useState<DefiPosition | null>(null);
   const [riskProfile, setRiskProfile] = useState<RiskProfile>(loadRiskProfileFromStorage());
   const [manualWatchlist, setManualWatchlist] = useState<ManualWatchAsset[]>(loadManualWatchlistFromStorage());
+
+  const executionSnapshotsRef = useRef<PersistedExecutionSnapshot[]>([]);
+
+  useEffect(() => {
+    const identityKey = getUserIdentityKey();
+    const stored = loadExecutionSnapshots(identityKey, venue, executionMode);
+    executionSnapshotsRef.current = stored;
+
+    if (stored.length === 0) {
+      return;
+    }
+
+    const rehydratedStrategies: Strategy[] = stored.map(snapshot => {
+      const leverage = snapshot.leverage || 1;
+      const marginUsd = snapshot.collateralUsd || 0;
+      const notionalUsd = marginUsd * leverage;
+      return {
+        id: snapshot.id,
+        createdAt: new Date(snapshot.timestamp).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+        side: snapshot.side,
+        market: snapshot.symbol,
+        riskPercent: undefined,
+        entry: snapshot.entry ?? 0,
+        takeProfit: snapshot.takeProfit ?? 0,
+        stopLoss: snapshot.stopLoss ?? 0,
+        status: snapshot.status,
+        sourceText: `Rehydrated ${snapshot.symbol} ${snapshot.side}`,
+        notionalUsd,
+        marginUsd,
+        isClosed: snapshot.status === 'closed',
+        instrumentType: 'perp',
+        leverage,
+        txHash: snapshot.txHash,
+      };
+    });
+
+    if (rehydratedStrategies.length > 0) {
+      setAccount(prev => ({
+        ...prev,
+        openPerpExposure: rehydratedStrategies.reduce((sum, s) => sum + (s.notionalUsd || 0), 0),
+      }));
+    }
+
+    setStrategies(prev => {
+      const existingIds = new Set(prev.map(s => s.id));
+      const merged = [...rehydratedStrategies.filter(s => !existingIds.has(s.id)), ...prev];
+      return merged;
+    });
+  }, [venue, executionMode, currentIdentityKey]);
 
   // Refs for position refresh deduplication (Phase 2 - Fix duplicate positions)
   const refreshInProgressRef = useRef<boolean>(false);
@@ -685,7 +783,7 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
       createdAt: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
       side: strategyInput.side || 'Long',
       market: strategyInput.market || 'ETH-PERP',
-      riskPercent: strategyInput.riskPercent || 3,
+      riskPercent: strategyInput.riskPercent ?? 3,
       entry: strategyInput.entry || 0,
       takeProfit: strategyInput.takeProfit || 0,
       stopLoss: strategyInput.stopLoss || 0,
@@ -725,7 +823,9 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
         if (strategyToUpdate.instrumentType === 'event') {
           // For events, compute stake
           if (!strategyToUpdate.stakeUsd) {
-            const stake = (account.accountValue * strategyToUpdate.riskPercent) / 100;
+            const stake = typeof strategyToUpdate.riskPercent === 'number'
+              ? (account.accountValue * strategyToUpdate.riskPercent) / 100
+              : 0;
             const usdcBalance = account.balances.find(b => b.symbol === 'REDACTED');
             const availableUsdc = usdcBalance?.balanceUsd || 0;
             computedStake = Math.min(stake, availableUsdc);
@@ -735,7 +835,9 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
         } else {
           // For perps, compute notional
           if (!strategyToUpdate.notionalUsd) {
-            const notional = (account.accountValue * strategyToUpdate.riskPercent) / 100;
+            const notional = typeof strategyToUpdate.riskPercent === 'number'
+              ? (account.accountValue * strategyToUpdate.riskPercent) / 100
+              : 0;
             const usdcBalance = account.balances.find(b => b.symbol === 'REDACTED');
             const availableUsdc = usdcBalance?.balanceUsd || 0;
             computedNotional = Math.min(notional, availableUsdc);
@@ -754,6 +856,42 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
         }
         return s;
       });
+
+      if (status === 'executed') {
+        const executed = updated.find(s => s.id === id);
+        if (executed && executed.instrumentType === 'perp') {
+          const identityKey = getUserIdentityKey();
+          const snapshot: PersistedExecutionSnapshot = {
+            id: executed.id,
+            venue,
+            executionMode,
+            chainId: executed.explorerUrl || executionMode,
+            symbol: executed.market,
+            side: executed.side,
+            leverage: executed.leverage,
+            collateralUsd: executed.marginUsd,
+            entry: executed.entry,
+            takeProfit: executed.takeProfit,
+            stopLoss: executed.stopLoss,
+            txHash: executed.txHash,
+            orderId: (executed as any).orderId,
+            status: executed.status,
+            timestamp: Date.now(),
+          };
+          const next = [snapshot, ...executionSnapshotsRef.current.filter(item => item.id !== snapshot.id)];
+          executionSnapshotsRef.current = next;
+          saveExecutionSnapshots(identityKey, venue, executionMode, next);
+        }
+      }
+
+      if (status === 'closed') {
+        const identityKey = getUserIdentityKey();
+        const next = executionSnapshotsRef.current.map(item =>
+          item.id === id ? { ...item, status: 'closed' as StrategyStatus } : item
+        );
+        executionSnapshotsRef.current = next;
+        saveExecutionSnapshots(identityKey, venue, executionMode, next);
+      }
       
       // After updating strategies, if status is executed, apply balance changes
       if (status === 'executed') {
@@ -799,7 +937,7 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
     const activeStrategies = strategies.filter(s => 
       (s.status === 'executed' || s.status === 'executing') && !s.isClosed
     );
-    const totalRisk = activeStrategies.reduce((sum, s) => sum + s.riskPercent, 0);
+    const totalRisk = activeStrategies.reduce((sum, s) => sum + (s.riskPercent ?? 0), 0);
     
     setAccount(prev => {
       const newExposure = Math.min(prev.accountValue * (totalRisk / 100), prev.accountValue * 0.5);
@@ -1818,7 +1956,7 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
           createdAt: new Date(pos.opened_at * 1000).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
           side: side as 'Long' | 'Short',
           market: `${pos.market}-PERP`,
-          riskPercent: 2, // Default risk
+          riskPercent: undefined,
           entry: Math.round(entryPriceNum),
           takeProfit: Math.round(takeProfit),
           stopLoss: Math.round(stopLoss),

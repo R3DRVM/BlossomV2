@@ -15,13 +15,17 @@ export default function PositionSummaryCard({ strategy }: PositionSummaryCardPro
 
   // Calculate current PnL (simulated)
   const currentPrice = strategy.entry * 1.02; // Simulate 2% gain
+  const riskPct = strategy.riskPercent ?? 0;
   const pnl = strategy.side === 'Long' 
-    ? ((currentPrice - strategy.entry) / strategy.entry) * strategy.riskPercent * 100
-    : ((strategy.entry - currentPrice) / strategy.entry) * strategy.riskPercent * 100;
-  const pnlUsd = (strategy.entry * strategy.riskPercent / 100) * (pnl / 100);
+    ? ((currentPrice - strategy.entry) / strategy.entry) * riskPct * 100
+    : ((strategy.entry - currentPrice) / strategy.entry) * riskPct * 100;
+  const pnlUsd = (strategy.entry * riskPct / 100) * (pnl / 100);
 
   // Calculate leverage (simplified)
   const leverage = Math.round((strategy.takeProfit - strategy.stopLoss) / strategy.entry * 10);
+  const sizeLabel = typeof strategy.riskPercent === 'number'
+    ? `${strategy.riskPercent}%`
+    : (strategy.marginUsd ? `$${strategy.marginUsd.toLocaleString()} margin` : '');
 
   const handleClose = async () => {
     if (isClosing) return;
@@ -71,15 +75,19 @@ export default function PositionSummaryCard({ strategy }: PositionSummaryCardPro
         </div>
         <div className="flex justify-between">
           <span className="text-blossom-slate">Size / Leverage:</span>
-          <span className="font-medium text-blossom-ink">{strategy.riskPercent}% / {leverage}x</span>
+          <span className="font-medium text-blossom-ink">
+            {sizeLabel ? `${sizeLabel} / ${leverage}x` : `${leverage}x`}
+          </span>
         </div>
-        <div className="flex justify-between items-center">
-          <span className="text-blossom-slate">Risk:</span>
-          <div className="flex items-center gap-2">
-            <span className="font-medium text-blossom-ink">{strategy.riskPercent}%</span>
-            <RiskBadge riskPercent={strategy.riskPercent} />
+        {typeof strategy.riskPercent === 'number' && (
+          <div className="flex justify-between items-center">
+            <span className="text-blossom-slate">Risk:</span>
+            <div className="flex items-center gap-2">
+              <span className="font-medium text-blossom-ink">{strategy.riskPercent}%</span>
+              <RiskBadge riskPercent={strategy.riskPercent} />
+            </div>
           </div>
-        </div>
+        )}
         <div className="flex justify-between">
           <span className="text-blossom-slate">Take Profit:</span>
           <span className="font-medium text-blossom-success">${strategy.takeProfit.toLocaleString()}</span>

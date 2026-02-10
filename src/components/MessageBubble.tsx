@@ -92,7 +92,7 @@ function getStrategyReasoning(strategy: ParsedStrategy, instrumentType?: 'perp' 
   // Note: riskProfile is not available in this helper, so we'll use a default
   // The actual threshold check happens in the component where riskProfile is available
   const defaultThreshold = 3;
-  if (strategy.riskPercent <= defaultThreshold) {
+  if (typeof strategy.riskPercent === 'number' && strategy.riskPercent <= defaultThreshold) {
     reasons.push(`Risk is capped at or below your typical ${defaultThreshold}% per-strategy target.`);
   } else {
     reasons.push(`Risk is above the usual ${defaultThreshold}% per-strategy target, so I'm keeping a tighter SL.`);
@@ -167,8 +167,12 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
   const isClosed = currentStrategy?.isClosed || false;
   
   const maxPerTrade = riskProfile?.maxPerTradeRiskPct ?? 3;
-  const isHighRisk = strategy ? strategy.riskPercent > maxPerTrade : false;
-  const isVeryHighRisk = strategy ? strategy.riskPercent >= maxPerTrade * 1.5 : false;
+  const isHighRisk = strategy && typeof strategy.riskPercent === 'number'
+    ? strategy.riskPercent > maxPerTrade
+    : false;
+  const isVeryHighRisk = strategy && typeof strategy.riskPercent === 'number'
+    ? strategy.riskPercent >= maxPerTrade * 1.5
+    : false;
   
   const biasWarning = strategy ? getPortfolioBiasWarning(strategies, strategy) : null;
   
@@ -745,7 +749,9 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                           {currentStrategy?.instrumentType === 'perp' && currentStrategy.takeProfit && currentStrategy.takeProfit > 0 && (
                             <span className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-emerald-50 text-emerald-700 whitespace-nowrap">TP armed</span>
                           )}
-                          {currentStrategy && <RiskBadge riskPercent={strategy.riskPercent} />}
+                          {currentStrategy && typeof strategy.riskPercent === 'number' && (
+                            <RiskBadge riskPercent={strategy.riskPercent} />
+                          )}
                         </>
                       )}
                       {(isDraft || (defiProposal && defiProposal.status === 'proposed')) && (
@@ -824,23 +830,25 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                       {strategy.side}
                     </div>
                   </div>
-                  <div>
-                    <div className="text-xs text-blossom-slate mb-0.5">Risk</div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium text-blossom-ink">
-                        {strategy.riskPercent}%
-                        {(() => {
-                          const riskUsd = (strategy.riskPercent / 100) * account.accountValue;
-                          return riskUsd > 0 ? (
-                            <span className="text-[11px] text-slate-500 ml-1">
-                              · ${riskUsd.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                            </span>
-                          ) : null;
-                        })()}
-                      </span>
-                      <RiskBadge riskPercent={strategy.riskPercent} />
+                  {typeof strategy.riskPercent === 'number' && (
+                    <div>
+                      <div className="text-xs text-blossom-slate mb-0.5">Risk</div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-blossom-ink">
+                          {strategy.riskPercent}%
+                          {(() => {
+                            const riskUsd = (strategy.riskPercent / 100) * account.accountValue;
+                            return riskUsd > 0 ? (
+                              <span className="text-[11px] text-slate-500 ml-1">
+                                · ${riskUsd.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                              </span>
+                            ) : null;
+                          })()}
+                        </span>
+                        <RiskBadge riskPercent={strategy.riskPercent} />
+                      </div>
                     </div>
-                  </div>
+                  )}
                   <div>
                     <div className="text-xs text-blossom-slate mb-0.5">Entry</div>
                       <div className="flex items-center gap-1">
@@ -894,15 +902,18 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                   Blossom interpreted this as: <span className="font-medium text-slate-700">{strategy.side}</span>{' '}
                   {(() => {
                     // Use final notional if available (after execution), otherwise compute from parsed values
-                    const notionalUsd = currentStrategy.notionalUsd || (strategy.riskPercent / 100) * account.accountValue * (currentStrategy.leverage || 1);
+                    const hasRisk = typeof strategy.riskPercent === 'number';
+                    const notionalUsd = currentStrategy.notionalUsd || (hasRisk ? (strategy.riskPercent / 100) * account.accountValue * (currentStrategy.leverage || 1) : 0);
                     return `$${notionalUsd.toLocaleString(undefined, { maximumFractionDigits: 0 })} notional`;
                   })()} on <span className="font-medium text-slate-700">{strategy.market}</span>{' '}
                   {(() => {
                     return `at ${formatLeverage(currentStrategy.leverage)}`;
                   })()} using {(() => {
-                    // Use final margin if available, otherwise compute from riskPercent
-                    const marginUsd = currentStrategy.marginUsd || (strategy.riskPercent / 100) * account.accountValue;
+                    const marginUsd = currentStrategy.marginUsd || (typeof strategy.riskPercent === 'number' ? (strategy.riskPercent / 100) * account.accountValue : 0);
                     const marginPct = account.accountValue > 0 ? (marginUsd / account.accountValue) * 100 : 0;
+                    if (typeof strategy.riskPercent !== 'number') {
+                      return `$${marginUsd.toLocaleString(undefined, { maximumFractionDigits: 0 })} margin`;
+                    }
                     return `$${marginUsd.toLocaleString(undefined, { maximumFractionDigits: 0 })} margin (~${marginPct.toFixed(1)}% of portfolio)`;
                   })()}
                   {perpDisplay.hasLive && (
@@ -912,7 +923,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                   )}.
                   {/* Step 3: Show collateral note if margin is capped or blocked */}
                   {((currentStrategy as any).executionNote || currentStrategy.marginUsd === 0 || 
-                    (currentStrategy.marginUsd && currentStrategy.marginUsd < (strategy.riskPercent / 100) * account.accountValue)) && (
+                    (typeof strategy.riskPercent === 'number' && currentStrategy.marginUsd && currentStrategy.marginUsd < (strategy.riskPercent / 100) * account.accountValue)) && (
                     <span className="block mt-0.5 text-[10px] text-slate-400 italic">
                       Perps are collateralized by bUSDC only in this demo.
                     </span>
@@ -938,12 +949,12 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
             {isCardExpanded && (
               <>
             {/* Risk Guardrails */}
-            {!isHighRisk && (
+            {!isHighRisk && typeof strategy.riskPercent === 'number' && (
               <div className="mt-1.5 text-[11px] text-gray-500">
                 This keeps your per-strategy risk at or below {maxPerTrade}% of account.
               </div>
             )}
-            {isHighRisk && (
+            {isHighRisk && typeof strategy.riskPercent === 'number' && (
               <div className="mt-1.5 rounded-md bg-yellow-50 px-2.5 py-1.5 text-[11px] text-yellow-800 border border-yellow-200">
                 This strategy uses {strategy.riskPercent}% of your account, above your typical {maxPerTrade}% risk per trade.
                 Make sure you're comfortable with a larger drawdown.

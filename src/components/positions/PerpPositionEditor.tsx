@@ -109,6 +109,7 @@ export default function PerpPositionEditor({
   const currentMargin = strategy.marginUsd || 0;
   // Task 3: riskUsd = marginUsd (in this demo, risk corresponds to margin posted)
   const riskUsd = currentMargin;
+  const riskPct = strategy.riskPercent ?? 0;
 
   const handleUpdateSize = (e: React.MouseEvent | React.KeyboardEvent) => {
     e.stopPropagation();
@@ -314,8 +315,12 @@ export default function PerpPositionEditor({
             <div>Notional (Exposure): ${currentNotional.toLocaleString()}</div>
             <div>Margin (Collateral): ${currentMargin.toLocaleString()}</div>
             <div className="flex items-center gap-2">
-              <span>Risk: {strategy.riskPercent.toFixed(1)}% (${riskUsd.toLocaleString()})</span>
-              <RiskBadge riskPercent={strategy.riskPercent} />
+              {typeof strategy.riskPercent === 'number' && (
+                <>
+                  <span>Risk: {strategy.riskPercent.toFixed(1)}% (${riskUsd.toLocaleString()})</span>
+                  <RiskBadge riskPercent={strategy.riskPercent} />
+                </>
+              )}
             </div>
           </div>
         </div>
