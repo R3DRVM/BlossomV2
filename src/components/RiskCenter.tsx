@@ -264,7 +264,8 @@ function LiquidationWatchlistSection({ executedStrategies, manualWatchlist, addW
                 </thead>
                 <tbody>
                   {executedStrategies.map((strategy) => {
-                    const liqBuffer = strategy.riskPercent > 3 ? 12 : 15;
+                    const riskPct = strategy.riskPercent ?? 0;
+                    const liqBuffer = riskPct > 3 ? 12 : 15;
                     const isHealthy = liqBuffer >= 15;
                     return (
                       <tr key={strategy.id} className="border-b border-gray-100">
@@ -605,7 +606,7 @@ export default function RiskCenter() {
                   : s.market;
                 return (
                   <option key={s.id} value={s.id}>
-                    {marketSymbol} · {s.side.toUpperCase()} · {s.riskPercent}%
+                    {marketSymbol} · {s.side.toUpperCase()} · {s.riskPercent ?? 0}%
                   </option>
                 );
               })}
@@ -622,7 +623,7 @@ export default function RiskCenter() {
           <div className="mb-3 text-xs text-gray-600">
             Metrics focused on: {selectedStrategyForFilter.instrumentType === 'event' 
               ? (selectedStrategyForFilter.eventLabel || selectedStrategyForFilter.eventKey || selectedStrategyForFilter.market)
-              : selectedStrategyForFilter.market} {selectedStrategyForFilter.side.toLowerCase()} @ {selectedStrategyForFilter.riskPercent}% risk.
+              : selectedStrategyForFilter.market} {selectedStrategyForFilter.side.toLowerCase()} @ {selectedStrategyForFilter.riskPercent ?? 0}% risk.
           </div>
         )}
         <div className="lg:grid lg:grid-cols-3 lg:gap-4 space-y-4 lg:space-y-0">

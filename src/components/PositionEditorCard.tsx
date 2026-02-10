@@ -104,8 +104,12 @@ function PerpEditorCard({
             <div className="text-[10px] text-slate-500 space-y-0.5">
               <div>Size: ${currentSize.toLocaleString()}</div>
               <div className="flex items-center gap-1.5">
-                <span>Risk: {strategy.riskPercent.toFixed(1)}%</span>
-                <RiskBadge riskPercent={strategy.riskPercent} />
+                {typeof strategy.riskPercent === 'number' && (
+                  <>
+                    <span>Risk: {strategy.riskPercent.toFixed(1)}%</span>
+                    <RiskBadge riskPercent={strategy.riskPercent} />
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -215,8 +219,12 @@ function EventEditorCard({
             <div className="text-[10px] text-slate-500 space-y-0.5">
               <div>Stake: ${stake.toLocaleString()}</div>
               <div className="flex items-center gap-1.5">
-                <span>Risk: {strategy.riskPercent?.toFixed(1) || '0.0'}%</span>
-                <RiskBadge riskPercent={strategy.riskPercent} />
+                {typeof strategy.riskPercent === 'number' && (
+                  <>
+                    <span>Risk: {strategy.riskPercent.toFixed(1)}%</span>
+                    <RiskBadge riskPercent={strategy.riskPercent} />
+                  </>
+                )}
               </div>
             </div>
           </div>
