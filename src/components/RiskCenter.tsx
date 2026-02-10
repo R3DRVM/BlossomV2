@@ -606,7 +606,8 @@ export default function RiskCenter() {
                   : s.market;
                 return (
                   <option key={s.id} value={s.id}>
-                    {marketSymbol} · {s.side.toUpperCase()} · {s.riskPercent ?? 0}%
+                    {marketSymbol} · {s.side.toUpperCase()}
+                    {typeof s.riskPercent === 'number' ? ` · ${s.riskPercent}%` : ''}
                   </option>
                 );
               })}
@@ -623,7 +624,10 @@ export default function RiskCenter() {
           <div className="mb-3 text-xs text-gray-600">
             Metrics focused on: {selectedStrategyForFilter.instrumentType === 'event' 
               ? (selectedStrategyForFilter.eventLabel || selectedStrategyForFilter.eventKey || selectedStrategyForFilter.market)
-              : selectedStrategyForFilter.market} {selectedStrategyForFilter.side.toLowerCase()} @ {selectedStrategyForFilter.riskPercent ?? 0}% risk.
+              : selectedStrategyForFilter.market} {selectedStrategyForFilter.side.toLowerCase()}
+            {typeof selectedStrategyForFilter.riskPercent === 'number'
+              ? ` @ ${selectedStrategyForFilter.riskPercent}% risk`
+              : ''}.
           </div>
         )}
         <div className="lg:grid lg:grid-cols-3 lg:gap-4 space-y-4 lg:space-y-0">

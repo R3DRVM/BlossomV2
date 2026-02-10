@@ -23,6 +23,9 @@ export default function PositionSummaryCard({ strategy }: PositionSummaryCardPro
 
   // Calculate leverage (simplified)
   const leverage = Math.round((strategy.takeProfit - strategy.stopLoss) / strategy.entry * 10);
+  const sizeLabel = typeof strategy.riskPercent === 'number'
+    ? `${strategy.riskPercent}%`
+    : (strategy.marginUsd ? `$${strategy.marginUsd.toLocaleString()} margin` : '');
 
   const handleClose = async () => {
     if (isClosing) return;
@@ -72,7 +75,9 @@ export default function PositionSummaryCard({ strategy }: PositionSummaryCardPro
         </div>
         <div className="flex justify-between">
           <span className="text-blossom-slate">Size / Leverage:</span>
-          <span className="font-medium text-blossom-ink">{riskPct}% / {leverage}x</span>
+          <span className="font-medium text-blossom-ink">
+            {sizeLabel ? `${sizeLabel} / ${leverage}x` : `${leverage}x`}
+          </span>
         </div>
         {typeof strategy.riskPercent === 'number' && (
           <div className="flex justify-between items-center">
