@@ -23,6 +23,7 @@ import { isOneClickAuthorized } from './OneClickExecution';
 import { isManualSigningEnabled } from './SessionEnforcementModal';
 // Task A: Removed ConfirmTradeCard import - using MessageBubble rich card instead
 import { BlossomLogo } from './BlossomLogo';
+import { DEMO_STABLE_INTERNAL_SYMBOL, formatTokenSymbol } from '../lib/tokenBranding';
 // ExecutionPlanCard removed - execution details now live inside chat plan card
 
 // =============================================================================
@@ -214,13 +215,34 @@ const QUICK_PROMPTS_EVENTS = [
   'Risk 2% of my account on the highest-volume prediction market.',
 ];
 
-// Welcome message constant
-const WELCOME_MESSAGE: ChatMessage = {
-  id: 'welcome-0',
-  text: 'Hi, I\'m your trading copilot. Tell me what you\'d like to trade and how much risk you want to take.\n\nYou can scroll up to review past strategies, and select any strategy from the Execution Queue on the right.',
-  isUser: false,
-  timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
-};
+function formatStableUsdAmount(valueUsd: number): string {
+  return valueUsd.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+}
+
+function isSeedDemoPortfolio(balances: Array<{ symbol: string; balanceUsd: number }>): boolean {
+  // Avoid showing the seed demo numbers (e.g. $4,000) when the real portfolio will hydrate shortly.
+  if (balances.length !== 3) return false;
+  const bySymbol = new Map(balances.map(b => [b.symbol, b.balanceUsd]));
+  const stableSeedBalance = bySymbol.get(DEMO_STABLE_INTERNAL_SYMBOL) ?? bySymbol.get('REDACTED');
+  return (
+    stableSeedBalance === 4000 &&
+    bySymbol.get('ETH') === 3000 &&
+    bySymbol.get('SOL') === 3000
+  );
+}
+
+function buildWelcomeMessage(usdcBalance: number | null, stableSymbol: string): ChatMessage {
+  const balanceLine = typeof usdcBalance === 'number'
+    ? `You have $${formatStableUsdAmount(usdcBalance)} ${stableSymbol} ready to deploy.`
+    : `${stableSymbol} ready to deploy.`;
+
+  return {
+    id: 'welcome-0',
+    text: `Hi, I\'m your trading copilot. Tell me what you\'d like to trade and how much risk you want to take.\n\n${balanceLine} You can scroll up to review past strategies, and select any strategy from the Execution Queue on the right.`,
+    isUser: false,
+    timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+  };
+}
 
 // Helper to generate session title from first user message
 function generateSessionTitle(text: string): string {
@@ -361,10 +383,32 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
   // Ensure welcome message is shown for new/empty sessions
   useEffect(() => {
     if (activeChatId && currentSession && currentSession.messages.length === 0 && !hasShownWelcomeRef.current.has(activeChatId)) {
-      appendMessageToActiveChat(WELCOME_MESSAGE);
+      const stableSymbol = formatTokenSymbol(DEMO_STABLE_INTERNAL_SYMBOL);
+      const stableBalanceUsd = account.balances.find(b => b.symbol === DEMO_STABLE_INTERNAL_SYMBOL)?.balanceUsd;
+      const shouldHideSeedBalance = isSeedDemoPortfolio(account.balances as any);
+      const welcomeBalance = typeof stableBalanceUsd === 'number' && !shouldHideSeedBalance ? stableBalanceUsd : null;
+      appendMessageToActiveChat(buildWelcomeMessage(welcomeBalance, stableSymbol));
       hasShownWelcomeRef.current.add(activeChatId);
     }
-  }, [activeChatId, currentSession, appendMessageToActiveChat]);
+  }, [activeChatId, currentSession, appendMessageToActiveChat, account.balances]);
+
+  // Keep the welcome message in sync once balances hydrate, without ever showing a known-wrong seed number.
+  useEffect(() => {
+    if (!activeChatId || !currentSession) return;
+    const hasWelcome = currentSession.messages.some(m => m.id === 'welcome-0');
+    if (!hasWelcome) return;
+
+    const stableSymbol = formatTokenSymbol(DEMO_STABLE_INTERNAL_SYMBOL);
+    const stableBalanceUsd = account.balances.find(b => b.symbol === DEMO_STABLE_INTERNAL_SYMBOL)?.balanceUsd;
+    const shouldHideSeedBalance = isSeedDemoPortfolio(account.balances as any);
+    const welcomeBalance = typeof stableBalanceUsd === 'number' && !shouldHideSeedBalance ? stableBalanceUsd : null;
+
+    const desiredText = buildWelcomeMessage(welcomeBalance, stableSymbol).text;
+    const currentText = currentSession.messages.find(m => m.id === 'welcome-0')?.text;
+    if (currentText && currentText !== desiredText) {
+      updateMessageInChat(activeChatId, 'welcome-0', { text: desiredText });
+    }
+  }, [activeChatId, currentSession, account.balances, updateMessageInChat]);
 
   // Auto-open helper on first load if conditions are met
   useEffect(() => {

@@ -5,6 +5,7 @@
     "lib": ["ES2020", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "skipLibCheck": true,
+    "types": ["react", "react-dom", "react-router-dom", "node", "vite/client"],
     "typeRoots": ["./node_modules/@types", "./src/types"],
 
     /* Bundler mode */
@@ -31,4 +32,3 @@
   "exclude": ["src/_suddengreencard"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }
-
