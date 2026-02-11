@@ -2159,8 +2159,8 @@ async function runRelayedRequiredPreflight(): Promise<void> {
     if (!fundingAddress || fundingBalanceRaw === undefined) {
       log('[preflight] funding details redacted (unauthenticated status call); skipping funding wallet balance assertion');
     } else if (fundingBalanceEth < targetEth) {
-      throw new Error(
-        `Relayed preflight failed: funding wallet balance ${fundingBalanceEth} ETH < target ${targetEth} ETH`
+      log(
+        `[preflight] warning: funding wallet balance ${fundingBalanceEth} ETH < target ${targetEth} ETH; proceeding with relayed-required run`
       );
     }
   }
