@@ -839,15 +839,16 @@ async function parseModelResponse(
  */
 function generateHelpfulFallback(userMessage: string, portfolio: BlossomPortfolioSnapshot | null): string {
   const lower = userMessage.toLowerCase();
+  const STABLE_SYMBOLS = new Set(['BLSMUSDC', 'REDACTED', 'USDC', 'BUSDC']);
 
   // Check for swap/trade intent
   if (lower.includes('swap') || lower.includes('trade') || lower.includes('exchange') || lower.includes('convert')) {
-    return "I'd be happy to help with a swap! What token would you like to swap, and how much? For example: 'Swap 10 REDACTED to WETH' or 'Swap 0.01 ETH to REDACTED'.";
+    return "I'd be happy to help with a swap! What token would you like to swap, and how much? For example: 'Swap 10 bUSDC to WETH' or 'Swap 0.01 ETH to bUSDC'.";
   }
 
   // Check for yield/earn intent
   if (lower.includes('yield') || lower.includes('earn') || lower.includes('apy') || lower.includes('interest') || lower.includes('stake')) {
-    return "Looking for yield opportunities? I can help deploy your REDACTED into DeFi protocols. How much would you like to deposit? For example: 'Deposit 100 REDACTED into Aave'.";
+    return "Looking for yield opportunities? I can help deploy your bUSDC into DeFi protocols. How much would you like to deposit? For example: 'Deposit 100 bUSDC into Aave'.";
   }
 
   // Check for prediction/bet intent
@@ -862,20 +863,21 @@ function generateHelpfulFallback(userMessage: string, portfolio: BlossomPortfoli
 
   // Check for money/invest/profit intent (vague)
   if (lower.includes('money') || lower.includes('invest') || lower.includes('profit') || lower.includes('make') || lower.includes('grow')) {
-    const usdcBalance = portfolio?.balances.find(b => b.symbol === 'REDACTED')?.balanceUsd || 0;
-    if (usdcBalance > 0) {
-      return `I can help you put your $${usdcBalance.toLocaleString()} REDACTED to work! Here are your options:\n\n1. **Yield**: Deploy to DeFi protocols for ~4-8% APY\n2. **Trade Perps**: Open leveraged positions on BTC/ETH/SOL\n3. **Prediction Markets**: Bet on real-world events\n4. **Swap**: Exchange for other tokens\n\nWhat sounds interesting?`;
+    const stableBalanceUsd =
+      portfolio?.balances.find(b => STABLE_SYMBOLS.has(String(b.symbol || '').toUpperCase()))?.balanceUsd || 0;
+    if (stableBalanceUsd > 0) {
+      return `I can help you put your $${stableBalanceUsd.toLocaleString()} bUSDC to work! Here are your options:\n\n1. **Yield**: Deploy to DeFi protocols for ~4-8% APY\n2. **Trade Perps**: Open leveraged positions on BTC/ETH/SOL\n3. **Prediction Markets**: Bet on real-world events\n4. **Swap**: Exchange for other tokens\n\nWhat sounds interesting?`;
     }
-    return "I can help you explore opportunities! Here's what I can do:\n\n1. **Yield**: Deploy REDACTED to earn APY\n2. **Trade Perps**: Open leveraged positions\n3. **Prediction Markets**: Bet on events\n4. **Swap**: Exchange tokens\n\nWhat would you like to explore?";
+    return "I can help you explore opportunities! Here's what I can do:\n\n1. **Yield**: Deploy bUSDC to earn APY\n2. **Trade Perps**: Open leveraged positions\n3. **Prediction Markets**: Bet on events\n4. **Swap**: Exchange tokens\n\nWhat would you like to explore?";
   }
 
   // Check for help/what can you do intent
   if (lower.includes('help') || lower.includes('what can') || lower.includes('what do you') || lower.includes('how do')) {
-    return "I'm Blossom, your AI trading copilot! I can help with:\n\n1. **Swaps**: 'Swap 100 REDACTED to WETH'\n2. **Perps**: 'Long BTC with 5x leverage'\n3. **DeFi Yield**: 'Deposit 500 REDACTED into Aave'\n4. **Prediction Markets**: 'Show me top Kalshi markets'\n\nWhat would you like to do?";
+    return "I'm Blossom, your AI trading copilot! I can help with:\n\n1. **Swaps**: 'Swap 100 bUSDC to WETH'\n2. **Perps**: 'Long BTC with 5x leverage'\n3. **DeFi Yield**: 'Deposit 500 bUSDC into Aave'\n4. **Prediction Markets**: 'Show me top Kalshi markets'\n\nWhat would you like to do?";
   }
 
   // Generic fallback - offer options
-  return "I can help with swaps, perps trading, DeFi yield, and prediction markets. What would you like to explore? Try:\n\n- 'Swap 10 REDACTED to WETH'\n- 'Long BTC with 3x leverage'\n- 'Show me top prediction markets'\n- 'Deposit 100 REDACTED for yield'";
+  return "I can help with swaps, perps trading, DeFi yield, and prediction markets. What would you like to explore? Try:\n\n- 'Swap 10 bUSDC to WETH'\n- 'Long BTC with 3x leverage'\n- 'Show me top prediction markets'\n- 'Deposit 100 bUSDC for yield'";
 }
 
 /**
@@ -1194,7 +1196,7 @@ async function applyDeterministicFallback(
     }
 
     return {
-      assistantMessage: `I'll allocate $${amount} to ${vaultName || 'yield vault'} on ${chainDisplay}. ${vaultName ? `Earning ~5-7% APY.` : 'Recommended: Aave REDACTED at 5.00% APY.'}`,
+      assistantMessage: `I'll allocate $${amount} to ${vaultName || 'yield vault'} on ${chainDisplay}. ${vaultName ? `Earning ~5-7% APY.` : 'Recommended: Aave bUSDC at 5.00% APY.'}`,
       actions: [],
       executionRequest: {
         kind: 'lend_supply',
@@ -1740,7 +1742,7 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
         }
 
         if (positionLines.length === 0) {
-          responseMessage = "You don't have any positions yet. Try:\n- 'Swap 10 REDACTED to WETH'\n- 'Long BTC with 3x leverage'\n- 'Deposit 100 REDACTED for yield'";
+          responseMessage = "You don't have any positions yet. Try:\n- 'Swap 10 bUSDC to WETH'\n- 'Long BTC with 3x leverage'\n- 'Deposit 100 bUSDC for yield'";
         } else {
           responseMessage = positionLines.join('\n');
         }
