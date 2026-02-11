@@ -3579,6 +3579,7 @@ async function executeProofOnlyHyperliquid(
     const { privateKeyToAccount } = await import('viem/accounts');
 
     const chainId = HYPERLIQUID_TESTNET_CHAIN_ID || 998;
+    const FALLBACK_HYPERLIQUID_RPC_URL = 'https://api.hyperliquid-testnet.xyz/evm';
     const hyperliquidChain = {
       id: chainId,
       name: 'Hyperliquid Testnet',
@@ -3591,15 +3592,22 @@ async function executeProofOnlyHyperliquid(
     } as const;
 
     const account = privateKeyToAccount(signerKey as `0x${string}`);
-    const publicClient = createPublicClient({
-      chain: hyperliquidChain,
-      transport: http(HYPERLIQUID_TESTNET_RPC_URL),
-    });
-    const walletClient = createWalletClient({
-      account,
-      chain: hyperliquidChain,
-      transport: http(HYPERLIQUID_TESTNET_RPC_URL),
-    });
+    const makeClients = (rpcUrl: string) => {
+      const publicClient = createPublicClient({
+        chain: hyperliquidChain,
+        transport: http(rpcUrl),
+      });
+      const walletClient = createWalletClient({
+        account,
+        chain: hyperliquidChain,
+        transport: http(rpcUrl),
+      });
+      return { publicClient, walletClient };
+    };
+
+    const primaryClients = makeClients(HYPERLIQUID_TESTNET_RPC_URL);
+    const fallbackClients = makeClients(FALLBACK_HYPERLIQUID_RPC_URL);
+    let { publicClient, walletClient } = primaryClients;
 
     const execution = await createExecutionAsync({
       chain: 'hyperliquid',
@@ -3625,6 +3633,15 @@ async function executeProofOnlyHyperliquid(
       timestamp: now,
     };
     const proofHex = toHex(JSON.stringify(proofData));
+
+    const isRateLimitError = (err: any) => {
+      const message = `${err?.message || err}`.toLowerCase();
+      return (
+        message.includes('rate limited') ||
+        message.includes('too many evm txs') ||
+        message.includes('request exceeds defined limit')
+      );
+    };
 
     const isRetryableTxError = (err: any) => {
       const message = `${err?.message || err}`.toLowerCase();
@@ -3654,6 +3671,10 @@ async function executeProofOnlyHyperliquid(
           });
         } catch (err: any) {
           lastErr = err;
+          // If Alchemy rate-limits, fall back to Hyperliquid's public RPC.
+          if (isRateLimitError(err)) {
+            ({ publicClient, walletClient } = fallbackClients);
+          }
           if (!isRetryableTxError(err)) throw err;
           // Small backoff to allow the competing tx to land in the pending pool.
           await new Promise(resolve => setTimeout(resolve, 250 + attempt * 150));

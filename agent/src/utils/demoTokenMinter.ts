@@ -168,7 +168,7 @@ async function writeContractWithNonceRetry(
         account: client.account!,
       });
     } catch (error: any) {
-      const msg = `${error?.shortMessage || error?.message || ''}`.toLowerCase();
+      const msg = `${error?.shortMessage || ''} ${error?.message || ''} ${error?.details || ''} ${error?.cause?.message || ''}`.toLowerCase();
       const nonceConflict =
         msg.includes('nonce') || msg.includes('replacement transaction underpriced') || msg.includes('already known');
       lastError = error;

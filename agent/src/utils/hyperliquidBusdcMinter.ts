@@ -7,6 +7,8 @@ import {
   HYPERLIQUID_MINT_AUTHORITY_PRIVATE_KEY,
 } from '../config';
 
+const FALLBACK_HYPERLIQUID_RPC_URL = 'https://api.hyperliquid-testnet.xyz/evm';
+
 const hyperliquidChain = {
   id: 998,
   name: 'Hyperliquid Testnet',
@@ -40,11 +42,17 @@ export async function mintHyperliquidBusdc(recipientAddress: string, amount: num
   }
 
   const account = privateKeyToAccount(HYPERLIQUID_MINT_AUTHORITY_PRIVATE_KEY as `0x${string}`);
-  const client = createWalletClient({
-    account,
-    chain: hyperliquidChain,
-    transport: http(HYPERLIQUID_TESTNET_RPC_URL),
-  }).extend(publicActions);
+  const makeClient = (rpcUrl: string) =>
+    createWalletClient({
+      account,
+      chain: hyperliquidChain,
+      transport: http(rpcUrl),
+    }).extend(publicActions);
+
+  const primaryRpc = HYPERLIQUID_TESTNET_RPC_URL || FALLBACK_HYPERLIQUID_RPC_URL;
+  const primaryClient = makeClient(primaryRpc);
+  const fallbackClient = makeClient(FALLBACK_HYPERLIQUID_RPC_URL);
+  let client = primaryClient;
 
   const amountUnits = parseUnits(amount.toString(), HYPERLIQUID_BUSDC_DECIMALS);
   const isRetryableTxError = (err: any) => {
@@ -56,6 +64,15 @@ export async function mintHyperliquidBusdc(recipientAddress: string, amount: num
       message.includes('underpriced') ||
       message.includes('internal error') ||
       message.includes('unexpected error (code=10055)')
+    );
+  };
+
+  const isRateLimitError = (err: any) => {
+    const message = `${err?.message || err}`.toLowerCase();
+    return (
+      message.includes('rate limited') ||
+      message.includes('too many evm txs') ||
+      message.includes('request exceeds defined limit')
     );
   };
 
@@ -76,6 +93,9 @@ export async function mintHyperliquidBusdc(recipientAddress: string, amount: num
         });
       } catch (err: any) {
         lastErr = err;
+        if (isRateLimitError(err)) {
+          client = fallbackClient;
+        }
         if (!isRetryableTxError(err)) throw err;
         await new Promise(resolve => setTimeout(resolve, 250 + attempt * 150));
       }
