@@ -275,12 +275,18 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
     if (executionMode === 'confirm' && strategyId && isDraft && !isExecuted) {
       addPendingPlan(strategyId, (currentStrategy?.instrumentType || 'perp') as 'perp' | 'event' | 'defi');
     }
+    if (executionMode === 'confirm' && defiProposalId && defiProposal?.status === 'proposed') {
+      addPendingPlan(defiProposalId, 'defi');
+    }
     return () => {
       if (strategyId) {
         removePendingPlan(strategyId);
       }
+      if (defiProposalId) {
+        removePendingPlan(defiProposalId);
+      }
     };
-  }, [executionMode, strategyId, isDraft, isExecuted, currentStrategy?.instrumentType, addPendingPlan, removePendingPlan]);
+  }, [executionMode, strategyId, isDraft, isExecuted, currentStrategy?.instrumentType, defiProposalId, defiProposal?.status, addPendingPlan, removePendingPlan]);
   
   // Register strategy ref for scroll restoration
   useEffect(() => {

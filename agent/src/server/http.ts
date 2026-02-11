@@ -1315,14 +1315,14 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
 
       let greeting = "Hi! I'm Blossom, your AI trading copilot. ";
       if (usdcBalance > 0) {
-        greeting += `You have $${usdcBalance.toLocaleString()} REDACTED ready to deploy.\n\n`;
+        greeting += `You have $${usdcBalance.toLocaleString()} bUSDC ready to deploy.\n\n`;
       } else {
         greeting += "It looks like you don't have any tokens yet. Connect your wallet and visit the faucet to get test tokens.\n\n";
       }
       greeting += "Here's what I can help with:\n";
-      greeting += "• **Swaps**: 'Swap 10 REDACTED to WETH'\n";
+      greeting += "• **Swaps**: 'Swap 10 bUSDC to WETH'\n";
       greeting += "• **Perps**: 'Long ETH with 3x leverage'\n";
-      greeting += "• **DeFi Yield**: 'Deposit 100 REDACTED into Aave'\n";
+      greeting += "• **DeFi Yield**: 'Deposit 100 bUSDC into Aave'\n";
       greeting += "• **Prediction Markets**: 'Bet $20 YES on Fed rate cut'\n\n";
       greeting += "What would you like to do?";
 
@@ -1374,7 +1374,8 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
 
       for (const bal of displayBalances) {
         if (bal.balanceUsd > 0) {
-          response += `• ${bal.symbol}: $${bal.balanceUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\n`;
+          const symbol = bal.symbol === 'REDACTED' ? 'bUSDC' : bal.symbol;
+          response += `• ${symbol}: $${bal.balanceUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\n`;
         }
       }
 
@@ -1403,13 +1404,13 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
 
       const response = "I'm Blossom, your AI trading copilot! Here's what I can help with:\n\n" +
         "**🔄 Swaps**\n" +
-        "• 'Swap 100 REDACTED to WETH'\n" +
-        "• 'Convert 0.1 ETH to REDACTED'\n\n" +
+        "• 'Swap 100 bUSDC to WETH'\n" +
+        "• 'Convert 0.1 ETH to bUSDC'\n\n" +
         "**📈 Perpetual Trading**\n" +
         "• 'Long ETH with 5x leverage using 3% risk'\n" +
         "• 'Short BTC 10x with $50 margin'\n\n" +
         "**💰 DeFi Yield**\n" +
-        "• 'Deposit 500 REDACTED into Aave'\n" +
+        "• 'Deposit 500 bUSDC into Aave'\n" +
         "• 'Show me top DeFi protocols by TVL'\n\n" +
         "**🎯 Prediction Markets**\n" +
         "• 'Bet $20 YES on Fed rate cut'\n" +
@@ -6824,15 +6825,35 @@ app.get('/api/portfolio/eth_testnet', maybeCheckAccess, async (req, res) => {
     }
 
     const ethWei = BigInt(ethResult.result || '0x0');
-    const ethFormatted = (Number(ethWei) / 1e18).toFixed(6);
+    const { formatUnits } = await import('viem');
+    const ethUi = formatUnits(ethWei, 18);
+    const ethNum = Number(ethUi);
+    const ethFormatted = Number.isFinite(ethNum) ? ethNum.toFixed(6) : ethUi;
 
     // Fetch REDACTED balance
+    const { erc20_decimals } = await import('../executors/erc20Rpc');
     const usdcBalance = await erc20_balanceOf(REDACTED_ADDRESS_SEPOLIA, userAddress);
-    const usdcFormatted = (Number(usdcBalance) / 1e6).toFixed(2);
+    let usdcDecimals = 6;
+    try {
+      usdcDecimals = await erc20_decimals(REDACTED_ADDRESS_SEPOLIA);
+    } catch {
+      // Fallback to 6 decimals for stable tokens
+    }
+    const usdcUi = formatUnits(usdcBalance, usdcDecimals);
+    const usdcNum = Number(usdcUi);
+    const usdcFormatted = Number.isFinite(usdcNum) ? usdcNum.toFixed(2) : usdcUi;
 
     // Fetch WETH balance
     const wethBalance = await erc20_balanceOf(WETH_ADDRESS_SEPOLIA, userAddress);
-    const wethFormatted = (Number(wethBalance) / 1e18).toFixed(6);
+    let wethDecimals = 18;
+    try {
+      wethDecimals = await erc20_decimals(WETH_ADDRESS_SEPOLIA);
+    } catch {
+      // Fallback to 18 decimals for WETH
+    }
+    const wethUi = formatUnits(wethBalance, wethDecimals);
+    const wethNum = Number(wethUi);
+    const wethFormatted = Number.isFinite(wethNum) ? wethNum.toFixed(6) : wethUi;
 
     res.json({
       chainId: 11155111, // Sepolia
@@ -6844,12 +6865,12 @@ app.get('/api/portfolio/eth_testnet', maybeCheckAccess, async (req, res) => {
         },
         usdc: {
           raw: '0x' + usdcBalance.toString(16),
-          decimals: 6,
+          decimals: usdcDecimals,
           formatted: usdcFormatted,
         },
         weth: {
           raw: '0x' + wethBalance.toString(16),
-          decimals: 18,
+          decimals: wethDecimals,
           formatted: wethFormatted,
         },
       },
@@ -7089,7 +7110,10 @@ app.get('/api/wallet/balances', maybeCheckAccess, async (req, res) => {
       notes.push('DEMO_WETH_ADDRESS not configured');
     }
 
-    const ethFormatted = (Number(ethWei) / 1e18).toFixed(6);
+    const { formatUnits } = await import('viem');
+    const ethUi = formatUnits(ethWei, 18);
+    const ethNum = Number(ethUi);
+    const ethFormatted = Number.isFinite(ethNum) ? ethNum.toFixed(6) : ethUi;
 
     res.json({
       chainId,

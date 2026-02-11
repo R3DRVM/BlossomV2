@@ -150,7 +150,7 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
   const [apiHealth, setApiHealth] = useState<'healthy' | 'error' | 'unknown'>('unknown');
 
   // Verification panel state
-  const [verifyIntent, setVerifyIntent] = useState('swap 0.001 ETH to REDACTED');
+  const [verifyIntent, setVerifyIntent] = useState('swap 0.001 ETH to bUSDC');
   const [verifyChain, setVerifyChain] = useState<'ethereum' | 'solana'>('ethereum');
   const [verifyRunning, setVerifyRunning] = useState(false);
   const [verifyResult, setVerifyResult] = useState<IntentExecutionResult | null>(null);
@@ -1015,7 +1015,7 @@ export default function DevStatsPage({ isPublic = false }: DevStatsPageProps) {
                 type="text"
                 value={verifyIntent}
                 onChange={(e) => setVerifyIntent(e.target.value)}
-                placeholder="e.g., swap 0.001 ETH to REDACTED"
+                placeholder="e.g., swap 0.001 ETH to bUSDC"
                 className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-gray-900 placeholder-[#555] focus:border-[#666] focus:outline-none text-sm"
               />
             </div>
