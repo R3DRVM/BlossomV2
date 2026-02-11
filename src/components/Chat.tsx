@@ -245,10 +245,12 @@ function isSeedDemoPortfolio(balances: Array<{ symbol: string; balanceUsd: numbe
   );
 }
 
-function buildWelcomeMessage(usdcBalance: number | null, stableSymbol: string): ChatMessage {
-  const balanceLine = typeof usdcBalance === 'number'
-    ? `You have $${formatStableUsdAmount(usdcBalance)} ${stableSymbol} ready to deploy.`
-    : `${stableSymbol} ready to deploy.`;
+function buildWelcomeMessage(usdcBalance: number | null, stableSymbol: string, hasWalletConnection: boolean): ChatMessage {
+  const balanceLine = !hasWalletConnection
+    ? 'Connect wallet to view balances.'
+    : typeof usdcBalance === 'number'
+      ? `You have $${formatStableUsdAmount(usdcBalance)} ${stableSymbol} ready to deploy.`
+      : `${stableSymbol} ready to deploy.`;
 
   return {
     id: 'welcome-0',
@@ -401,10 +403,11 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
       const stableBalanceUsd = getStableBalanceUsd(account.balances as any);
       const shouldHideSeedBalance = isSeedDemoPortfolio(account.balances as any);
       const welcomeBalance = typeof stableBalanceUsd === 'number' && !shouldHideSeedBalance ? stableBalanceUsd : null;
-      appendMessageToActiveChat(buildWelcomeMessage(welcomeBalance, stableSymbol));
+      const hasWalletConnection = walletStatus.evmConnected || walletStatus.solConnected;
+      appendMessageToActiveChat(buildWelcomeMessage(welcomeBalance, stableSymbol, hasWalletConnection));
       hasShownWelcomeRef.current.add(activeChatId);
     }
-  }, [activeChatId, currentSession, appendMessageToActiveChat, account.balances]);
+  }, [activeChatId, currentSession, appendMessageToActiveChat, account.balances, walletStatus.evmConnected, walletStatus.solConnected]);
 
   // Keep the welcome message in sync once balances hydrate, without ever showing a known-wrong seed number.
   useEffect(() => {
@@ -416,13 +419,14 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
     const stableBalanceUsd = getStableBalanceUsd(account.balances as any);
     const shouldHideSeedBalance = isSeedDemoPortfolio(account.balances as any);
     const welcomeBalance = typeof stableBalanceUsd === 'number' && !shouldHideSeedBalance ? stableBalanceUsd : null;
+    const hasWalletConnection = walletStatus.evmConnected || walletStatus.solConnected;
 
-    const desiredText = buildWelcomeMessage(welcomeBalance, stableSymbol).text;
+    const desiredText = buildWelcomeMessage(welcomeBalance, stableSymbol, hasWalletConnection).text;
     const currentText = currentSession.messages.find(m => m.id === 'welcome-0')?.text;
     if (currentText && currentText !== desiredText) {
       updateMessageInChat(activeChatId, 'welcome-0', { text: desiredText });
     }
-  }, [activeChatId, currentSession, account.balances, updateMessageInChat]);
+  }, [activeChatId, currentSession, account.balances, updateMessageInChat, walletStatus.evmConnected, walletStatus.solConnected]);
 
   // Auto-open helper on first load if conditions are met
   useEffect(() => {

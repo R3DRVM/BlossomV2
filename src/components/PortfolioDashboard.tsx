@@ -104,16 +104,20 @@ async function fetchPortfolioData(
     lastUpdated: Date.now(),
   };
 
-  if (!evmAddress && !solAddress) {
+  const normalizedEvmAddress = (typeof evmAddress === 'string' && /^0x[a-fA-F0-9]{40}$/.test(evmAddress))
+    ? evmAddress
+    : undefined;
+
+  if (!normalizedEvmAddress && !solAddress) {
     return emptyPortfolio;
   }
 
   try {
     // Fetch EVM balances
     let evmBalances: TokenBalance[] = [];
-    if (evmAddress) {
+    if (normalizedEvmAddress) {
       try {
-        const response = await callAgent(`/api/wallet/balances?address=${evmAddress}`, {
+        const response = await callAgent(`/api/wallet/balances?address=${encodeURIComponent(normalizedEvmAddress)}`, {
           method: 'GET',
         });
         if (response.ok) {

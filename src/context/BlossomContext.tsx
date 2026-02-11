@@ -82,6 +82,10 @@ export interface DefiPosition {
   explorerUrl?: string;
 }
 
+function isValidEvmAddress(value: string | null | undefined): value is `0x${string}` {
+  return typeof value === 'string' && /^0x[a-fA-F0-9]{40}$/.test(value);
+}
+
 export interface OnboardingState {
   openedTrade: boolean;
   queuedStrategy: boolean;
@@ -2126,10 +2130,10 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
       try {
         // Use explicit connect gating - only sync if user clicked "Connect Wallet"
         const userAddress = await getAddressIfExplicit();
-        if (!userAddress) {
+        if (!isValidEvmAddress(userAddress)) {
           // No wallet connected or not explicitly connected - reset to empty account
           if (import.meta.env.DEV) {
-            console.log('[BlossomContext] No wallet connected (or not explicit), resetting to empty account');
+            console.log('[BlossomContext] No valid EVM wallet connected, resetting to empty account');
           }
           setAccount(prev => ({
             ...prev,
