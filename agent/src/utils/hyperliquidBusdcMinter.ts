@@ -34,9 +34,11 @@ const mintAbi = [
 ] as const;
 
 export async function mintHyperliquidBusdc(recipientAddress: string, amount: number) {
-  if (!HYPERLIQUID_BUSDC_ADDRESS) {
-    throw new Error('HYPERLIQUID_BUSDC_ADDRESS not configured');
+  const addr = HYPERLIQUID_BUSDC_ADDRESS;
+  if (!addr) {
+    throw new Error('Missing Hyperliquid bUSDC address (check config/env/mapping)');
   }
+  const tokenAddr = addr as `0x${string}`;
   if (!HYPERLIQUID_MINT_AUTHORITY_PRIVATE_KEY) {
     throw new Error('HYPERLIQUID_MINT_AUTHORITY_PRIVATE_KEY not configured');
   }
@@ -87,7 +89,7 @@ export async function mintHyperliquidBusdc(recipientAddress: string, amount: num
           blockTag: 'pending',
         });
         return await client.writeContract({
-          address: HYPERLIQUID_BUSDC_ADDRESS,
+          address: tokenAddr,
           abi: mintAbi,
           functionName: 'mint',
           args: [recipientAddress as `0x${string}`, amountUnits],
