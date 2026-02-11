@@ -14,7 +14,11 @@
     "install:all": "npm install && cd agent && npm install",
     "postinstall": "cd agent && npm install",
     "stress-test": "npx tsx scripts/stress-test.ts",
-    "stress-test:heavy": "STRESS_CONCURRENCY=10 STRESS_TOTAL_REQUESTS=100 npx tsx scripts/stress-test.ts"
+    "stress-test:heavy": "STRESS_CONCURRENCY=10 STRESS_TOTAL_REQUESTS=100 npx tsx scripts/stress-test.ts",
+    "stress:chat-only:prod": "npx tsx agent/scripts/live-stress-tester.ts --baseUrl=https://api.blossom.onl --mode=chat_only --count=20 --concurrency=4 --output=logs/stress-chat-only-prod.json",
+    "stress:mixed:prod": "npx tsx agent/scripts/live-stress-tester.ts --baseUrl=https://api.blossom.onl --mode=mixed --count=20 --concurrency=4 --output=logs/stress-mixed-prod.json",
+    "stress:tier1:deterministic": "npx tsx agent/scripts/live-stress-tester.ts --baseUrl=https://api.blossom.onl --mode=tier1 --allow_execute --count=40 --concurrency=2 --output=logs/stress-tier1-deterministic.json",
+    "stress:tier2:realistic": "npx tsx agent/scripts/live-stress-tester.ts --baseUrl=https://api.blossom.onl --mode=tier2 --allow_execute --count=40 --concurrency=2 --output=logs/stress-tier2-realistic.json"
   },
   "dependencies": {
     "@jridgewell/gen-mapping": "^0.3.13",

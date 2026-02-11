@@ -796,24 +796,31 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                   {isDraft && strategyId && (
                     <div className="pt-1.5 border-t border-slate-100">
                       <button
-                        onClick={(e) => {
+                        onClick={async (e) => {
                           e.preventDefault();
                           e.stopPropagation();
+                          if (isConfirmingDraft) return;
+                          setIsConfirmingDraft(true);
                           if (onConfirmDraft) {
-                            onConfirmDraft(strategyId);
+                            try {
+                              await Promise.resolve(onConfirmDraft(strategyId));
+                            } finally {
+                              setIsConfirmingDraft(false);
+                            }
                           } else {
                             handleConfirmAndQueue();
+                            setIsConfirmingDraft(false);
                           }
                         }}
-                        disabled={!!disableReason}
+                        disabled={!!disableReason || isConfirmingDraft}
                         className={`w-full px-3 py-2 text-xs font-medium rounded-lg transition-colors ${
-                          !disableReason
+                          !disableReason && !isConfirmingDraft
                             ? 'bg-blossom-pink text-white hover:bg-blossom-pink/90 shadow-sm'
                             : 'bg-blossom-outline/40 text-slate-400 cursor-not-allowed'
                         }`}
                         title={disableReason ?? (isVeryHighRisk ? 'Risk is elevated, proceed with caution' : undefined)}
                       >
-                        Confirm & Execute
+                        {isConfirmingDraft ? 'Executing...' : 'Confirm & Execute'}
                       </button>
                     </div>
                   )}

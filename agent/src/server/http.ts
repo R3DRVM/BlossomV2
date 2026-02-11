@@ -2049,7 +2049,14 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
         console.error('[api/chat] ❌ Failed to build stub prediction market response:', error.message);
         // Fall through to normal stub LLM call
         const llmOutput = await callLlm({ systemPrompt: llmSystemPrompt, userPrompt: llmUserPrompt });
-        modelResponse = await parseModelResponse(llmOutput.rawJson, isSwapPrompt);
+        modelResponse = await parseModelResponse(
+          llmOutput.rawJson,
+          wantsChatOnly ? false : isSwapPrompt,
+          false,
+          normalizeUserInput(userMessage),
+          false,
+          false
+        );
         assistantMessage = modelResponse.assistantMessage;
         actions = modelResponse.actions;
       }
@@ -2099,13 +2106,22 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
         const llmOutput = await callLlm({ systemPrompt: llmSystemPrompt, userPrompt: wantsChatOnly ? llmUserPrompt : normalizedUserPrompt });
 
         // Parse JSON response with normalized message for fallback
-        modelResponse = await parseModelResponse(llmOutput.rawJson, normalizedIsSwapPrompt, normalizedIsDefiPrompt, normalizedUserMessage, normalizedIsPerpPrompt, normalizedIsEventPrompt);
+        modelResponse = await parseModelResponse(
+          llmOutput.rawJson,
+          wantsChatOnly ? false : normalizedIsSwapPrompt,
+          wantsChatOnly ? false : normalizedIsDefiPrompt,
+          normalizedUserMessage,
+          wantsChatOnly ? false : normalizedIsPerpPrompt,
+          wantsChatOnly ? false : normalizedIsEventPrompt
+        );
         assistantMessage = modelResponse.assistantMessage;
         actions = modelResponse.actions;
         
         // If model failed OR succeeded but missing executionRequest for execution intents, try deterministic fallback
-        const needsFallback = !modelResponse.modelOk ||
-                              (!modelResponse.executionRequest && (normalizedIsSwapPrompt || normalizedIsDefiPrompt || normalizedIsPerpPrompt || normalizedIsEventPrompt));
+        const needsFallback = !wantsChatOnly && (
+          !modelResponse.modelOk ||
+          (!modelResponse.executionRequest && (normalizedIsSwapPrompt || normalizedIsDefiPrompt || normalizedIsPerpPrompt || normalizedIsEventPrompt))
+        );
 
         if (needsFallback && (normalizedIsSwapPrompt || normalizedIsDefiPrompt || normalizedIsPerpPrompt || normalizedIsEventPrompt)) {
           console.log('[api/chat] Triggering deterministic fallback for execution intent');
@@ -2124,7 +2140,7 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
       } catch (error: any) {
         console.error('LLM call or parsing error:', error.message);
         // Try deterministic fallback before giving up
-        if (normalizedIsSwapPrompt || normalizedIsDefiPrompt || normalizedIsPerpPrompt || normalizedIsEventPrompt) {
+        if (!wantsChatOnly && (normalizedIsSwapPrompt || normalizedIsDefiPrompt || normalizedIsPerpPrompt || normalizedIsEventPrompt)) {
           const fallback = await applyDeterministicFallback(normalizedUserMessage, normalizedIsSwapPrompt, normalizedIsDefiPrompt, normalizedIsPerpPrompt, normalizedIsEventPrompt, portfolioForPrompt);
           if (fallback) {
             modelResponse = {
@@ -2204,18 +2220,29 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
     // Get executionRequest from modelResponse if available
     const executionRequest = modelResponse?.executionRequest ?? null;
     const modelOk = modelResponse?.modelOk !== false;
+    let serverDraftId: string | undefined = undefined;
+    let safeExecutionRequest = executionRequest;
+    let safeActions = actions;
+    let safeExecutionResults = executionResults;
+
+    // Guardrail: route='chat' must never return executable payloads.
+    if (wantsChatOnly) {
+      safeExecutionRequest = null;
+      safeActions = [];
+      safeExecutionResults = [];
+    }
 
     // Task 3: Enforce backend invariants for actionable intents
     // Perp/event/defi intents MUST have executionRequest (swaps may execute immediately)
-    const hasActionableIntent = actions.length > 0 && actions.some(a => 
+    const hasActionableIntent = safeActions.length > 0 && safeActions.some(a => 
       a.type === 'perp' || a.type === 'event' || a.type === 'defi'
     );
     
-    if (hasActionableIntent && !executionRequest) {
+    if (hasActionableIntent && !safeExecutionRequest) {
       // Actionable intent detected but executionRequest missing - return structured error
       if (process.env.DEBUG_RESPONSE === 'true') {
         console.error('[api/chat] MISSING_EXECUTION_REQUEST for actionable intent:', {
-          actions: actions.map(a => ({ type: a.type })),
+          actions: safeActions.map(a => ({ type: a.type })),
           modelOk,
           debugHints: {
             modelResponse: modelResponse ? 'present' : 'missing',
@@ -2237,13 +2264,12 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
     }
 
     // Task A: Create draft strategy server-side for actionable intents (deterministic)
-    let serverDraftId: string | undefined = undefined;
-    if (executionRequest) {
+    if (safeExecutionRequest) {
       const { v4: uuidv4 } = await import('uuid');
       const accountValue = portfolioAfter.accountValueUsd || 10000; // Fallback for demo
       
-      if (executionRequest.kind === 'perp') {
-        const perpReq = executionRequest as { kind: 'perp'; chain: string; market: string; side: 'long' | 'short'; leverage: number; riskPct?: number; marginUsd?: number };
+      if (safeExecutionRequest.kind === 'perp') {
+        const perpReq = safeExecutionRequest as { kind: 'perp'; chain: string; market: string; side: 'long' | 'short'; leverage: number; riskPct?: number; marginUsd?: number };
         const marginUsd = perpReq.marginUsd || (accountValue * (perpReq.riskPct || 2) / 100);
         const leverage = perpReq.leverage || 2;
 
@@ -2295,8 +2321,8 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
             notionalUsd,
           });
         }
-      } else if (executionRequest.kind === 'event') {
-        const eventReq = executionRequest as { kind: 'event'; chain: string; marketId: string; outcome: 'YES' | 'NO'; stakeUsd: number; price?: number };
+      } else if (safeExecutionRequest.kind === 'event') {
+        const eventReq = safeExecutionRequest as { kind: 'event'; chain: string; marketId: string; outcome: 'YES' | 'NO'; stakeUsd: number; price?: number };
         const stakeUsd = eventReq.stakeUsd || 5;
         const riskPct = (stakeUsd / accountValue) * 100;
         
@@ -2332,8 +2358,8 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
             stakeUsd,
           });
         }
-      } else if (executionRequest.kind === 'lend' || executionRequest.kind === 'lend_supply') {
-        const lendReq = executionRequest as { kind: 'lend' | 'lend_supply'; chain: string; asset: string; amount: string; protocol?: string; vault?: string };
+      } else if (safeExecutionRequest.kind === 'lend' || safeExecutionRequest.kind === 'lend_supply') {
+        const lendReq = safeExecutionRequest as { kind: 'lend' | 'lend_supply'; chain: string; asset: string; amount: string; protocol?: string; vault?: string };
         const amountUsd = parseFloat(lendReq.amount) || 10;
         const riskPct = (amountUsd / accountValue) * 100;
         
@@ -2380,25 +2406,26 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
     }
 
     // Task B: Enforce contract invariants - if actionable intent, must have draft
-    if (hasActionableIntent && executionRequest && !serverDraftId) {
+    if (hasActionableIntent && safeExecutionRequest && !serverDraftId) {
       // This should never happen if executionRequest exists, but add safety check
       if (process.env.DEBUG_CARD_CONTRACT === 'true') {
         console.error('[api/chat] WARNING: Actionable intent but no draft created:', {
-          executionRequestKind: executionRequest?.kind,
-          actions: actions.map(a => ({ type: a.type })),
+          executionRequestKind: safeExecutionRequest?.kind,
+          actions: safeActions.map(a => ({ type: a.type })),
         });
       }
     }
 
-    const response: ChatResponse = {
+    const response: ChatResponse & { metadata?: { route: 'chat' | 'planner' } } = {
       assistantMessage,
-      actions,
-      executionRequest,
+      actions: safeActions,
+      executionRequest: safeExecutionRequest,
       modelOk,
       portfolio: portfolioAfter,
-      executionResults, // Include execution results
-      errorCode: (!modelOk && !executionRequest) ? 'LLM_REFUSAL' : undefined, // Only set LLM_REFUSAL if no executionRequest was generated (even after fallback)
-      draftId: serverDraftId, // Task A: Server-created draft ID for UI to set msg.type + msg.draftId
+      executionResults: safeExecutionResults, // Include execution results
+      errorCode: (!modelOk && !safeExecutionRequest) ? 'LLM_REFUSAL' : undefined, // Only set LLM_REFUSAL if no executionRequest was generated (even after fallback)
+      draftId: wantsChatOnly ? undefined : serverDraftId, // Task A: Server-created draft ID for UI to set msg.type + msg.draftId
+      metadata: { route: routeDecision },
     };
 
     // Task C: DEBUG_CARD_CONTRACT logging
@@ -7065,18 +7092,19 @@ app.get('/api/wallet/balances', maybeCheckAccess, async (req, res) => {
         const balance = await erc20_balanceOf(DEMO_REDACTED_ADDRESS, address);
         let decimals = 6;
         try {
-          decimals = await erc20_decimals(DEMO_REDACTED_ADDRESS);
+          const fetched = await erc20_decimals(DEMO_REDACTED_ADDRESS);
+          // Stable fallback guard: if token metadata is invalid, preserve 6-decimal stable assumption.
+          decimals = Number.isFinite(fetched) && fetched > 0 && fetched <= 18 ? fetched : 6;
         } catch {
           // Fallback to 6 decimals for stable tokens
         }
         const ui = formatUnits(balance, decimals);
-        const uiNum = Number(ui);
         tokens.push({
           address: DEMO_REDACTED_ADDRESS,
           symbol: 'REDACTED',
           decimals,
           raw: '0x' + balance.toString(16),
-          formatted: Number.isFinite(uiNum) ? uiNum.toFixed(2) : ui,
+          formatted: ui,
         });
       } catch (e: any) {
         notes.push(`REDACTED balance fetch failed: ${e.message}`);
@@ -7092,18 +7120,18 @@ app.get('/api/wallet/balances', maybeCheckAccess, async (req, res) => {
         const balance = await erc20_balanceOf(DEMO_WETH_ADDRESS, address);
         let decimals = 18;
         try {
-          decimals = await erc20_decimals(DEMO_WETH_ADDRESS);
+          const fetched = await erc20_decimals(DEMO_WETH_ADDRESS);
+          decimals = Number.isFinite(fetched) && fetched > 0 && fetched <= 18 ? fetched : 18;
         } catch {
           // Fallback to 18 decimals for WETH
         }
         const ui = formatUnits(balance, decimals);
-        const uiNum = Number(ui);
         tokens.push({
           address: DEMO_WETH_ADDRESS,
           symbol: 'WETH',
           decimals,
           raw: '0x' + balance.toString(16),
-          formatted: Number.isFinite(uiNum) ? uiNum.toFixed(6) : ui,
+          formatted: ui,
         });
       } catch (e: any) {
         notes.push(`WETH balance fetch failed: ${e.message}`);

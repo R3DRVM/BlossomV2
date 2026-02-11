@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { DefiPosition, useBlossomContext } from '../context/BlossomContext';
+import { DEMO_STABLE_ALT_SYMBOL, DEMO_STABLE_INTERNAL_SYMBOL, brandStableText, formatTokenSymbol } from '../lib/tokenBranding';
 
 interface DeFiSummaryCardProps {
   position: DefiPosition;
@@ -7,6 +8,13 @@ interface DeFiSummaryCardProps {
 }
 
 type RiskPreference = 'conservative' | 'balanced' | 'aggressive';
+const STABLE_SYMBOLS = new Set([
+  DEMO_STABLE_INTERNAL_SYMBOL.toUpperCase(),
+  DEMO_STABLE_ALT_SYMBOL.toUpperCase(),
+  'REDACTED',
+  'USDC',
+  'BUSDC',
+]);
 
 export default function DeFiSummaryCard({ position, onInsertPrompt }: DeFiSummaryCardProps) {
   const { confirmDefiPlan, updateDeFiPlanDeposit, account } = useBlossomContext();
@@ -35,11 +43,11 @@ export default function DeFiSummaryCard({ position, onInsertPrompt }: DeFiSummar
       <div className="space-y-3 text-sm mb-4">
         <div className="flex justify-between">
           <span className="text-blossom-slate">Protocol:</span>
-          <span className="font-medium text-blossom-ink">{position.protocol}</span>
+          <span className="font-medium text-blossom-ink">{brandStableText(position.protocol)}</span>
         </div>
         <div className="flex justify-between">
           <span className="text-blossom-slate">Asset:</span>
-          <span className="font-medium text-blossom-ink">{position.asset}</span>
+          <span className="font-medium text-blossom-ink">{formatTokenSymbol(position.asset)}</span>
         </div>
         <div className="flex justify-between">
           <span className="text-blossom-slate">APY:</span>
@@ -169,7 +177,7 @@ export default function DeFiSummaryCard({ position, onInsertPrompt }: DeFiSummar
                       return;
                     }
                     
-                    const usdcBalance = account.balances.find(b => b.symbol === 'REDACTED')?.balanceUsd || 0;
+                    const usdcBalance = account.balances.find(b => STABLE_SYMBOLS.has(String(b.symbol || '').toUpperCase()))?.balanceUsd || 0;
                     const depositDelta = newDeposit - position.depositUsd;
                     
                     // Check if we have enough REDACTED for increase

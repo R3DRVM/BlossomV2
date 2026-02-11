@@ -1,0 +1,82 @@
+{
+  "research_basic": [
+    {
+      "id": "rb-001",
+      "text": "What is BTC?",
+      "expected_route": "chat",
+      "allow_proposal_actions": false,
+      "research": true
+    },
+    {
+      "id": "rb-002",
+      "text": "Explain leverage like I'm 5",
+      "expected_route": "chat",
+      "allow_proposal_actions": false,
+      "research": true
+    }
+  ],
+  "research_market": [
+    {
+      "id": "rm-001",
+      "text": "What's the difference between Hyperliquid and GMX?",
+      "expected_route": "chat",
+      "allow_proposal_actions": false,
+      "research": true
+    }
+  ],
+  "research_portfolio": [
+    {
+      "id": "rp-001",
+      "text": "What's my current balance?",
+      "expected_route": "chat",
+      "allow_proposal_actions": false,
+      "research": true
+    },
+    {
+      "id": "rp-002",
+      "text": "What positions do I have open right now?",
+      "expected_route": "chat",
+      "allow_proposal_actions": false,
+      "research": true
+    }
+  ],
+  "mixed_intent": [
+    {
+      "id": "mx-001",
+      "text": "What is Aave and deposit 100 bUSDC there",
+      "expected_route": "planner",
+      "allow_proposal_actions": true,
+      "research": false
+    },
+    {
+      "id": "mx-002",
+      "text": "Explain stop loss then long ETH 3x with 50 bUSDC collateral",
+      "expected_route": "planner",
+      "allow_proposal_actions": true,
+      "research": false
+    },
+    {
+      "id": "mx-003",
+      "text": "Long BTC with 5x leverage, use 50 bUSDC collateral",
+      "expected_route": "planner",
+      "allow_proposal_actions": true,
+      "research": false
+    }
+  ],
+  "support_debug": [
+    {
+      "id": "sd-001",
+      "text": "Why didn't my trade execute?",
+      "expected_route": "chat",
+      "allow_proposal_actions": false,
+      "research": true
+    },
+    {
+      "id": "sd-002",
+      "text": "What does queued mean?",
+      "expected_route": "chat",
+      "allow_proposal_actions": false,
+      "research": true
+    }
+  ]
+}

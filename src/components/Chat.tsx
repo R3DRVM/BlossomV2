@@ -24,7 +24,7 @@ import { isOneClickAuthorized } from './OneClickExecution';
 import { isManualSigningEnabled } from './SessionEnforcementModal';
 // Task A: Removed ConfirmTradeCard import - using MessageBubble rich card instead
 import { BlossomLogo } from './BlossomLogo';
-import { DEMO_STABLE_INTERNAL_SYMBOL, formatTokenSymbol } from '../lib/tokenBranding';
+import { DEMO_STABLE_ALT_SYMBOL, DEMO_STABLE_INTERNAL_SYMBOL, formatTokenSymbol } from '../lib/tokenBranding';
 // ExecutionPlanCard removed - execution details now live inside chat plan card
 
 // =============================================================================
@@ -220,11 +220,24 @@ function formatStableUsdAmount(valueUsd: number): string {
   return valueUsd.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 }
 
+const STABLE_SYMBOL_WHITELIST = new Set([
+  DEMO_STABLE_INTERNAL_SYMBOL.toUpperCase(),
+  DEMO_STABLE_ALT_SYMBOL.toUpperCase(),
+  'REDACTED',
+  'USDC',
+  'BUSDC',
+]);
+
+function getStableBalanceUsd(balances: Array<{ symbol: string; balanceUsd: number }>): number | null {
+  const match = balances.find((b) => STABLE_SYMBOL_WHITELIST.has(String(b.symbol || '').toUpperCase()));
+  return typeof match?.balanceUsd === 'number' ? match.balanceUsd : null;
+}
+
 function isSeedDemoPortfolio(balances: Array<{ symbol: string; balanceUsd: number }>): boolean {
   // Avoid showing the seed demo numbers (e.g. $4,000) when the real portfolio will hydrate shortly.
   if (balances.length !== 3) return false;
   const bySymbol = new Map(balances.map(b => [b.symbol, b.balanceUsd]));
-  const stableSeedBalance = bySymbol.get(DEMO_STABLE_INTERNAL_SYMBOL) ?? bySymbol.get('REDACTED');
+  const stableSeedBalance = getStableBalanceUsd(balances);
   return (
     stableSeedBalance === 4000 &&
     bySymbol.get('ETH') === 3000 &&
@@ -385,7 +398,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
   useEffect(() => {
     if (activeChatId && currentSession && currentSession.messages.length === 0 && !hasShownWelcomeRef.current.has(activeChatId)) {
       const stableSymbol = formatTokenSymbol(DEMO_STABLE_INTERNAL_SYMBOL);
-      const stableBalanceUsd = account.balances.find(b => b.symbol === DEMO_STABLE_INTERNAL_SYMBOL)?.balanceUsd;
+      const stableBalanceUsd = getStableBalanceUsd(account.balances as any);
       const shouldHideSeedBalance = isSeedDemoPortfolio(account.balances as any);
       const welcomeBalance = typeof stableBalanceUsd === 'number' && !shouldHideSeedBalance ? stableBalanceUsd : null;
       appendMessageToActiveChat(buildWelcomeMessage(welcomeBalance, stableSymbol));
@@ -400,7 +413,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
     if (!hasWelcome) return;
 
     const stableSymbol = formatTokenSymbol(DEMO_STABLE_INTERNAL_SYMBOL);
-    const stableBalanceUsd = account.balances.find(b => b.symbol === DEMO_STABLE_INTERNAL_SYMBOL)?.balanceUsd;
+    const stableBalanceUsd = getStableBalanceUsd(account.balances as any);
     const shouldHideSeedBalance = isSeedDemoPortfolio(account.balances as any);
     const welcomeBalance = typeof stableBalanceUsd === 'number' && !shouldHideSeedBalance ? stableBalanceUsd : null;
 

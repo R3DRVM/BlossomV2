@@ -9,7 +9,7 @@ import { ChevronDown, Clock, RefreshCw, ChevronUp } from 'lucide-react';
 import { executionMode, executionAuthMode, ethTestnetChainId, forceDemoPortfolio } from '../lib/config';
 import { getAddress, getAddressIfExplicit, getChainId, connectWallet as legacyConnectWallet, switchToSepolia, getProvider, disconnectWallet as legacyDisconnectWallet, isExplicitlyConnected } from '../lib/walletAdapter';
 import { isBackendHealthy, onBackendHealthChange, AGENT_API_BASE_URL } from '../lib/apiClient';
-import { formatTokenSymbol } from '../lib/tokenBranding';
+import { DEMO_STABLE_ALT_SYMBOL, DEMO_STABLE_INTERNAL_SYMBOL, formatTokenSymbol } from '../lib/tokenBranding';
 import OneClickExecution from './OneClickExecution';
 import ConnectWalletButton, { useWalletStatus } from './wallet/ConnectWalletButton';
 import { useAccount, useChainId as useWagmiChainId, useSwitchChain } from 'wagmi';
@@ -24,6 +24,13 @@ interface RightPanelProps {
 }
 
 type PositionsTab = 'all' | 'perps' | 'defi' | 'events';
+const STABLE_SYMBOLS = new Set([
+  DEMO_STABLE_INTERNAL_SYMBOL.toUpperCase(),
+  DEMO_STABLE_ALT_SYMBOL.toUpperCase(),
+  'REDACTED',
+  'USDC',
+  'BUSDC',
+]);
 
 export default function RightPanel(_props: RightPanelProps) {
   const {
@@ -1046,7 +1053,8 @@ export default function RightPanel(_props: RightPanelProps) {
             <div className="text-[11px] font-semibold tracking-[0.12em] text-slate-500 uppercase mb-1.5">Holdings</div>
             <div className="flex flex-wrap gap-x-4 gap-y-1">
               {account.balances.map((balance) => {
-                const displayValue = balance.symbol === 'REDACTED'
+                const isStable = STABLE_SYMBOLS.has(String(balance.symbol || '').toUpperCase());
+                const displayValue = isStable
                   ? balance.balanceUsd.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })
                   : balance.balanceUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -1071,7 +1079,7 @@ export default function RightPanel(_props: RightPanelProps) {
             </button>
             {/* Demo bUSDC helper - inline next to ETH Faucet */}
             {isEthTestnetMode && walletState === 'CONNECTED_READY' && (() => {
-              const usdcBalance = account.balances.find(b => b.symbol === 'REDACTED')?.balanceUsd || 0;
+              const usdcBalance = account.balances.find(b => STABLE_SYMBOLS.has(String(b.symbol || '').toUpperCase()))?.balanceUsd || 0;
               const hasLowUsdc = usdcBalance < 50;
               const faucetClaimedKey = walletAddress ? `blossom_faucet_claimed_${walletAddress.toLowerCase()}` : null;
               const wasClaimed = faucetClaimedKey && localStorage.getItem(faucetClaimedKey) === 'true';

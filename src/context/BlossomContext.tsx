@@ -2239,9 +2239,23 @@ export function BlossomProvider({ children }: { children: ReactNode }) {
         
         // Add demo tokens if present
         if (data.tokens && Array.isArray(data.tokens)) {
+          const stableSymbols = new Set(['REDACTED', 'USDC', 'BUSDC', 'BLSMUSDC']);
           for (const token of data.tokens) {
-            if (token.symbol === 'REDACTED') {
-              const usdcUsd = parseFloat(token.formatted || '0');
+            const tokenSymbol = String(token.symbol || '').toUpperCase();
+            if (stableSymbols.has(tokenSymbol)) {
+              let usdcUsd = parseFloat(token.formatted || '0');
+              // Guard against decimal-scaling bugs from upstream token metadata in demo mode.
+              if ((!Number.isFinite(usdcUsd) || usdcUsd > 1_000_000) && token.raw) {
+                try {
+                  const raw = BigInt(token.raw);
+                  const decimals = Number.isFinite(Number(token.decimals)) ? Number(token.decimals) : 6;
+                  const safeDecimals = decimals > 0 && decimals <= 18 ? decimals : 6;
+                  const divisor = Math.pow(10, safeDecimals);
+                  usdcUsd = Number(raw.toString()) / divisor;
+                } catch {
+                  // Keep parsed formatted fallback.
+                }
+              }
               if (usdcUsd > 0) {
                 newBalances.push({ symbol: 'REDACTED', balanceUsd: usdcUsd });
               }
