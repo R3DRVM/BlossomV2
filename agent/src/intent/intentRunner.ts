@@ -3626,34 +3626,43 @@ async function executeProofOnlyHyperliquid(
     };
     const proofHex = toHex(JSON.stringify(proofData));
 
-    const isNonceError = (err: any) => {
+    const isRetryableTxError = (err: any) => {
       const message = `${err?.message || err}`.toLowerCase();
-      return message.includes('nonce') || message.includes('already known');
+      return (
+        message.includes('nonce') ||
+        message.includes('already known') ||
+        message.includes('replacement transaction underpriced') ||
+        message.includes('underpriced') ||
+        message.includes('internal error') ||
+        message.includes('unexpected error (code=10055)')
+      );
     };
 
-    const sendWithNonceRetry = async () => {
-      try {
-        return await walletClient.sendTransaction({
-          to: account.address,
-          value: BigInt(1),
-          data: proofHex as `0x${string}`,
-        });
-      } catch (err: any) {
-        if (!isNonceError(err)) throw err;
-        const pendingNonce = await publicClient.getTransactionCount({
-          address: account.address,
-          blockTag: 'pending',
-        });
-        return await walletClient.sendTransaction({
-          to: account.address,
-          value: BigInt(1),
-          data: proofHex as `0x${string}`,
-          nonce: pendingNonce,
-        });
+    const sendWithRetries = async () => {
+      let lastErr: any = null;
+      for (let attempt = 0; attempt < 6; attempt += 1) {
+        try {
+          const pendingNonce = await publicClient.getTransactionCount({
+            address: account.address,
+            blockTag: 'pending',
+          });
+          return await walletClient.sendTransaction({
+            to: account.address,
+            value: BigInt(1),
+            data: proofHex as `0x${string}`,
+            nonce: pendingNonce,
+          });
+        } catch (err: any) {
+          lastErr = err;
+          if (!isRetryableTxError(err)) throw err;
+          // Small backoff to allow the competing tx to land in the pending pool.
+          await new Promise(resolve => setTimeout(resolve, 250 + attempt * 150));
+        }
       }
+      throw lastErr;
     };
 
-    const txHash = await sendWithNonceRetry();
+    const txHash = await sendWithRetries();
 
     let receipt: any = null;
     let receiptStatus: 'confirmed' | 'pending' | 'failed' = 'pending';

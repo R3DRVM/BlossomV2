@@ -47,36 +47,43 @@ export async function mintHyperliquidBusdc(recipientAddress: string, amount: num
   }).extend(publicActions);
 
   const amountUnits = parseUnits(amount.toString(), HYPERLIQUID_BUSDC_DECIMALS);
-  const isNonceError = (err: any) => {
+  const isRetryableTxError = (err: any) => {
     const message = `${err?.message || err}`.toLowerCase();
-    return message.includes('nonce') || message.includes('already known');
+    return (
+      message.includes('nonce') ||
+      message.includes('already known') ||
+      message.includes('replacement transaction underpriced') ||
+      message.includes('underpriced') ||
+      message.includes('internal error') ||
+      message.includes('unexpected error (code=10055)')
+    );
   };
 
-  const writeWithNonceRetry = async () => {
-    try {
-      return await client.writeContract({
-        address: HYPERLIQUID_BUSDC_ADDRESS,
-        abi: mintAbi,
-        functionName: 'mint',
-        args: [recipientAddress as `0x${string}`, amountUnits],
-      });
-    } catch (err: any) {
-      if (!isNonceError(err)) throw err;
-      const pendingNonce = await client.getTransactionCount({
-        address: account.address,
-        blockTag: 'pending',
-      });
-      return await client.writeContract({
-        address: HYPERLIQUID_BUSDC_ADDRESS,
-        abi: mintAbi,
-        functionName: 'mint',
-        args: [recipientAddress as `0x${string}`, amountUnits],
-        nonce: pendingNonce,
-      });
+  const writeWithRetries = async () => {
+    let lastErr: any = null;
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      try {
+        const pendingNonce = await client.getTransactionCount({
+          address: account.address,
+          blockTag: 'pending',
+        });
+        return await client.writeContract({
+          address: HYPERLIQUID_BUSDC_ADDRESS,
+          abi: mintAbi,
+          functionName: 'mint',
+          args: [recipientAddress as `0x${string}`, amountUnits],
+          nonce: pendingNonce,
+        });
+      } catch (err: any) {
+        lastErr = err;
+        if (!isRetryableTxError(err)) throw err;
+        await new Promise(resolve => setTimeout(resolve, 250 + attempt * 150));
+      }
     }
+    throw lastErr;
   };
 
-  const txHash = await writeWithNonceRetry();
+  const txHash = await writeWithRetries();
 
   await client.waitForTransactionReceipt({ hash: txHash });
 
