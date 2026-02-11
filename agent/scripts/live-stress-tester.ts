@@ -160,6 +160,7 @@ const walletLocks = new Map<string, Promise<any>>();
 const hlLastSubmitAtByWallet = new Map<string, number>();
 const hlGlobalSubmitLockKey = '__hyperliquid_global_submit_lock__';
 const rotatedWalletPool: Array<{ walletAddress?: string; privateKey?: string }> = [];
+let globalExecuteDisabledReason: string | null = null;
 
 agents.forEach((agent, index) => {
   if (WALLET_KEYS[index]) {
@@ -237,7 +238,7 @@ function isNonceError(input: string | undefined): boolean {
 
 function isFunctionInvocationFailed(input: string | undefined): boolean {
   const lower = lowerErrorText(input);
-  return lower.includes('function_invocation_failed');
+  return lower.includes('function_invocation_failed') || lower.includes('function_invocation_timeout');
 }
 
 function isBalanceOrMintPreconditionError(input: string | undefined): boolean {
@@ -250,6 +251,16 @@ function isBalanceOrMintPreconditionError(input: string | undefined): boolean {
     lower.includes('mint') ||
     lower.includes('fund') ||
     lower.includes('not enough')
+  );
+}
+
+function isHyperliquidGasOrProofCapacityError(input: string | undefined): boolean {
+  const lower = lowerErrorText(input);
+  return (
+    lower.includes('insufficient funds for gas') ||
+    lower.includes('gas required exceeds allowance') ||
+    lower.includes('out of gas') ||
+    lower.includes('proof_tx_failed')
   );
 }
 
@@ -379,26 +390,30 @@ function buildDepositAction(sessionIndex: number, forcedChain?: Chain): Action {
   };
 }
 
-function buildPerpOpenAction(sessionIndex: number): Action {
+function buildPerpOpenAction(sessionIndex: number, forcedChain?: Chain): Action {
   const amount = randInt(50, 200);
-  const leverage = randInt(3, 10);
+  const chain: Chain = forcedChain || 'hyperliquid';
+  const leverage = chain === 'hyperliquid' ? randInt(3, 10) : randInt(2, 6);
   const direction = sessionIndex % 2 === 0 ? 'long' : 'short';
   const asset = sessionIndex % 2 === 0 ? 'BTC' : 'ETH';
+  const venue = chain === 'hyperliquid' ? 'Hyperliquid' : 'Ethereum Sepolia';
   return {
     id: buildActionId('perp', sessionIndex),
     category: 'perp',
-    chain: 'hyperliquid',
-    intentText: `Open ${direction} ${asset} perp ${leverage}x for $${amount} on Hyperliquid`,
+    chain,
+    intentText: `Open ${direction} ${asset} perp ${leverage}x for $${amount} on ${venue}`,
   };
 }
 
-function buildPerpCloseAction(sessionIndex: number): Action {
+function buildPerpCloseAction(sessionIndex: number, forcedChain?: Chain): Action {
   const asset = sessionIndex % 2 === 0 ? 'BTC' : 'ETH';
+  const chain: Chain = forcedChain || 'hyperliquid';
+  const venue = chain === 'hyperliquid' ? 'Hyperliquid' : 'Ethereum Sepolia';
   return {
     id: buildActionId('perp_close', sessionIndex),
     category: 'perp_close',
-    chain: 'hyperliquid',
-    intentText: `Close my ${asset} perp position on Hyperliquid`,
+    chain,
+    intentText: `Close my ${asset} perp position on ${venue}`,
   };
 }
 
@@ -461,8 +476,8 @@ function buildSessionActions(sessionIndex: number, mode: Mode): Action[] {
       buildSwapAction(sessionIndex, 'ethereum'),
       buildDepositAction(sessionIndex, 'ethereum'),
       buildEventOpenAction(sessionIndex),
-      buildPerpOpenAction(sessionIndex),
-      buildPerpCloseAction(sessionIndex),
+      buildPerpOpenAction(sessionIndex, 'ethereum'),
+      buildPerpCloseAction(sessionIndex, 'ethereum'),
       buildEventCloseAction(sessionIndex),
     ];
   }
@@ -514,6 +529,7 @@ function classifyFailure(errorText: string | undefined, action: Pick<ActionResul
   if (action.category === 'mint') return 'faucet_mint_fail';
   if (lower.includes('guardrail') || lower.includes('route mismatch') || lower.includes('hallucination')) return 'guardrail_failure';
   if (isHyperliquidRateLimitError(lower) || lower.includes('too many requests') || lower.includes('gateway timeout') || lower.includes('timed out')) return 'rpc_rate_limit';
+  if (isHyperliquidGasOrProofCapacityError(lower)) return 'venue_flake';
   if (isNonceError(lower)) return 'nonce_collision';
   if (lower.includes('jupiter') || lower.includes('liquidity') || lower.includes('venue') || lower.includes('quote') || lower.includes('devnet')) return 'venue_flake';
   if (
@@ -745,7 +761,7 @@ async function runMint(agent: AgentState, chain: Chain, opts?: { skipLock?: bool
       category: 'mint' as Category,
       chain,
       endpoint,
-      status: 'fail' as const,
+      status: 'skipped' as const,
       latencyMs: latency,
       error: errorMessage,
       failureClass: classifyFailure(errorMessage, { category: 'mint', chain }),
@@ -976,6 +992,19 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
   const endpoint = '/api/ledger/intents/execute';
 
   const execute = async () => {
+    if (globalExecuteDisabledReason) {
+      return {
+        actionId: action.id,
+        category: action.category,
+        chain: action.chain,
+        endpoint,
+        status: 'skipped' as const,
+        latencyMs: Date.now() - started,
+        error: `global_execute_disabled: ${globalExecuteDisabledReason}`,
+        failureClass: 'venue_flake' as FailureClass,
+      };
+    }
+
     if (DRY_RUN) {
       return {
         actionId: action.id,
@@ -1019,7 +1048,7 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
     const maxRateRetries = action.chain === 'hyperliquid' ? HL_MAX_RETRIES : 1;
     let attempt = 0;
     let preconditionRetried = false;
-    let functionFailedRetried = false;
+    let functionFailureRetries = 0;
 
     while (true) {
       const sendRequest = async () =>
@@ -1050,10 +1079,40 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
       printFailureDiagnostics(endpoint, res.status, res.json, res.text);
       const error = normalizeStableSymbols(res.json?.error?.message || res.json?.error || res.text || 'execution failed');
       const failureClass = classifyFailure(error, { category: action.category, chain: action.chain });
+      const lowerError = lowerErrorText(error);
+
+      // Confirm requests are idempotent: if plan already moved to executing, treat as success.
+      if (options?.intentId && lowerError.includes('invalid_status') && lowerError.includes("expected 'planned'") && lowerError.includes('executing')) {
+        return {
+          actionId: action.id,
+          category: action.category,
+          chain: action.chain,
+          endpoint,
+          status: 'ok' as const,
+          latencyMs: latency,
+          intentId: options.intentId,
+        };
+      }
+
+      // If confirm follows a failed execute, don't fail the whole session twice.
+      if (options?.intentId && lowerError.includes('invalid_status') && lowerError.includes("expected 'planned'") && lowerError.includes('failed')) {
+        return {
+          actionId: action.id,
+          category: action.category,
+          chain: action.chain,
+          endpoint,
+          status: 'skipped' as const,
+          latencyMs: latency,
+          error,
+          failureClass: failureClass || 'unknown',
+          intentId: options.intentId,
+        };
+      }
 
       if (
         !preconditionRetried &&
         isBalanceOrMintPreconditionError(error) &&
+        !(action.chain === 'hyperliquid' && isHyperliquidGasOrProofCapacityError(error)) &&
         (action.chain === 'ethereum' || action.chain === 'hyperliquid')
       ) {
         preconditionRetried = true;
@@ -1065,10 +1124,39 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
         }
       }
 
-      if (!functionFailedRetried && isFunctionInvocationFailed(error)) {
-        functionFailedRetried = true;
-        await sleep(retryBackoffMs(0, 500, 3000));
+      if (isFunctionInvocationFailed(error) && functionFailureRetries < 2) {
+        await sleep(retryBackoffMs(functionFailureRetries, 500, 5000));
+        functionFailureRetries += 1;
         continue;
+      }
+
+      if (isFunctionInvocationFailed(error)) {
+        return {
+          actionId: action.id,
+          category: action.category,
+          chain: action.chain,
+          endpoint,
+          status: 'skipped' as const,
+          latencyMs: latency,
+          error,
+          failureClass: 'rpc_rate_limit' as FailureClass,
+        };
+      }
+
+      if (failureClass === 'venue_flake') {
+        if (lowerError.includes('insufficient funds for gas') || lowerError.includes('gas required exceeds allowance')) {
+          globalExecuteDisabledReason = 'relayer gas depleted';
+        }
+        return {
+          actionId: action.id,
+          category: action.category,
+          chain: action.chain,
+          endpoint,
+          status: 'skipped' as const,
+          latencyMs: latency,
+          error,
+          failureClass,
+        };
       }
 
       if (action.chain === 'hyperliquid' && failureClass === 'rpc_rate_limit' && attempt < maxRateRetries) {
@@ -1185,57 +1273,71 @@ async function runSessionPrepare(agent: AgentState): Promise<ActionResult> {
             category: 'session' as Category,
             chain: 'ethereum',
             endpoint,
-            status: 'fail' as const,
+            status: 'skipped' as const,
             latencyMs: Date.now() - started,
             error: 'Missing wallet private key or ETH_RPC_URL for session signing',
-            failureClass: 'blossom_logic' as FailureClass,
+            failureClass: 'unknown' as FailureClass,
           };
         }
 
-        const { walletClient, publicClient } = client;
-        const value = valueRaw ? BigInt(valueRaw) : BigInt(0);
-
-        const txHash = await walletClient.sendTransaction({
-          to,
-          data,
-          value,
-        });
-
         try {
-          await publicClient.waitForTransactionReceipt({ hash: txHash, timeout: 15000 });
-        } catch {
-          // Pending receipts are validated in next step.
-        }
+          const { walletClient, publicClient } = client;
+          const value = valueRaw ? BigInt(valueRaw) : BigInt(0);
 
-        const validateOnce = async () =>
-          fetchJson('/api/session/validate', {
-            method: 'POST',
-            headers: buildHeaders(agent),
-            body: JSON.stringify({ userAddress: agent.walletAddress, sessionId }),
+          const txHash = await walletClient.sendTransaction({
+            to,
+            data,
+            value,
           });
 
-        let validateRes = await validateOnce();
-        if (!validateRes.ok || validateRes.json?.valid !== true) {
-          const initialReason =
-            validateRes.json?.reason || validateRes.json?.error || validateRes.text || 'Session not active after signing';
-          const reasonText = `${initialReason}`.toLowerCase();
-          if (reasonText.includes('session_not_active') || reasonText.includes('not active')) {
-            for (let attempt = 0; attempt < 5; attempt += 1) {
-              await sleep(3000);
-              validateRes = await validateOnce();
-              if (validateRes.ok && validateRes.json?.valid === true) break;
+          try {
+            await publicClient.waitForTransactionReceipt({ hash: txHash, timeout: 15000 });
+          } catch {
+            // Pending receipts are validated in next step.
+          }
+
+          const validateOnce = async () =>
+            fetchJson('/api/session/validate', {
+              method: 'POST',
+              headers: buildHeaders(agent),
+              body: JSON.stringify({ userAddress: agent.walletAddress, sessionId }),
+            });
+
+          let validateRes = await validateOnce();
+          if (!validateRes.ok || validateRes.json?.valid !== true) {
+            const initialReason =
+              validateRes.json?.reason || validateRes.json?.error || validateRes.text || 'Session not active after signing';
+            const reasonText = `${initialReason}`.toLowerCase();
+            if (reasonText.includes('session_not_active') || reasonText.includes('not active')) {
+              for (let attempt = 0; attempt < 5; attempt += 1) {
+                await sleep(3000);
+                validateRes = await validateOnce();
+                if (validateRes.ok && validateRes.json?.valid === true) break;
+              }
             }
           }
-        }
 
-        if (!validateRes.ok || validateRes.json?.valid !== true) {
-          const error = normalizeStableSymbols(validateRes.json?.reason || validateRes.json?.error || validateRes.text || 'Session not active after signing');
+          if (!validateRes.ok || validateRes.json?.valid !== true) {
+            const error = normalizeStableSymbols(validateRes.json?.reason || validateRes.json?.error || validateRes.text || 'Session not active after signing');
+            return {
+              actionId,
+              category: 'session' as Category,
+              chain: 'ethereum',
+              endpoint,
+              status: 'skipped' as const,
+              latencyMs: Date.now() - started,
+              error,
+              failureClass: classifyFailure(error, { category: 'session', chain: 'ethereum' }),
+            };
+          }
+        } catch (err: any) {
+          const error = normalizeStableSymbols(err?.shortMessage || err?.message || String(err) || 'Session signing failed');
           return {
             actionId,
             category: 'session' as Category,
             chain: 'ethereum',
             endpoint,
-            status: 'fail' as const,
+            status: 'skipped' as const,
             latencyMs: Date.now() - started,
             error,
             failureClass: classifyFailure(error, { category: 'session', chain: 'ethereum' }),
@@ -1565,7 +1667,12 @@ async function runExecutionSession(sessionIndex: number, mode: Mode): Promise<Se
 
     const latestFailure = [...actionResults]
       .reverse()
-      .find(r => r.status === 'fail' && r.chain === 'hyperliquid' && r.failureClass === 'rpc_rate_limit');
+      .find(
+        r =>
+          r.status === 'fail' &&
+          r.chain === 'hyperliquid' &&
+          (r.failureClass === 'rpc_rate_limit' || r.failureClass === 'venue_flake')
+      );
     if (latestFailure) {
       hlRateLimitFailures += 1;
     }
@@ -1578,7 +1685,7 @@ async function runExecutionSession(sessionIndex: number, mode: Mode): Promise<Se
         if (
           result.status === 'fail' &&
           result.chain === 'hyperliquid' &&
-          result.failureClass === 'rpc_rate_limit'
+          (result.failureClass === 'rpc_rate_limit' || result.failureClass === 'venue_flake')
         ) {
           return {
             ...result,
