@@ -14,8 +14,9 @@ async function getApp() {
     // Set Vercel environment flag before importing
     process.env.VERCEL = '1';
 
-    // Import from esbuild bundle
-    const httpModule = await import('../agent/dist/server-bundle.js');
+    // Import from esbuild bundle via runtime string to avoid TS declaration requirement.
+    const bundlePath = '../agent/dist/server-bundle.js';
+    const httpModule = await import(bundlePath);
     app = httpModule.app;
     appInitialized = true;
   }
