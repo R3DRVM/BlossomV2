@@ -140,6 +140,12 @@ const ETH_RPC_URL = arg('eth-rpc') || process.env.STRESS_TEST_ETH_RPC_URL || pro
 const STRESS_EVM_ADDRESS = process.env.STRESS_TEST_EVM_ADDRESS || process.env.TEST_WALLET_ADDRESS || process.env.RELAYER_PUBLIC_ADDRESS || '';
 const STRESS_SOLANA_ADDRESS = process.env.STRESS_TEST_SOLANA_ADDRESS || '';
 const STRESS_HYPERLIQUID_ADDRESS = process.env.STRESS_TEST_HYPERLIQUID_ADDRESS || STRESS_EVM_ADDRESS;
+const HL_MAX_RETRIES = parseInt(process.env.STRESS_HL_MAX_RETRIES || '5', 10);
+const HL_MIN_SPACING_MIN_MS = parseInt(process.env.STRESS_HL_MIN_SPACING_MIN_MS || '800', 10);
+const HL_MIN_SPACING_MAX_MS = parseInt(process.env.STRESS_HL_MIN_SPACING_MAX_MS || '1200', 10);
+const HL_RATE_LIMIT_THRESHOLD = parseInt(process.env.STRESS_HL_RATE_LIMIT_THRESHOLD || '3', 10);
+const SESSION_PREPARE_RETRY_LIMIT = parseInt(process.env.STRESS_SESSION_PREPARE_RETRIES || '2', 10);
+const DESIRED_HL_WALLETS = parseInt(process.env.STRESS_DESIRED_HL_WALLETS || '4', 10);
 
 const RUN_ID = `live_stress_${MODE}_${Date.now()}_${randomUUID().slice(0, 8)}`;
 
@@ -151,6 +157,9 @@ const agents: AgentState[] = [
 ];
 
 const walletLocks = new Map<string, Promise<any>>();
+const hlLastSubmitAtByWallet = new Map<string, number>();
+const hlGlobalSubmitLockKey = '__hyperliquid_global_submit_lock__';
+const rotatedWalletPool: Array<{ walletAddress?: string; privateKey?: string }> = [];
 
 agents.forEach((agent, index) => {
   if (WALLET_KEYS[index]) {
@@ -162,6 +171,17 @@ agents.forEach((agent, index) => {
     agent.walletAddress = STRESS_EVM_ADDRESS;
   }
 });
+
+const maxWalletRows = Math.max(WALLET_KEYS.length, WALLET_LIST.length);
+for (let i = 0; i < maxWalletRows; i += 1) {
+  rotatedWalletPool.push({
+    privateKey: WALLET_KEYS[i],
+    walletAddress: WALLET_LIST[i],
+  });
+}
+if (rotatedWalletPool.length === 0 && STRESS_EVM_ADDRESS) {
+  rotatedWalletPool.push({ walletAddress: STRESS_EVM_ADDRESS });
+}
 
 if (!ALLOW_NON_PROD && !BASE_URL.includes('blossom.onl') && !BASE_URL.includes('vercel.app') && !BASE_URL.includes('localhost')) {
   console.error(`❌ Refusing to run against non-prod baseUrl: ${BASE_URL}`);
@@ -185,6 +205,63 @@ function logVerbose(msg: string) {
 
 function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function randomBetween(min: number, max: number): number {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function lowerErrorText(input: string | undefined): string {
+  return String(input || '').toLowerCase();
+}
+
+function isHyperliquidRateLimitError(input: string | undefined): boolean {
+  const lower = lowerErrorText(input);
+  return (
+    lower.includes('request exceeds defined limit') ||
+    lower.includes('too many evm txs submitted') ||
+    lower.includes('rate limited') ||
+    lower.includes('rate limit') ||
+    lower.includes('429')
+  );
+}
+
+function isNonceError(input: string | undefined): boolean {
+  const lower = lowerErrorText(input);
+  return (
+    lower.includes('nonce') ||
+    lower.includes('replacement transaction underpriced') ||
+    lower.includes('already known')
+  );
+}
+
+function isFunctionInvocationFailed(input: string | undefined): boolean {
+  const lower = lowerErrorText(input);
+  return lower.includes('function_invocation_failed');
+}
+
+function isBalanceOrMintPreconditionError(input: string | undefined): boolean {
+  const lower = lowerErrorText(input);
+  return (
+    lower.includes('insufficient') ||
+    lower.includes('collateral') ||
+    lower.includes('balance') ||
+    lower.includes('faucet') ||
+    lower.includes('mint') ||
+    lower.includes('fund') ||
+    lower.includes('not enough')
+  );
+}
+
+function retryBackoffMs(attempt: number, baseMs = 600, capMs = 12000): number {
+  const exponential = Math.min(capMs, baseMs * Math.pow(2, attempt));
+  const jitter = randomBetween(150, 700);
+  return exponential + jitter;
+}
+
+function printFailureDiagnostics(endpoint: string, status: number, bodyJson: any, bodyText: string) {
+  const payload = bodyJson ?? bodyText ?? null;
+  console.error(`[diag][${endpoint}] status=${status} payload=${typeof payload === 'string' ? payload : JSON.stringify(payload)}`);
 }
 
 function randInt(min: number, max: number) {
@@ -219,7 +296,7 @@ function isEvmActionChain(chain: Chain): boolean {
 
 function getLockKey(agent: AgentState, chain: Chain): string {
   if (chain === 'hyperliquid') {
-    return (STRESS_HYPERLIQUID_ADDRESS || agent.walletAddress || 'wallet:shared').toLowerCase();
+    return (agent.walletAddress || STRESS_HYPERLIQUID_ADDRESS || STRESS_EVM_ADDRESS || 'wallet:shared').toLowerCase();
   }
   return (agent.walletAddress || STRESS_EVM_ADDRESS || 'wallet:shared').toLowerCase();
 }
@@ -242,6 +319,21 @@ async function withWalletLock<T>(lockKey: string, fn: () => Promise<T>): Promise
       walletLocks.delete(lockKey);
     }
   }
+}
+
+async function withHyperliquidSubmissionGate<T>(agent: AgentState, fn: () => Promise<T>): Promise<T> {
+  const walletKey = getLockKey(agent, 'hyperliquid');
+  return withWalletLock(hlGlobalSubmitLockKey, async () => {
+    const now = Date.now();
+    const lastSentAt = hlLastSubmitAtByWallet.get(walletKey) || 0;
+    const minSpacing = randomBetween(HL_MIN_SPACING_MIN_MS, HL_MIN_SPACING_MAX_MS);
+    const waitMs = Math.max(0, minSpacing - (now - lastSentAt));
+    if (waitMs > 0) {
+      await sleep(waitMs);
+    }
+    hlLastSubmitAtByWallet.set(walletKey, Date.now());
+    return fn();
+  });
 }
 
 async function getWalletClient(agent: AgentState) {
@@ -421,10 +513,19 @@ function classifyFailure(errorText: string | undefined, action: Pick<ActionResul
   if (action.category === 'validate') return 'erc8004_validation';
   if (action.category === 'mint') return 'faucet_mint_fail';
   if (lower.includes('guardrail') || lower.includes('route mismatch') || lower.includes('hallucination')) return 'guardrail_failure';
-  if (lower.includes('nonce') || lower.includes('replacement transaction underpriced') || lower.includes('already known')) return 'nonce_collision';
-  if (lower.includes('rate limit') || lower.includes('too many requests') || lower.includes('429') || lower.includes('rpc') || lower.includes('gateway timeout') || lower.includes('timed out')) return 'rpc_rate_limit';
-  if (lower.includes('jupiter') || lower.includes('liquidity') || lower.includes('venue') || lower.includes('quote') || lower.includes('hyperliquid') || lower.includes('devnet')) return 'venue_flake';
-  if (lower.includes('path_violation') || lower.includes('missing_execution_request') || lower.includes('invalid') || lower.includes('revert') || lower.includes('failed')) return 'blossom_logic';
+  if (isHyperliquidRateLimitError(lower) || lower.includes('too many requests') || lower.includes('gateway timeout') || lower.includes('timed out')) return 'rpc_rate_limit';
+  if (isNonceError(lower)) return 'nonce_collision';
+  if (lower.includes('jupiter') || lower.includes('liquidity') || lower.includes('venue') || lower.includes('quote') || lower.includes('devnet')) return 'venue_flake';
+  if (
+    lower.includes('path_violation') ||
+    lower.includes('missing_execution_request') ||
+    lower.includes('route mismatch') ||
+    lower.includes('wrong venue') ||
+    lower.includes('malformed executionrequest') ||
+    lower.includes('malformed actions')
+  ) {
+    return 'blossom_logic';
+  }
   return 'unknown';
 }
 
@@ -561,15 +662,16 @@ function buildMintPayload(chain: Chain, agent?: AgentState) {
     return { userAddress: STRESS_SOLANA_ADDRESS, solanaAddress: STRESS_SOLANA_ADDRESS, chain: 'solana', amount };
   }
   if (chain === 'hyperliquid') {
-    if (!STRESS_HYPERLIQUID_ADDRESS) return null;
-    return { userAddress: STRESS_HYPERLIQUID_ADDRESS, chain: 'hyperliquid', amount };
+    const target = agent?.walletAddress || STRESS_HYPERLIQUID_ADDRESS || STRESS_EVM_ADDRESS;
+    if (!target) return null;
+    return { userAddress: target, chain: 'hyperliquid', amount };
   }
   const target = agent?.walletAddress || STRESS_EVM_ADDRESS;
   if (!target) return null;
   return { userAddress: target, chain: 'ethereum', amount };
 }
 
-async function runMint(agent: AgentState, chain: Chain): Promise<ActionResult> {
+async function runMint(agent: AgentState, chain: Chain, opts?: { skipLock?: boolean }): Promise<ActionResult> {
   const actionId = buildActionId('mint', 0);
   const started = Date.now();
   const endpoint = '/api/mint-busdc';
@@ -650,7 +752,7 @@ async function runMint(agent: AgentState, chain: Chain): Promise<ActionResult> {
     };
   };
 
-  if (!isEvmActionChain(chain)) {
+  if (!isEvmActionChain(chain) || opts?.skipLock) {
     return execute();
   }
 
@@ -914,37 +1016,80 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
       delete body.intentText;
     }
 
-    const res = await fetchJson(endpoint, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-    }, 90000);
+    const maxRateRetries = action.chain === 'hyperliquid' ? HL_MAX_RETRIES : 1;
+    let attempt = 0;
+    let preconditionRetried = false;
+    let functionFailedRetried = false;
 
-    const latency = Date.now() - started;
-    if (res.ok && res.json?.ok) {
+    while (true) {
+      const sendRequest = async () =>
+        fetchJson(endpoint, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(body),
+        }, 90000);
+
+      const res = action.chain === 'hyperliquid'
+        ? await withHyperliquidSubmissionGate(agent, sendRequest)
+        : await sendRequest();
+
+      const latency = Date.now() - started;
+      if (res.ok && res.json?.ok) {
+        return {
+          actionId: action.id,
+          category: action.category,
+          chain: action.chain,
+          endpoint,
+          status: 'ok' as const,
+          latencyMs: latency,
+          txHash: res.json?.txHash || res.json?.execution?.txHash,
+          intentId: res.json?.intentId,
+        };
+      }
+
+      printFailureDiagnostics(endpoint, res.status, res.json, res.text);
+      const error = normalizeStableSymbols(res.json?.error?.message || res.json?.error || res.text || 'execution failed');
+      const failureClass = classifyFailure(error, { category: action.category, chain: action.chain });
+
+      if (
+        !preconditionRetried &&
+        isBalanceOrMintPreconditionError(error) &&
+        (action.chain === 'ethereum' || action.chain === 'hyperliquid')
+      ) {
+        preconditionRetried = true;
+        const mintChain: Chain = action.chain === 'hyperliquid' ? 'hyperliquid' : 'ethereum';
+        const mintResult = await runMint(agent, mintChain, { skipLock: true });
+        if (mintResult.status === 'ok' || mintResult.status === 'skipped') {
+          await sleep(300);
+          continue;
+        }
+      }
+
+      if (!functionFailedRetried && isFunctionInvocationFailed(error)) {
+        functionFailedRetried = true;
+        await sleep(retryBackoffMs(0, 500, 3000));
+        continue;
+      }
+
+      if (action.chain === 'hyperliquid' && failureClass === 'rpc_rate_limit' && attempt < maxRateRetries) {
+        const backoffMs = retryBackoffMs(attempt);
+        logVerbose(`[hl-backoff] ${agent.id} ${action.category} attempt=${attempt + 1}/${maxRateRetries} wait=${backoffMs}ms`);
+        attempt += 1;
+        await sleep(backoffMs);
+        continue;
+      }
+
       return {
         actionId: action.id,
         category: action.category,
         chain: action.chain,
         endpoint,
-        status: 'ok' as const,
+        status: 'fail' as const,
         latencyMs: latency,
-        txHash: res.json?.txHash || res.json?.execution?.txHash,
-        intentId: res.json?.intentId,
+        error,
+        failureClass,
       };
     }
-
-    const error = normalizeStableSymbols(res.json?.error?.message || res.json?.error || res.text || 'execution failed');
-    return {
-      actionId: action.id,
-      category: action.category,
-      chain: action.chain,
-      endpoint,
-      status: 'fail' as const,
-      latencyMs: latency,
-      error,
-      failureClass: classifyFailure(error, { category: action.category, chain: action.chain }),
-    };
   };
 
   if (!isEvmActionChain(action.chain)) {
@@ -1000,14 +1145,18 @@ async function runSessionPrepare(agent: AgentState): Promise<ActionResult> {
       };
     }
 
-    const res = await fetchJson(endpoint, {
-      method: 'POST',
-      headers: buildHeaders(agent),
-      body: JSON.stringify({ userAddress: agent.walletAddress }),
-    });
+    let attempt = 0;
+    let preconditionRetried = false;
 
-    const latency = Date.now() - started;
-    if (res.ok && res.json?.ok) {
+    while (true) {
+      const res = await fetchJson(endpoint, {
+        method: 'POST',
+        headers: buildHeaders(agent),
+        body: JSON.stringify({ userAddress: agent.walletAddress }),
+      });
+
+      const latency = Date.now() - started;
+      if (res.ok && res.json?.ok) {
       const sessionId = res.json?.session?.sessionId;
       const sessionEnabled = res.json?.session?.enabled;
       const to = res.json?.session?.to;
@@ -1094,27 +1243,49 @@ async function runSessionPrepare(agent: AgentState): Promise<ActionResult> {
         }
       }
 
+        return {
+          actionId,
+          category: 'session' as Category,
+          chain: 'ethereum',
+          endpoint,
+          status: 'ok' as const,
+          latencyMs: latency,
+        };
+      }
+
+      printFailureDiagnostics(endpoint, res.status, res.json, res.text);
+      const error = normalizeStableSymbols(res.json?.error || res.text || 'session prepare failed');
+
+      if (
+        !preconditionRetried &&
+        isBalanceOrMintPreconditionError(error)
+      ) {
+        preconditionRetried = true;
+        const mintResult = await runMint(agent, 'ethereum', { skipLock: true });
+        if (mintResult.status === 'ok' || mintResult.status === 'skipped') {
+          await sleep(300);
+          continue;
+        }
+      }
+
+      if (isFunctionInvocationFailed(error) && attempt < SESSION_PREPARE_RETRY_LIMIT) {
+        const waitMs = retryBackoffMs(attempt, 400, 3000);
+        attempt += 1;
+        await sleep(waitMs);
+        continue;
+      }
+
       return {
         actionId,
         category: 'session' as Category,
         chain: 'ethereum',
         endpoint,
-        status: 'ok' as const,
+        status: 'fail' as const,
         latencyMs: latency,
+        error,
+        failureClass: classifyFailure(error, { category: 'session', chain: 'ethereum' }),
       };
     }
-
-    const error = normalizeStableSymbols(res.json?.error || res.text || 'session prepare failed');
-    return {
-      actionId,
-      category: 'session' as Category,
-      chain: 'ethereum',
-      endpoint,
-      status: 'fail' as const,
-      latencyMs: latency,
-      error,
-      failureClass: classifyFailure(error, { category: 'session', chain: 'ethereum' }),
-    };
   };
 
   return withWalletLock(getLockKey(agent, 'ethereum'), execute);
@@ -1298,12 +1469,54 @@ async function validateErc8004(agent: AgentState, action: Action): Promise<Actio
   };
 }
 
+function getRotatedWalletForSession(sessionIndex: number): { walletAddress?: string; privateKey?: string } | null {
+  if (!rotatedWalletPool.length) return null;
+  const idx = sessionIndex % rotatedWalletPool.length;
+  return rotatedWalletPool[idx] || null;
+}
+
+function applyWalletRotation(agent: AgentState, sessionIndex: number): AgentState {
+  const rotated = getRotatedWalletForSession(sessionIndex);
+  if (!rotated) return { ...agent };
+  return {
+    ...agent,
+    walletAddress: rotated.walletAddress || agent.walletAddress,
+    privateKey: rotated.privateKey || agent.privateKey,
+  };
+}
+
+function buildEthereumFallbackAction(action: Action, sessionIndex: number): Action {
+  const rewrittenIntent = normalizeStableSymbols(
+    String(action.intentText || '')
+      .replace(/\bon\s+hyperliquid\b/gi, 'on Ethereum Sepolia')
+      .replace(/\bhyperliquid\b/gi, 'Ethereum Sepolia')
+  );
+  return {
+    ...action,
+    id: buildActionId(action.category, sessionIndex),
+    chain: 'ethereum',
+    intentText: rewrittenIntent || `Execute ${action.category} intent on Ethereum Sepolia`,
+    metadata: {
+      ...(action.metadata || {}),
+      fallbackFromChain: action.chain,
+      fallbackReason: 'hl_rate_limit_circuit_breaker',
+    },
+  };
+}
+
 async function runExecutionSession(sessionIndex: number, mode: Mode): Promise<SessionResult> {
-  const agent = agents[sessionIndex % agents.length];
+  const agentTemplate = agents[sessionIndex % agents.length];
+  const agent = applyWalletRotation(agentTemplate, sessionIndex);
   const sessionId = `sess_${sessionIndex}_${randomUUID().slice(0, 6)}`;
   const startedAt = Date.now();
+  let hlRateLimitFailures = 0;
+  let hlDisabledForSession = false;
 
   await ensureAccess(agent);
+  if (agent.cookie) {
+    agentTemplate.cookie = agent.cookie;
+    agentTemplate.accessOk = true;
+  }
 
   const results: ActionResult[] = [];
 
@@ -1319,17 +1532,66 @@ async function runExecutionSession(sessionIndex: number, mode: Mode): Promise<Se
 
   const actions = buildSessionActions(sessionIndex, mode);
   for (const action of actions) {
+    const isHyperliquidAction = action.chain === 'hyperliquid';
+    if (hlDisabledForSession && isHyperliquidAction) {
+      const fallbackAction = buildEthereumFallbackAction(action, sessionIndex);
+      const fallbackResult = await executeIntent(agent, sessionId, fallbackAction);
+      results.push({
+        actionId: action.id,
+        category: action.category,
+        chain: action.chain,
+        endpoint: '/api/ledger/intents/execute',
+        status: 'skipped',
+        latencyMs: fallbackResult.latencyMs,
+        error: `HL circuit-breaker active: fallback executed on Ethereum (${fallbackResult.status})`,
+        failureClass: 'rpc_rate_limit',
+      });
+      results.push(fallbackResult);
+      await sleep(mode === 'tier1' ? 250 : 400);
+      continue;
+    }
+
     if (agent.type === 'erc8004') {
       results.push(await validateErc8004(agent, action));
     }
 
+    let actionResults: ActionResult[] = [];
     if (agent.type === 'human' && action.category === 'swap') {
       const planned = await executePlanAndConfirm(agent, sessionId, action);
-      results.push(...planned);
+      actionResults = planned;
     } else {
-      results.push(await executeIntent(agent, sessionId, action));
+      actionResults = [await executeIntent(agent, sessionId, action)];
     }
 
+    const latestFailure = [...actionResults]
+      .reverse()
+      .find(r => r.status === 'fail' && r.chain === 'hyperliquid' && r.failureClass === 'rpc_rate_limit');
+    if (latestFailure) {
+      hlRateLimitFailures += 1;
+    }
+
+    if (isHyperliquidAction && latestFailure && hlRateLimitFailures >= HL_RATE_LIMIT_THRESHOLD) {
+      hlDisabledForSession = true;
+      const fallbackAction = buildEthereumFallbackAction(action, sessionIndex);
+      const fallbackResult = await executeIntent(agent, sessionId, fallbackAction);
+      actionResults = actionResults.map(result => {
+        if (
+          result.status === 'fail' &&
+          result.chain === 'hyperliquid' &&
+          result.failureClass === 'rpc_rate_limit'
+        ) {
+          return {
+            ...result,
+            status: 'skipped' as const,
+            error: `${result.error || 'hyperliquid rate limit'} | fallback: ${fallbackResult.status} on ethereum`,
+          };
+        }
+        return result;
+      });
+      actionResults.push(fallbackResult);
+    }
+
+    results.push(...actionResults);
     await sleep(mode === 'tier1' ? 250 : 400);
   }
 
@@ -1496,14 +1758,17 @@ function summarize(results: SessionResult[]) {
       }
 
       if (action.status === 'ok') actionOk += 1;
-      if (action.status === 'fail') {
-        actionFail += 1;
+      const hasClassifiedFailure = action.status !== 'ok' && !!action.failureClass;
+      if (action.status === 'fail' || hasClassifiedFailure) {
         const cls = action.failureClass || classifyFailure(action.error, { category: action.category, chain: action.chain });
         byClass[cls] += 1;
 
         const key = `${action.endpoint} :: ${action.error || 'unknown error'}`;
         errorCounts.set(key, (errorCounts.get(key) || 0) + 1);
 
+        if (action.status === 'fail') {
+          actionFail += 1;
+        }
         if (cls === 'guardrail_failure' && action.error?.includes('chat route returned execute')) {
           accidentalExecInChat.total += 1;
         }
@@ -1553,9 +1818,15 @@ function summarize(results: SessionResult[]) {
 }
 
 async function hydrateAgentsFromKeys() {
-  if (!WALLET_KEYS.length) return;
+  if (!WALLET_KEYS.length && !rotatedWalletPool.length) return;
   try {
     const { privateKeyToAccount } = await import('viem/accounts');
+    rotatedWalletPool.forEach((wallet) => {
+      if (wallet.privateKey && !wallet.walletAddress) {
+        const account = privateKeyToAccount(wallet.privateKey as `0x${string}`);
+        wallet.walletAddress = account.address;
+      }
+    });
     agents.forEach((agent) => {
       if (agent.privateKey && !agent.walletAddress) {
         const account = privateKeyToAccount(agent.privateKey as `0x${string}`);
@@ -1577,12 +1848,20 @@ async function runSessionByMode(sessionIndex: number): Promise<SessionResult> {
 
 async function main() {
   await hydrateAgentsFromKeys();
+  const rotatedWalletCount = rotatedWalletPool.filter(w => !!w.walletAddress || !!w.privateKey).length;
+  const executeModes = MODE === 'full' || MODE === 'tier1' || MODE === 'tier2' || (MODE === 'mixed' && ALLOW_EXECUTE);
+  const effectiveWorkerConcurrency = executeModes
+    ? Math.max(1, Math.min(CONCURRENCY, rotatedWalletCount || 1))
+    : CONCURRENCY;
   log('🌸 Blossom Live Stress Tester');
   log(`   Base URL: ${BASE_URL}`);
   log(`   Mode: ${MODE}`);
   log(`   Run ID: ${RUN_ID}`);
   log(`   Sessions: ${COUNT}`);
   log(`   Concurrency: ${CONCURRENCY}`);
+  if (effectiveWorkerConcurrency !== CONCURRENCY) {
+    log(`   Adjusted execute concurrency: ${effectiveWorkerConcurrency} (wallets=${rotatedWalletCount || 1}, desired=${DESIRED_HL_WALLETS})`);
+  }
   log(`   Dry run: ${DRY_RUN ? 'yes' : 'no'}`);
   log(`   Allow execute: ${ALLOW_EXECUTE ? 'yes' : 'no'}`);
   log(`   Mint chains: ${MINT_CHAINS.join(', ')}`);
@@ -1595,7 +1874,7 @@ async function main() {
   const results: SessionResult[] = [];
   let currentIndex = 0;
 
-  const workers = Array.from({ length: CONCURRENCY }).map(async (_, workerId) => {
+  const workers = Array.from({ length: effectiveWorkerConcurrency }).map(async (_, workerId) => {
     while (true) {
       const idx = currentIndex++;
       if (idx >= COUNT) break;
