@@ -6,6 +6,7 @@
  * Modes:
  * - full: existing multi-step execution stress test
  * - tier1: deterministic suite (Ethereum-heavy, execution enabled)
+ * - tier1_relayed_required: deterministic suite requiring relayed execution (no proof-only fallback)
  * - tier2: realistic suite (cross-chain, venue flakes classified separately)
  * - chat_only: no execution, route=chat assertions only
  * - mixed: research + planning (+ optional explicit execute)
@@ -23,7 +24,7 @@ import * as path from 'path';
 
 type AgentType = 'human' | 'erc8004';
 type Chain = 'ethereum' | 'solana' | 'hyperliquid' | 'both';
-type Mode = 'full' | 'tier1' | 'tier2' | 'chat_only' | 'mixed';
+type Mode = 'full' | 'tier1' | 'tier1_relayed_required' | 'tier2' | 'chat_only' | 'mixed';
 type ExpectedRoute = 'chat' | 'planner';
 type FailureClass =
   | 'blossom_logic'
@@ -126,6 +127,7 @@ const DRY_RUN = hasFlag('dry-run');
 const VERBOSE = hasFlag('verbose');
 const ALLOW_NON_PROD = hasFlag('allow-non-prod') || process.env.ALLOW_NON_PROD === '1';
 const ALLOW_EXECUTE = hasFlag('allow_execute') || process.env.STRESS_ALLOW_EXECUTE === '1';
+const ALLOW_RELAYED_WALLET_FALLBACK = hasFlag('allow_wallet_fallback') || process.env.STRESS_ALLOW_WALLET_FALLBACK === '1';
 const CORPUS_PATH = arg('corpus') || process.env.STRESS_PROMPT_CORPUS || path.resolve(process.cwd(), 'agent/scripts/human-beta-prompt-corpus.json');
 const MINT_CHAINS_RAW = arg('mint-chains') || process.env.STRESS_MINT_CHAINS || 'ethereum,solana,hyperliquid';
 const MINT_CHAINS = MINT_CHAINS_RAW.split(',').map(s => s.trim()).filter(Boolean) as Chain[];
@@ -190,7 +192,12 @@ if (!ALLOW_NON_PROD && !BASE_URL.includes('blossom.onl') && !BASE_URL.includes('
   process.exit(1);
 }
 
-const modeRequiresLedger = MODE === 'full' || MODE === 'tier1' || MODE === 'tier2' || (MODE === 'mixed' && ALLOW_EXECUTE);
+const modeRequiresLedger =
+  MODE === 'full' ||
+  MODE === 'tier1' ||
+  MODE === 'tier1_relayed_required' ||
+  MODE === 'tier2' ||
+  (MODE === 'mixed' && ALLOW_EXECUTE);
 if (!LEDGER_SECRET && !DRY_RUN && modeRequiresLedger) {
   console.error('❌ DEV_LEDGER_SECRET (or --ledgerSecret) is required for execution-capable modes.');
   process.exit(1);
@@ -471,7 +478,7 @@ function buildLeverageChangeAction(sessionIndex: number): Action {
 }
 
 function buildSessionActions(sessionIndex: number, mode: Mode): Action[] {
-  if (mode === 'tier1') {
+  if (mode === 'tier1' || mode === 'tier1_relayed_required') {
     return [
       buildSwapAction(sessionIndex, 'ethereum'),
       buildDepositAction(sessionIndex, 'ethereum'),
@@ -1064,6 +1071,55 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
 
       const latency = Date.now() - started;
       if (res.ok && res.json?.ok) {
+        const executedKind = String(res.json?.metadata?.executedKind || '').toLowerCase();
+        const isProofOnly = executedKind === 'proof_only';
+        const isQueuedResponse = res.json?.queued === true || String(res.json?.status || '').toLowerCase() === 'queued';
+        const isWalletFallback =
+          String(res.json?.mode || '').toLowerCase() === 'wallet_fallback' ||
+          res.json?.needs_wallet_signature === true;
+
+        if (MODE === 'tier1_relayed_required') {
+          if (isProofOnly) {
+            return {
+              actionId: action.id,
+              category: action.category,
+              chain: action.chain,
+              endpoint,
+              status: 'fail' as const,
+              latencyMs: latency,
+              error: 'relayed_required_violation: proof-only execution returned',
+              failureClass: 'blossom_logic' as FailureClass,
+              intentId: res.json?.intentId,
+            };
+          }
+          if (isQueuedResponse) {
+            return {
+              actionId: action.id,
+              category: action.category,
+              chain: action.chain,
+              endpoint,
+              status: 'fail' as const,
+              latencyMs: latency,
+              error: 'relayed_required_violation: execution remained queued',
+              failureClass: 'rpc_rate_limit' as FailureClass,
+              intentId: res.json?.intentId,
+            };
+          }
+          if (isWalletFallback && !ALLOW_RELAYED_WALLET_FALLBACK) {
+            return {
+              actionId: action.id,
+              category: action.category,
+              chain: action.chain,
+              endpoint,
+              status: 'fail' as const,
+              latencyMs: latency,
+              error: 'relayed_required_violation: wallet fallback requested',
+              failureClass: 'blossom_logic' as FailureClass,
+              intentId: res.json?.intentId,
+            };
+          }
+        }
+
         return {
           actionId: action.id,
           category: action.category,
@@ -1945,10 +2001,59 @@ async function hydrateAgentsFromKeys() {
   }
 }
 
+async function runRelayedRequiredPreflight(): Promise<void> {
+  if (MODE !== 'tier1_relayed_required' || DRY_RUN) {
+    return;
+  }
+
+  const headers: Record<string, string> = {};
+  if (LEDGER_SECRET) {
+    headers['X-Ledger-Secret'] = LEDGER_SECRET;
+  }
+
+  const res = await fetchJson('/api/relayer/status?chain=sepolia', {
+    method: 'GET',
+    headers,
+  }, 30_000);
+
+  if (!res.ok || !res.json) {
+    throw new Error(`Relayed preflight failed: unable to fetch /api/relayer/status (${res.status})`);
+  }
+
+  const relayerBalance = Number(res.json?.relayer?.balanceEth || '0');
+  const minEth = Number(res.json?.relayer?.minEth || 0.02);
+  const targetEth = Number(res.json?.relayer?.targetEth || minEth);
+  const topupEnabled = !!res.json?.funding?.enabled;
+  const fundingAddress = res.json?.funding?.fundingAddress;
+  const fundingBalanceEth = Number(res.json?.funding?.fundingBalanceEth || '0');
+
+  if (!topupEnabled && relayerBalance < minEth) {
+    throw new Error(
+      `Relayed preflight failed: RELAYER_TOPUP_ENABLED=false and relayer balance ${relayerBalance} < min ${minEth}`
+    );
+  }
+
+  if (topupEnabled) {
+    if (!fundingAddress) {
+      throw new Error('Relayed preflight failed: top-up enabled but funding wallet is not configured');
+    }
+    if (fundingBalanceEth < targetEth) {
+      throw new Error(
+        `Relayed preflight failed: funding wallet balance ${fundingBalanceEth} ETH < target ${targetEth} ETH`
+      );
+    }
+  }
+
+  log(
+    `[preflight] relayer balance=${relayerBalance} min=${minEth} target=${targetEth} topupEnabled=${topupEnabled ? 'yes' : 'no'}`
+  );
+}
+
 async function runSessionByMode(sessionIndex: number): Promise<SessionResult> {
   if (MODE === 'chat_only') return runChatOnlySession(sessionIndex);
   if (MODE === 'mixed') return runMixedSession(sessionIndex);
   if (MODE === 'tier1') return runExecutionSession(sessionIndex, 'tier1');
+  if (MODE === 'tier1_relayed_required') return runExecutionSession(sessionIndex, 'tier1_relayed_required');
   if (MODE === 'tier2') return runExecutionSession(sessionIndex, 'tier2');
   return runExecutionSession(sessionIndex, 'full');
 }
@@ -1956,7 +2061,12 @@ async function runSessionByMode(sessionIndex: number): Promise<SessionResult> {
 async function main() {
   await hydrateAgentsFromKeys();
   const rotatedWalletCount = rotatedWalletPool.filter(w => !!w.walletAddress || !!w.privateKey).length;
-  const executeModes = MODE === 'full' || MODE === 'tier1' || MODE === 'tier2' || (MODE === 'mixed' && ALLOW_EXECUTE);
+  const executeModes =
+    MODE === 'full' ||
+    MODE === 'tier1' ||
+    MODE === 'tier1_relayed_required' ||
+    MODE === 'tier2' ||
+    (MODE === 'mixed' && ALLOW_EXECUTE);
   const effectiveWorkerConcurrency = executeModes
     ? Math.max(1, Math.min(CONCURRENCY, rotatedWalletCount || 1))
     : CONCURRENCY;
@@ -1971,12 +2081,17 @@ async function main() {
   }
   log(`   Dry run: ${DRY_RUN ? 'yes' : 'no'}`);
   log(`   Allow execute: ${ALLOW_EXECUTE ? 'yes' : 'no'}`);
+  if (MODE === 'tier1_relayed_required') {
+    log(`   Allow wallet fallback: ${ALLOW_RELAYED_WALLET_FALLBACK ? 'yes' : 'no'}`);
+  }
   log(`   Mint chains: ${MINT_CHAINS.join(', ')}`);
   log(`   Swap chains: ${SWAP_CHAINS.join(', ')}`);
   if (!ETH_RPC_URL) log('   ⚠️  Missing ETH RPC URL (session signing will fail)');
   if (!STRESS_EVM_ADDRESS) log('   ⚠️  Missing STRESS_TEST_EVM_ADDRESS (mint to Ethereum may be skipped)');
   if (!STRESS_SOLANA_ADDRESS) log('   ⚠️  Missing STRESS_TEST_SOLANA_ADDRESS (mint to Solana may be skipped)');
   if (!STRESS_HYPERLIQUID_ADDRESS) log('   ⚠️  Missing STRESS_TEST_HYPERLIQUID_ADDRESS (mint to Hyperliquid may be skipped)');
+
+  await runRelayedRequiredPreflight();
 
   const results: SessionResult[] = [];
   let currentIndex = 0;

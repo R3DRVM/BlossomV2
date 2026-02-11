@@ -4294,6 +4294,24 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
     }
 
     const { draftId, userAddress, plan, sessionId } = req.body;
+    const {
+      buildRelayedQueueKey,
+      getRelayedExecutionQueueResponse,
+    } = await import('../services/relayedExecutionQueue');
+
+    const queueKey = buildRelayedQueueKey({
+      draftId,
+      userAddress,
+      sessionId,
+      nonce: plan?.nonce,
+    });
+    const existingQueueResponse = getRelayedExecutionQueueResponse(queueKey);
+    if (existingQueueResponse) {
+      return res.status(existingQueueResponse.statusCode).json({
+        ...existingQueueResponse.body,
+        correlationId,
+      });
+    }
 
     if (!draftId || !userAddress || !plan || !sessionId) {
       if (process.env.DEBUG_DIAGNOSTICS === 'true') {
@@ -4308,6 +4326,12 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
         chainId: 11155111,
       });
     }
+
+    const { maybeTopUpRelayer } = await import('../services/relayerTopUp');
+    void maybeTopUpRelayer('sepolia', {
+      reason: 'relayed_execute_preflight',
+      fireAndForget: true,
+    });
 
     // ================================================================
     // PLAN NORMALIZATION: Convert high-level intent to on-chain format
@@ -5193,6 +5217,75 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
     }
 
     // Send relayed transaction
+    const {
+      getRelayerStatus,
+      maybeTopUpRelayer: maybeTopUpRelayerBeforeSend,
+    } = await import('../services/relayerTopUp');
+    const {
+      enqueueRelayedExecution,
+      getRelayedExecutionQueueResponse: getQueuedResponseAfterEnqueue,
+    } = await import('../services/relayedExecutionQueue');
+
+    const relayerStatus = await getRelayerStatus('sepolia');
+    if (!relayerStatus.relayer.okToExecute) {
+      void maybeTopUpRelayerBeforeSend('sepolia', {
+        reason: 'relayed_low_balance_queue',
+        fireAndForget: true,
+      });
+
+      enqueueRelayedExecution({
+        key: queueKey,
+        correlationId,
+        requestId: `${draftId}:${String(plan.nonce || 'na')}`,
+        walletFallbackTx: {
+          to: EXECUTION_ROUTER_ADDRESS!,
+          data,
+          value: req.body.value || '0x0',
+        },
+        run: async () => {
+          const queuedTxHash = await sendRelayedTx({
+            to: EXECUTION_ROUTER_ADDRESS!,
+            data,
+            value: req.body.value || '0x0',
+          });
+
+          let queuedReceiptStatus: 'confirmed' | 'failed' | 'timeout' | 'pending' = 'pending';
+          let queuedBlockNumber: number | undefined;
+          let queuedReceiptError: string | undefined;
+          if (ETH_TESTNET_RPC_URL) {
+            const { waitForReceipt: waitForQueuedReceipt } = await import('../executors/evmReceipt');
+            const queuedReceipt = await waitForQueuedReceipt(ETH_TESTNET_RPC_URL, queuedTxHash, {
+              timeoutMs: 60_000,
+              pollMs: 2_000,
+            });
+            queuedReceiptStatus = queuedReceipt.status;
+            queuedBlockNumber = queuedReceipt.blockNumber;
+            queuedReceiptError = queuedReceipt.error;
+          }
+
+          return {
+            success: queuedReceiptStatus === 'confirmed',
+            status: queuedReceiptStatus === 'confirmed' ? 'success' : 'pending',
+            txHash: queuedTxHash,
+            receiptStatus: queuedReceiptStatus,
+            blockNumber: queuedBlockNumber,
+            error: queuedReceiptError,
+            explorerUrl: `https://sepolia.etherscan.io/tx/${queuedTxHash}`,
+            chainId: 11155111,
+            notes: ['execution_path:relayed', 'queued_retry'],
+          };
+        },
+      });
+
+      const queuedResponse = getQueuedResponseAfterEnqueue(queueKey);
+      if (queuedResponse) {
+        return res.status(queuedResponse.statusCode).json({
+          ...queuedResponse.body,
+          correlationId,
+        });
+      }
+    }
+
     const txHash = await sendRelayedTx({
       to: EXECUTION_ROUTER_ADDRESS!,
       data,
@@ -5405,7 +5498,19 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
     
     // Determine error code for UI handling
     let errorCode = 'RELAYER_FAILED';
-    if (error.message?.includes('session') || error.message?.includes('Session')) {
+    const errorMessage = String(error?.message || '');
+    const errorBucket = String(error?.bucket || '').toLowerCase();
+    if (errorBucket === 'relayer_low_balance' || errorMessage.includes('RELAYER_LOW_BALANCE')) {
+      errorCode = 'RELAYER_LOW_BALANCE';
+    } else if (errorBucket === 'relayer_topup_failed') {
+      errorCode = 'RELAYER_TOPUP_FAILED';
+    } else if (errorBucket === 'nonce_collision') {
+      errorCode = 'NONCE_COLLISION';
+    } else if (errorBucket === 'rpc_rate_limit') {
+      errorCode = 'RPC_RATE_LIMIT';
+    } else if (errorBucket === 'execution_revert') {
+      errorCode = 'EXECUTION_REVERT';
+    } else if (error.message?.includes('session') || error.message?.includes('Session')) {
       errorCode = 'SESSION_EXPIRED';
     } else if (error.message?.includes('insufficient') || error.message?.includes('balance')) {
       errorCode = 'INSUFFICIENT_BALANCE';
@@ -5456,7 +5561,34 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
     res.status(500).json({
       ...result,
       errorCode,
+      ...(errorBucket ? { failureBucket: errorBucket } : {}),
       correlationId, // Include correlationId in error response
+    });
+  }
+});
+
+/**
+ * GET /api/relayer/status?chain=sepolia
+ * Returns relayer balance and funding capacity details.
+ */
+app.get('/api/relayer/status', checkLedgerSecret, async (req, res) => {
+  try {
+    const chain = String(req.query.chain || 'sepolia').toLowerCase();
+    if (chain !== 'sepolia') {
+      return res.status(400).json({
+        ok: false,
+        error: 'Unsupported chain. Use chain=sepolia',
+      });
+    }
+
+    const { getRelayerStatus } = await import('../services/relayerTopUp');
+    const status = await getRelayerStatus('sepolia');
+    return res.json(status);
+  } catch (error: any) {
+    return res.status(500).json({
+      ok: false,
+      chain: 'sepolia',
+      error: error?.message || 'Failed to fetch relayer status',
     });
   }
 });
@@ -8363,6 +8495,13 @@ const HOST = process.env.HOST || '0.0.0.0'; // Bind to all interfaces by default
           console.log(`   ⚠️  RPC provider init skipped: ${error.message}`);
         }
       }
+
+      try {
+        const { startRelayerTopUpService } = await import('../services/relayerTopUp');
+        startRelayerTopUpService();
+      } catch (error: any) {
+        console.log(`   ⚠️  Relayer top-up service init skipped: ${error.message}`);
+      }
     }
     console.log(``);
   } catch (error) {
@@ -8390,6 +8529,7 @@ if (!process.env.VERCEL) {
   console.log(`   - GET  /api/execute/preflight`);
   console.log(`   - POST /api/session/prepare`);
   console.log(`   - POST /api/execute/relayed`);
+  console.log(`   - GET  /api/relayer/status`);
   console.log(`   - POST /api/token/approve/prepare`);
   console.log(`   - POST /api/token/weth/wrap/prepare`);
   console.log(`   - GET  /api/portfolio/eth_testnet`);
@@ -9542,10 +9682,31 @@ app.post('/api/ledger/intents/execute', checkLedgerSecret, async (req, res) => {
 
     // Import the intent runner functions
     const { runIntent, executeIntentById, recordFailedIntent } = await import('../intent/intentRunner');
+    const { ALLOW_PROOF_ONLY } = await import('../config');
+    const { maybeTopUpRelayer } = await import('../services/relayerTopUp');
+
+    if (!planOnly) {
+      void maybeTopUpRelayer('sepolia', {
+        reason: 'ledger_execute_preflight',
+        fireAndForget: true,
+      });
+    }
 
     // If intentId is provided, execute the existing planned intent
     if (intentId && typeof intentId === 'string') {
       const result = await executeIntentById(intentId);
+      if (!planOnly && !ALLOW_PROOF_ONLY && result?.ok && result?.metadata?.executedKind === 'proof_only') {
+        return res.status(409).json({
+          ok: false,
+          intentId,
+          status: 'failed',
+          error: {
+            stage: 'execute',
+            code: 'PROOF_ONLY_BLOCKED',
+            message: 'Proof-only execution is disabled. Configure venue support or set ALLOW_PROOF_ONLY=true.',
+          },
+        });
+      }
       return res.json(result);
     }
 
@@ -9584,6 +9745,19 @@ app.post('/api/ledger/intents/execute', checkLedgerSecret, async (req, res) => {
       planOnly: Boolean(planOnly),
       metadata: enrichedMetadata,
     });
+
+    if (!planOnly && !ALLOW_PROOF_ONLY && result?.ok && result?.metadata?.executedKind === 'proof_only') {
+      return res.status(409).json({
+        ok: false,
+        intentId: result.intentId || '',
+        status: 'failed',
+        error: {
+          stage: 'execute',
+          code: 'PROOF_ONLY_BLOCKED',
+          message: 'Proof-only execution is disabled. Configure venue support or set ALLOW_PROOF_ONLY=true.',
+        },
+      });
+    }
 
     // Return the result (already in the expected format)
     res.json(result);

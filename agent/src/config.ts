@@ -250,6 +250,20 @@ export const EXECUTION_AUTH_MODE = process.env.EXECUTION_AUTH_MODE ||
 
 export const RELAYER_PRIVATE_KEY = process.env.RELAYER_PRIVATE_KEY;
 
+// Relayer continuity + funding (testnet-safe defaults)
+export const RELAYER_TOPUP_ENABLED = process.env.RELAYER_TOPUP_ENABLED === 'true';
+export const FUNDING_WALLET_PRIVATE_KEY_SEPOLIA = process.env.FUNDING_WALLET_PRIVATE_KEY_SEPOLIA;
+const parsedMinRelayerEth = parseFloat(process.env.MIN_RELAYER_ETH_SEPOLIA || '0.02');
+const parsedTargetRelayerEth = parseFloat(process.env.TARGET_RELAYER_ETH_SEPOLIA || '0.06');
+const parsedMaxTopupsPerHour = parseInt(process.env.MAX_TOPUPS_PER_HOUR || '2', 10);
+const parsedMaxTopupEthPerDay = parseFloat(process.env.MAX_TOPUP_ETH_PER_DAY || '0.2');
+export const MIN_RELAYER_ETH_SEPOLIA = Number.isFinite(parsedMinRelayerEth) ? parsedMinRelayerEth : 0.02;
+export const TARGET_RELAYER_ETH_SEPOLIA = Number.isFinite(parsedTargetRelayerEth) ? parsedTargetRelayerEth : 0.06;
+export const MAX_TOPUPS_PER_HOUR = Number.isFinite(parsedMaxTopupsPerHour) ? parsedMaxTopupsPerHour : 2;
+export const MAX_TOPUP_ETH_PER_DAY = Number.isFinite(parsedMaxTopupEthPerDay) ? parsedMaxTopupEthPerDay : 0.2;
+export const WALLET_FALLBACK_ENABLED = process.env.WALLET_FALLBACK_ENABLED === 'true';
+export const ALLOW_PROOF_ONLY = process.env.ALLOW_PROOF_ONLY === 'true';
+
 // V1 Demo Mode: Session-only execution, block direct mode
 export const V1_DEMO = process.env.V1_DEMO === 'true';
 
