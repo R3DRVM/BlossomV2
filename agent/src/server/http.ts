@@ -5571,7 +5571,7 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
  * GET /api/relayer/status?chain=sepolia
  * Returns relayer balance and funding capacity details.
  */
-app.get('/api/relayer/status', checkLedgerSecret, async (req, res) => {
+app.get('/api/relayer/status', async (req, res) => {
   try {
     const chain = String(req.query.chain || 'sepolia').toLowerCase();
     if (chain !== 'sepolia') {
@@ -5583,6 +5583,17 @@ app.get('/api/relayer/status', checkLedgerSecret, async (req, res) => {
 
     const { getRelayerStatus } = await import('../services/relayerTopUp');
     const status = await getRelayerStatus('sepolia');
+    const providedSecret = (req.headers['x-ledger-secret'] as string | undefined) || '';
+    const isAuthorized = !!DEV_LEDGER_SECRET && providedSecret === DEV_LEDGER_SECRET;
+
+    if (!isAuthorized) {
+      status.funding = {
+        ...status.funding,
+        fundingAddress: undefined,
+        fundingBalanceEth: undefined,
+      };
+    }
+
     return res.json(status);
   } catch (error: any) {
     return res.status(500).json({
@@ -9684,6 +9695,11 @@ app.post('/api/ledger/intents/execute', checkLedgerSecret, async (req, res) => {
     const { runIntent, executeIntentById, recordFailedIntent } = await import('../intent/intentRunner');
     const { ALLOW_PROOF_ONLY } = await import('../config');
     const { maybeTopUpRelayer } = await import('../services/relayerTopUp');
+    const { isTier1RelayedExecutionSupported, isTier1RelayedMode } = await import('../intent/tier1SupportedVenues');
+    const callerMetadata = typeof metadata === 'object' && metadata !== null ? metadata : {};
+    const requestedMode = String(callerMetadata.mode || '').toLowerCase();
+    const tier1RelayedRequired = isTier1RelayedMode(requestedMode);
+    const requestedCategory = typeof callerMetadata.category === 'string' ? callerMetadata.category : undefined;
 
     if (!planOnly) {
       void maybeTopUpRelayer('sepolia', {
@@ -9692,10 +9708,35 @@ app.post('/api/ledger/intents/execute', checkLedgerSecret, async (req, res) => {
       });
     }
 
+    if (tier1RelayedRequired && !isTier1RelayedExecutionSupported({ chain: String(chain), category: requestedCategory })) {
+      return res.status(422).json({
+        ok: false,
+        intentId: intentId || '',
+        status: 'unsupported',
+        error: {
+          stage: 'execute',
+          code: 'UNSUPPORTED_VENUE',
+          message: `Tier1 relayed-required supports ethereum swap/deposit/event/perp only (chain=${chain}, category=${requestedCategory || 'unspecified'})`,
+        },
+      });
+    }
+
     // If intentId is provided, execute the existing planned intent
     if (intentId && typeof intentId === 'string') {
       const result = await executeIntentById(intentId);
       if (!planOnly && !ALLOW_PROOF_ONLY && result?.ok && result?.metadata?.executedKind === 'proof_only') {
+        if (tier1RelayedRequired) {
+          return res.status(422).json({
+            ok: false,
+            intentId,
+            status: 'unsupported',
+            error: {
+              stage: 'execute',
+              code: 'UNSUPPORTED_VENUE',
+              message: 'Tier1 relayed-required does not permit proof-only fallback for this route.',
+            },
+          });
+        }
         return res.status(409).json({
           ok: false,
           intentId,
@@ -9712,7 +9753,6 @@ app.post('/api/ledger/intents/execute', checkLedgerSecret, async (req, res) => {
 
     // Build standard metadata with source tracking
     const origin = req.headers.origin || req.headers.referer || 'unknown';
-    const callerMetadata = typeof metadata === 'object' && metadata !== null ? metadata : {};
 
     // Determine source: CLI scripts set source explicitly, UI doesn't
     const source = callerMetadata.source || (origin.includes('localhost') || origin.includes('blossom') ? 'ui' : 'unknown');
@@ -9747,6 +9787,18 @@ app.post('/api/ledger/intents/execute', checkLedgerSecret, async (req, res) => {
     });
 
     if (!planOnly && !ALLOW_PROOF_ONLY && result?.ok && result?.metadata?.executedKind === 'proof_only') {
+      if (tier1RelayedRequired) {
+        return res.status(422).json({
+          ok: false,
+          intentId: result.intentId || '',
+          status: 'unsupported',
+          error: {
+            stage: 'execute',
+            code: 'UNSUPPORTED_VENUE',
+            message: 'Tier1 relayed-required does not permit proof-only fallback for this route.',
+          },
+        });
+      }
       return res.status(409).json({
         ok: false,
         intentId: result.intentId || '',

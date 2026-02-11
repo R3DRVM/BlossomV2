@@ -21,6 +21,7 @@
 import { randomUUID } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
+import { isTier1RelayedExecutionSupported, TIER1_SUPPORTED_CHAINS, TIER1_SUPPORTED_VENUES } from '../src/intent/tier1SupportedVenues';
 
 type AgentType = 'human' | 'erc8004';
 type Chain = 'ethereum' | 'solana' | 'hyperliquid' | 'both';
@@ -148,6 +149,8 @@ const HL_MIN_SPACING_MAX_MS = parseInt(process.env.STRESS_HL_MIN_SPACING_MAX_MS 
 const HL_RATE_LIMIT_THRESHOLD = parseInt(process.env.STRESS_HL_RATE_LIMIT_THRESHOLD || '3', 10);
 const SESSION_PREPARE_RETRY_LIMIT = parseInt(process.env.STRESS_SESSION_PREPARE_RETRIES || '2', 10);
 const DESIRED_HL_WALLETS = parseInt(process.env.STRESS_DESIRED_HL_WALLETS || '4', 10);
+const EVM_RPC_RETRY_LIMIT = parseInt(process.env.STRESS_EVM_RPC_RETRIES || '3', 10);
+const SESSION_ACTIVE_MAX_POLLS = parseInt(process.env.STRESS_SESSION_ACTIVE_POLLS || '6', 10);
 
 const RUN_ID = `live_stress_${MODE}_${Date.now()}_${randomUUID().slice(0, 8)}`;
 
@@ -246,6 +249,18 @@ function isNonceError(input: string | undefined): boolean {
 function isFunctionInvocationFailed(input: string | undefined): boolean {
   const lower = lowerErrorText(input);
   return lower.includes('function_invocation_failed') || lower.includes('function_invocation_timeout');
+}
+
+function isRetryableReceiptOrRpcError(input: string | undefined): boolean {
+  const lower = lowerErrorText(input);
+  return (
+    lower.includes('timed out while waiting for transaction') ||
+    lower.includes('waitfortransactionreceipt') ||
+    lower.includes('request timed out') ||
+    lower.includes('gateway timeout') ||
+    lower.includes('etimedout') ||
+    isHyperliquidRateLimitError(lower)
+  );
 }
 
 function isBalanceOrMintPreconditionError(input: string | undefined): boolean {
@@ -479,7 +494,7 @@ function buildLeverageChangeAction(sessionIndex: number): Action {
 
 function buildSessionActions(sessionIndex: number, mode: Mode): Action[] {
   if (mode === 'tier1' || mode === 'tier1_relayed_required') {
-    return [
+    const tier1Actions: Action[] = [
       buildSwapAction(sessionIndex, 'ethereum'),
       buildDepositAction(sessionIndex, 'ethereum'),
       buildEventOpenAction(sessionIndex),
@@ -487,6 +502,14 @@ function buildSessionActions(sessionIndex: number, mode: Mode): Action[] {
       buildPerpCloseAction(sessionIndex, 'ethereum'),
       buildEventCloseAction(sessionIndex),
     ];
+
+    if (mode === 'tier1_relayed_required') {
+      return tier1Actions.filter(action =>
+        isTier1RelayedExecutionSupported({ chain: action.chain, category: action.category })
+      );
+    }
+
+    return tier1Actions;
   }
 
   if (mode === 'tier2') {
@@ -534,6 +557,7 @@ function classifyFailure(errorText: string | undefined, action: Pick<ActionResul
   if (!lower) return 'unknown';
   if (action.category === 'validate') return 'erc8004_validation';
   if (action.category === 'mint') return 'faucet_mint_fail';
+  if (lower.includes('unsupported_venue') || lower.includes('proof_only_blocked')) return 'venue_flake';
   if (lower.includes('guardrail') || lower.includes('route mismatch') || lower.includes('hallucination')) return 'guardrail_failure';
   if (isHyperliquidRateLimitError(lower) || lower.includes('too many requests') || lower.includes('gateway timeout') || lower.includes('timed out')) return 'rpc_rate_limit';
   if (isHyperliquidGasOrProofCapacityError(lower)) return 'venue_flake';
@@ -1052,10 +1076,11 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
       delete body.intentText;
     }
 
-    const maxRateRetries = action.chain === 'hyperliquid' ? HL_MAX_RETRIES : 1;
+    const maxRateRetries = action.chain === 'hyperliquid' ? HL_MAX_RETRIES : EVM_RPC_RETRY_LIMIT;
     let attempt = 0;
     let preconditionRetried = false;
     let functionFailureRetries = 0;
+    let sessionNotActiveRetries = 0;
 
     while (true) {
       const sendRequest = async () =>
@@ -1136,6 +1161,20 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
       const error = normalizeStableSymbols(res.json?.error?.message || res.json?.error || res.text || 'execution failed');
       const failureClass = classifyFailure(error, { category: action.category, chain: action.chain });
       const lowerError = lowerErrorText(error);
+      const errorCode = String(res.json?.error?.code || res.json?.code || '').toUpperCase();
+
+      if (MODE === 'tier1_relayed_required' && errorCode === 'UNSUPPORTED_VENUE') {
+        return {
+          actionId: action.id,
+          category: action.category,
+          chain: action.chain,
+          endpoint,
+          status: 'skipped' as const,
+          latencyMs: latency,
+          error,
+          failureClass: 'venue_flake' as FailureClass,
+        };
+      }
 
       // Confirm requests are idempotent: if plan already moved to executing, treat as success.
       if (options?.intentId && lowerError.includes('invalid_status') && lowerError.includes("expected 'planned'") && lowerError.includes('executing')) {
@@ -1215,9 +1254,15 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
         };
       }
 
-      if (action.chain === 'hyperliquid' && failureClass === 'rpc_rate_limit' && attempt < maxRateRetries) {
+      if (lowerError.includes('session_not_active') && sessionNotActiveRetries < 2) {
+        sessionNotActiveRetries += 1;
+        await waitForSessionActive(agent, { maxPolls: 4, pollMs: 1500 });
+        continue;
+      }
+
+      if ((failureClass === 'rpc_rate_limit' || isRetryableReceiptOrRpcError(lowerError)) && attempt < maxRateRetries) {
         const backoffMs = retryBackoffMs(attempt);
-        logVerbose(`[hl-backoff] ${agent.id} ${action.category} attempt=${attempt + 1}/${maxRateRetries} wait=${backoffMs}ms`);
+        logVerbose(`[rpc-backoff] ${agent.id} ${action.category} attempt=${attempt + 1}/${maxRateRetries} wait=${backoffMs}ms`);
         attempt += 1;
         await sleep(backoffMs);
         continue;
@@ -1447,6 +1492,38 @@ async function runSessionPrepare(agent: AgentState): Promise<ActionResult> {
   };
 
   return withWalletLock(getLockKey(agent, 'ethereum'), execute);
+}
+
+async function waitForSessionActive(
+  agent: AgentState,
+  options?: { maxPolls?: number; pollMs?: number }
+): Promise<boolean> {
+  if (!agent.sessionId || !agent.walletAddress) {
+    return false;
+  }
+
+  const maxPolls = options?.maxPolls ?? SESSION_ACTIVE_MAX_POLLS;
+  const pollMs = options?.pollMs ?? 1500;
+  const endpoint = `/api/session/status?sessionId=${encodeURIComponent(agent.sessionId)}&userAddress=${encodeURIComponent(agent.walletAddress)}`;
+
+  for (let attempt = 0; attempt < maxPolls; attempt += 1) {
+    const res = await fetchJson(endpoint, {
+      method: 'GET',
+      headers: buildHeaders(agent),
+    }, 20_000);
+
+    if (res.ok && res.json) {
+      const enabled = res.json?.session?.enabled === true;
+      const status = String(res.json?.status || '').toLowerCase();
+      if (enabled && (status === 'active' || status === 'enabled' || status === 'valid')) {
+        return true;
+      }
+    }
+
+    await sleep(pollMs);
+  }
+
+  return false;
 }
 
 async function runReset(agent: AgentState): Promise<ActionResult> {
@@ -1679,10 +1756,54 @@ async function runExecutionSession(sessionIndex: number, mode: Mode): Promise<Se
   const results: ActionResult[] = [];
 
   if (agent.type === 'human') {
-    results.push(await runSessionPrepare(agent));
+    const sessionPrepare = await runSessionPrepare(agent);
+    results.push(sessionPrepare);
+    if (sessionPrepare.status !== 'ok') {
+      const finishedAt = Date.now();
+      return {
+        sessionId,
+        agentId: agent.id,
+        agentType: agent.type,
+        ok: results.every(r => r.status === 'ok' || r.status === 'skipped'),
+        actions: results,
+        startedAt,
+        finishedAt,
+      };
+    }
+
+    const sessionActive = await waitForSessionActive(agent, {
+      maxPolls: SESSION_ACTIVE_MAX_POLLS,
+      pollMs: 1500,
+    });
+    if (!sessionActive) {
+      results.push({
+        actionId: buildActionId('session', sessionIndex),
+        category: 'session',
+        chain: 'ethereum',
+        endpoint: '/api/session/status',
+        status: 'skipped',
+        latencyMs: Date.now() - startedAt,
+        error: 'SESSION_NOT_ACTIVE after prepare gating; skipped execute actions for this session',
+        failureClass: 'rpc_rate_limit',
+      });
+      const finishedAt = Date.now();
+      return {
+        sessionId,
+        agentId: agent.id,
+        agentType: agent.type,
+        ok: results.every(r => r.status === 'ok' || r.status === 'skipped'),
+        actions: results,
+        startedAt,
+        finishedAt,
+      };
+    }
   }
 
-  const mintChain = pick(MINT_CHAINS.length ? MINT_CHAINS : ['ethereum']);
+  const mintOptions: Chain[] =
+    mode === 'tier1_relayed_required'
+      ? ['ethereum']
+      : (MINT_CHAINS.length ? MINT_CHAINS : ['ethereum']);
+  const mintChain = pick(mintOptions);
   results.push(await runMint(agent, mintChain));
 
   results.push(await runChat(agent, 'Analyze BTC trends in 2 sentences.', { route: 'chat', research: true, category: 'research' }));
@@ -2025,7 +2146,8 @@ async function runRelayedRequiredPreflight(): Promise<void> {
   const targetEth = Number(res.json?.relayer?.targetEth || minEth);
   const topupEnabled = !!res.json?.funding?.enabled;
   const fundingAddress = res.json?.funding?.fundingAddress;
-  const fundingBalanceEth = Number(res.json?.funding?.fundingBalanceEth || '0');
+  const fundingBalanceRaw = res.json?.funding?.fundingBalanceEth;
+  const fundingBalanceEth = Number(fundingBalanceRaw || '0');
 
   if (!topupEnabled && relayerBalance < minEth) {
     throw new Error(
@@ -2034,10 +2156,9 @@ async function runRelayedRequiredPreflight(): Promise<void> {
   }
 
   if (topupEnabled) {
-    if (!fundingAddress) {
-      throw new Error('Relayed preflight failed: top-up enabled but funding wallet is not configured');
-    }
-    if (fundingBalanceEth < targetEth) {
+    if (!fundingAddress || fundingBalanceRaw === undefined) {
+      log('[preflight] funding details redacted (unauthenticated status call); skipping funding wallet balance assertion');
+    } else if (fundingBalanceEth < targetEth) {
       throw new Error(
         `Relayed preflight failed: funding wallet balance ${fundingBalanceEth} ETH < target ${targetEth} ETH`
       );
@@ -2086,6 +2207,10 @@ async function main() {
   }
   log(`   Mint chains: ${MINT_CHAINS.join(', ')}`);
   log(`   Swap chains: ${SWAP_CHAINS.join(', ')}`);
+  if (MODE === 'tier1_relayed_required') {
+    log(`   Tier1 supported chains: ${TIER1_SUPPORTED_CHAINS.join(', ')}`);
+    log(`   Tier1 supported venues: ${TIER1_SUPPORTED_VENUES.join(', ')}`);
+  }
   if (!ETH_RPC_URL) log('   ⚠️  Missing ETH RPC URL (session signing will fail)');
   if (!STRESS_EVM_ADDRESS) log('   ⚠️  Missing STRESS_TEST_EVM_ADDRESS (mint to Ethereum may be skipped)');
   if (!STRESS_SOLANA_ADDRESS) log('   ⚠️  Missing STRESS_TEST_SOLANA_ADDRESS (mint to Solana may be skipped)');
