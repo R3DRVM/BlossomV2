@@ -387,7 +387,7 @@ export const HYPERLIQUID_ENABLED = process.env.HYPERLIQUID_ENABLED === 'true';
 
 // Hyperliquid Testnet Network Configuration
 export const HYPERLIQUID_TESTNET_RPC_URL =
-  process.env.HYPERLIQUID_TESTNET_RPC_URL || 'https://api.hyperliquid-testnet.xyz/evm';
+  process.env.HYPERLIQUID_TESTNET_RPC_URL || 'https://rpc.hyperliquid-testnet.xyz/evm';
 
 export const HYPERLIQUID_TESTNET_CHAIN_ID = parseInt(
   process.env.HYPERLIQUID_TESTNET_CHAIN_ID || '998',

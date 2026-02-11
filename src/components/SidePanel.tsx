@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useBlossomContext } from '../context/BlossomContext';
 import { mockPositions } from '../lib/mockData';
+import { formatTokenSymbol } from '../lib/tokenBranding';
 import { PositionDetailsModal } from './PositionDetailsModal';
 
 interface SidePanelProps {
@@ -122,7 +123,7 @@ export default function SidePanel({ selectedStrategyId }: SidePanelProps) {
           <div className="space-y-3 mb-4">
             {account.balances.map((balance, idx) => (
               <div key={idx} className="flex justify-between text-sm">
-                <span className="text-gray-600">{balance.symbol}:</span>
+                <span className="text-gray-600">{formatTokenSymbol(balance.symbol)}:</span>
                 <span className="font-medium text-gray-900">${balance.balanceUsd.toLocaleString()}</span>
               </div>
             ))}

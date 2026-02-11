@@ -7,7 +7,7 @@ import {
   HYPERLIQUID_MINT_AUTHORITY_PRIVATE_KEY,
 } from '../config';
 
-const FALLBACK_HYPERLIQUID_RPC_URL = 'https://api.hyperliquid-testnet.xyz/evm';
+const FALLBACK_HYPERLIQUID_RPC_URL = 'https://rpc.hyperliquid-testnet.xyz/evm';
 
 const hyperliquidChain = {
   id: 998,
@@ -15,8 +15,8 @@ const hyperliquidChain = {
   network: 'hyperliquid-testnet',
   nativeCurrency: { name: 'HYPE', symbol: 'HYPE', decimals: 18 },
   rpcUrls: {
-    default: { http: [HYPERLIQUID_TESTNET_RPC_URL || 'https://api.hyperliquid-testnet.xyz/evm'] },
-    public: { http: [HYPERLIQUID_TESTNET_RPC_URL || 'https://api.hyperliquid-testnet.xyz/evm'] },
+    default: { http: [HYPERLIQUID_TESTNET_RPC_URL || 'https://rpc.hyperliquid-testnet.xyz/evm'] },
+    public: { http: [HYPERLIQUID_TESTNET_RPC_URL || 'https://rpc.hyperliquid-testnet.xyz/evm'] },
   },
 } as const;
 

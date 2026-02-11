@@ -55,7 +55,7 @@ async function getConfig(): Promise<HyperliquidRouterConfig> {
   } = await import('../config');
 
   _config = {
-    rpcUrl: HYPERLIQUID_TESTNET_RPC_URL || 'https://api.hyperliquid-testnet.xyz/evm',
+    rpcUrl: HYPERLIQUID_TESTNET_RPC_URL || 'https://rpc.hyperliquid-testnet.xyz/evm',
     chainId: HYPERLIQUID_TESTNET_CHAIN_ID || 998,
     exchangeUrl: HYPERLIQUID_EXCHANGE_URL || 'https://api.hyperliquid-testnet.xyz/exchange',
     infoUrl: HYPERLIQUID_INFO_URL || 'https://api.hyperliquid-testnet.xyz/info',

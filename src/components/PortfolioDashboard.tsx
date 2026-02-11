@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import { callAgent } from '../lib/apiClient';
 import { useBlossomContext } from '../context/BlossomContext';
+import { formatTokenSymbol } from '../lib/tokenBranding';
 
 // Types
 interface TokenBalance {
@@ -206,7 +207,7 @@ function ChainBreakdown({
       <div className="space-y-1">
         {chainBalances.slice(0, 5).map((balance) => (
           <div key={`${chain}-${balance.symbol}`} className="flex items-center justify-between text-[10px]">
-            <span className="text-slate-600">{balance.symbol}</span>
+            <span className="text-slate-600">{formatTokenSymbol(balance.symbol)}</span>
             <div className="flex items-center gap-2">
               <span className="text-slate-500">{balance.balance.toFixed(4)}</span>
               <span className="font-medium text-slate-700">{formatUsd(balance.balanceUsd)}</span>

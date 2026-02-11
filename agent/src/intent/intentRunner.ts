@@ -3579,7 +3579,7 @@ async function executeProofOnlyHyperliquid(
     const { privateKeyToAccount } = await import('viem/accounts');
 
     const chainId = HYPERLIQUID_TESTNET_CHAIN_ID || 998;
-    const FALLBACK_HYPERLIQUID_RPC_URL = 'https://api.hyperliquid-testnet.xyz/evm';
+    const FALLBACK_HYPERLIQUID_RPC_URL = 'https://rpc.hyperliquid-testnet.xyz/evm';
     const hyperliquidChain = {
       id: chainId,
       name: 'Hyperliquid Testnet',

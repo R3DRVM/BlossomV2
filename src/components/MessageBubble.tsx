@@ -809,7 +809,6 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                             }
                           } else {
                             handleConfirmAndQueue();
-                            setIsConfirmingDraft(false);
                           }
                         }}
                         disabled={!!disableReason || isConfirmingDraft}
