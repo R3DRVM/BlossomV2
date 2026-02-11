@@ -3626,11 +3626,34 @@ async function executeProofOnlyHyperliquid(
     };
     const proofHex = toHex(JSON.stringify(proofData));
 
-    const txHash = await walletClient.sendTransaction({
-      to: account.address,
-      value: BigInt(1),
-      data: proofHex as `0x${string}`,
-    });
+    const isNonceError = (err: any) => {
+      const message = `${err?.message || err}`.toLowerCase();
+      return message.includes('nonce') || message.includes('already known');
+    };
+
+    const sendWithNonceRetry = async () => {
+      try {
+        return await walletClient.sendTransaction({
+          to: account.address,
+          value: BigInt(1),
+          data: proofHex as `0x${string}`,
+        });
+      } catch (err: any) {
+        if (!isNonceError(err)) throw err;
+        const pendingNonce = await publicClient.getTransactionCount({
+          address: account.address,
+          blockTag: 'pending',
+        });
+        return await walletClient.sendTransaction({
+          to: account.address,
+          value: BigInt(1),
+          data: proofHex as `0x${string}`,
+          nonce: pendingNonce,
+        });
+      }
+    };
+
+    const txHash = await sendWithNonceRetry();
 
     let receipt: any = null;
     let receiptStatus: 'confirmed' | 'pending' | 'failed' = 'pending';

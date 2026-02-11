@@ -782,7 +782,8 @@ async function validateErc8004(agent: AgentState, action: Action): Promise<Actio
     perp_close: 'perp',
     event: 'event',
     event_close: 'event',
-    bridge: 'bridge',
+    // Bridge and cross-chain actions are proof-only in MVP.
+    bridge: 'proof',
     leverage: 'perp',
     chat: 'proof',
     mint: 'proof',
@@ -794,14 +795,14 @@ async function validateErc8004(agent: AgentState, action: Action): Promise<Actio
   };
 
   const venueMap: Record<Category, string> = {
-    swap: action.chain === 'solana' ? 'jupiter' : 'uniswap',
-    deposit: action.chain === 'solana' ? 'solana_vault' : action.chain === 'hyperliquid' ? 'hyperliquid_vault' : 'aave',
+    swap: action.chain === 'solana' ? 'jupiter' : 'uniswap_v3',
+    deposit: action.chain === 'ethereum' ? 'aave_v3' : 'native',
     perp: 'hyperliquid',
-    perp_market: 'hyperliquid',
+    perp_market: 'hip3',
     perp_close: 'hyperliquid',
-    event: 'prediction_market',
-    event_close: 'prediction_market',
-    bridge: 'lifi',
+    event: 'demo_event',
+    event_close: 'demo_event',
+    bridge: 'native',
     leverage: 'hyperliquid',
     chat: 'offchain',
     mint: 'faucet',
@@ -811,6 +812,19 @@ async function validateErc8004(agent: AgentState, action: Action): Promise<Actio
     validate: 'erc8004',
     reset: 'chat',
   };
+
+  // Our declared ERC-8004 capabilities only include lend on Ethereum right now.
+  // Skip validation for non-Ethereum deposit so we don't hard-fail the run on an undeclared capability.
+  if (action.category === 'deposit' && action.chain !== 'ethereum') {
+    return {
+      actionId,
+      category: 'validate',
+      chain: action.chain,
+      status: 'skipped',
+      latencyMs: Date.now() - started,
+      error: 'lend capability not declared for this chain',
+    };
+  }
 
   const payload = {
     kind: kindMap[action.category],

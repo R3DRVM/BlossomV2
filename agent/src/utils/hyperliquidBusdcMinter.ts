@@ -47,12 +47,36 @@ export async function mintHyperliquidBusdc(recipientAddress: string, amount: num
   }).extend(publicActions);
 
   const amountUnits = parseUnits(amount.toString(), HYPERLIQUID_BUSDC_DECIMALS);
-  const txHash = await client.writeContract({
-    address: HYPERLIQUID_BUSDC_ADDRESS,
-    abi: mintAbi,
-    functionName: 'mint',
-    args: [recipientAddress as `0x${string}`, amountUnits],
-  });
+  const isNonceError = (err: any) => {
+    const message = `${err?.message || err}`.toLowerCase();
+    return message.includes('nonce') || message.includes('already known');
+  };
+
+  const writeWithNonceRetry = async () => {
+    try {
+      return await client.writeContract({
+        address: HYPERLIQUID_BUSDC_ADDRESS,
+        abi: mintAbi,
+        functionName: 'mint',
+        args: [recipientAddress as `0x${string}`, amountUnits],
+      });
+    } catch (err: any) {
+      if (!isNonceError(err)) throw err;
+      const pendingNonce = await client.getTransactionCount({
+        address: account.address,
+        blockTag: 'pending',
+      });
+      return await client.writeContract({
+        address: HYPERLIQUID_BUSDC_ADDRESS,
+        abi: mintAbi,
+        functionName: 'mint',
+        args: [recipientAddress as `0x${string}`, amountUnits],
+        nonce: pendingNonce,
+      });
+    }
+  };
+
+  const txHash = await writeWithNonceRetry();
 
   await client.waitForTransactionReceipt({ hash: txHash });
 
