@@ -67,12 +67,14 @@ export async function mintHyperliquidBusdc(recipientAddress: string, amount: num
     );
   };
 
-  const isRateLimitError = (err: any) => {
+  const shouldFallbackRpc = (err: any) => {
     const message = `${err?.message || err}`.toLowerCase();
     return (
       message.includes('rate limited') ||
       message.includes('too many evm txs') ||
-      message.includes('request exceeds defined limit')
+      message.includes('request exceeds defined limit') ||
+      message.includes('unexpected error (code=10055)') ||
+      message.includes('internal error')
     );
   };
 
@@ -93,7 +95,7 @@ export async function mintHyperliquidBusdc(recipientAddress: string, amount: num
         });
       } catch (err: any) {
         lastErr = err;
-        if (isRateLimitError(err)) {
+        if (shouldFallbackRpc(err)) {
           client = fallbackClient;
         }
         if (!isRetryableTxError(err)) throw err;

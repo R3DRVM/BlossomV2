@@ -3634,12 +3634,14 @@ async function executeProofOnlyHyperliquid(
     };
     const proofHex = toHex(JSON.stringify(proofData));
 
-    const isRateLimitError = (err: any) => {
+    const shouldFallbackRpc = (err: any) => {
       const message = `${err?.message || err}`.toLowerCase();
       return (
         message.includes('rate limited') ||
         message.includes('too many evm txs') ||
-        message.includes('request exceeds defined limit')
+        message.includes('request exceeds defined limit') ||
+        message.includes('unexpected error (code=10055)') ||
+        message.includes('internal error')
       );
     };
 
@@ -3672,7 +3674,7 @@ async function executeProofOnlyHyperliquid(
         } catch (err: any) {
           lastErr = err;
           // If Alchemy rate-limits, fall back to Hyperliquid's public RPC.
-          if (isRateLimitError(err)) {
+          if (shouldFallbackRpc(err)) {
             ({ publicClient, walletClient } = fallbackClients);
           }
           if (!isRetryableTxError(err)) throw err;
