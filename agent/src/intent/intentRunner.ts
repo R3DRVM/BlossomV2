@@ -2623,6 +2623,10 @@ async function executePerpEthereum(
     const fundingDecision = await executionFundingPolicy({
       chain: 'sepolia',
       userAddress: callerUserAddress,
+      minUserGasEthOverride:
+        String(existingMetadata?.mode || '').toLowerCase() === 'tier1_crosschain_resilient'
+          ? Number(process.env.PROVE_MIN_USER_GAS_ETH || '0.0001')
+          : undefined,
       attemptTopupSync: true,
       topupReason: 'execute_perp_ethereum',
       topupTimeoutMs: Math.max(1_000, parseInt(process.env.RELAYER_TOPUP_SYNC_TIMEOUT_MS || '12000', 10)),
@@ -2733,6 +2737,20 @@ async function executePerpEthereum(
           })
         : undefined;
 
+      // In cross-chain prove mode, the wallet fallback can submit a credit-mint tx first,
+      // then immediately execute the perp. We only support a single "approvalTx" in the payload,
+      // so we only attach the mint tx when a token approval is not needed (warmup should pre-approve).
+      const creditMintUsdRaw = Number(existingMetadata?.creditMintAmountUsd || existingMetadata?.amountUsd || 0);
+      const creditMintUsd = Number.isFinite(creditMintUsdRaw) && creditMintUsdRaw > 0 ? creditMintUsdRaw : 0;
+      const creditMintCalldata =
+        allowPreMintCollateralGap && !approvalCalldata && creditMintUsd > 0
+          ? encodeFunctionData({
+              abi: parseAbi(['function mint(address to, uint256 amount) external']),
+              functionName: 'mint',
+              args: [normalizedUser, BigInt(Math.floor(creditMintUsd * 1e6))],
+            })
+          : undefined;
+
       await updateIntentStatus(intentId, {
         status: 'failed',
         failureStage: 'execute',
@@ -2758,7 +2776,15 @@ async function executePerpEthereum(
             data: userPerpCalldata,
             value: '0x0',
           },
-          ...(approvalCalldata
+          ...(creditMintCalldata
+            ? {
+                approvalTx: {
+                  to: DEMO_REDACTED_ADDRESS,
+                  data: creditMintCalldata,
+                  value: '0x0',
+                },
+              }
+            : approvalCalldata
             ? {
                 approvalTx: {
                   to: DEMO_REDACTED_ADDRESS,

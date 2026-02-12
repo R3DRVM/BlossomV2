@@ -10071,6 +10071,12 @@ app.post('/api/ledger/intents/execute', checkLedgerSecret, async (req, res) => {
       const fundingDecision = await executionFundingPolicy({
         chain: 'sepolia',
         userAddress: userEvmAddressRaw || undefined,
+        // In deterministic prove/stress modes we accept smaller wallet gas balances.
+        // Actual transaction submission will still fail if the wallet is truly underfunded.
+        minUserGasEthOverride:
+          requestedMode === 'tier1_crosschain_resilient'
+            ? Number(process.env.PROVE_MIN_USER_GAS_ETH || '0.0001')
+            : undefined,
         attemptTopupSync: true,
         topupReason: 'ledger_execute_preflight_sync',
         topupTimeoutMs: Math.max(1_000, parseInt(process.env.RELAYER_TOPUP_SYNC_TIMEOUT_MS || '12000', 10)),
@@ -10082,39 +10088,58 @@ app.post('/api/ledger/intents/execute', checkLedgerSecret, async (req, res) => {
         /^0x[a-fA-F0-9]{40}$/.test(userEvmAddressRaw) &&
         (userSolanaAddressRaw.length > 0 || requestedFromChain.toLowerCase().includes('sol'))
       ) {
-        const funding = await ensureExecutionFunding({
-          userId: String(callerMetadata.userId || userEvmAddressRaw.toLowerCase()),
-          sessionId: String(callerMetadata.sessionId || ''),
-          userEvmAddress: userEvmAddressRaw,
-          userSolanaAddress: userSolanaAddressRaw || undefined,
-          fromChain: requestedFromChain || 'solana_devnet',
-          toChain: 'sepolia',
-          amountUsdRequired: Number.isFinite(amountUsdHint) && amountUsdHint > 0 ? amountUsdHint : undefined,
-          instrumentType:
-            requestedCategory === 'perp' || requestedCategory === 'event' || requestedCategory === 'deposit'
-              ? (requestedCategory === 'deposit' ? 'defi' : requestedCategory)
-              : undefined,
-          forceRoute: forceCrossChainRoute || requestedCategory === 'cross_chain_route',
-        });
+        const shouldUseUserPaidCreditMint =
+          requestedMode === 'tier1_crosschain_resilient' &&
+          fundingDecision.mode === 'user_paid_required' &&
+          (forceCrossChainRoute || String(callerMetadata.scenario || '').toLowerCase().includes('solana_origin_to_sepolia'));
 
-        if (!funding.ok) {
-          return res.status(409).json({
-            ok: false,
-            intentId: intentId || '',
-            status: 'failed',
-            error: {
-              stage: 'execute',
-              code: 'CROSS_CHAIN_ROUTE_FAILED',
-              message: funding.userMessage,
-              detailCode: funding.code,
-            },
-            executionMeta: {
-              route: funding.route,
-              ...(fundingPolicySnapshot ? { funding: fundingPolicySnapshot } : {}),
-            },
+        if (shouldUseUserPaidCreditMint) {
+          crossChainRouteMeta = {
+            didRoute: true,
+            routeType: 'testnet_credit',
+            fromChain: requestedFromChain || 'solana_devnet',
+            toChain: 'sepolia',
+            reason: 'Wallet-funded cross-chain credit mint required for deterministic execution.',
+            creditedAmountUsd: Number.isFinite(amountUsdHint) && amountUsdHint > 0 ? amountUsdHint : undefined,
+          };
+          // Tell downstream executor to allow a pre-mint collateral gap (mint is submitted first by wallet fallback).
+          (callerMetadata as any).assumeSepoliaStableAfterUserCreditMint = true;
+          (callerMetadata as any).creditMintAmountUsd = Number.isFinite(amountUsdHint) && amountUsdHint > 0 ? amountUsdHint : undefined;
+        } else {
+          const funding = await ensureExecutionFunding({
+            userId: String(callerMetadata.userId || userEvmAddressRaw.toLowerCase()),
+            sessionId: String(callerMetadata.sessionId || ''),
+            userEvmAddress: userEvmAddressRaw,
+            userSolanaAddress: userSolanaAddressRaw || undefined,
+            fromChain: requestedFromChain || 'solana_devnet',
+            toChain: 'sepolia',
+            amountUsdRequired: Number.isFinite(amountUsdHint) && amountUsdHint > 0 ? amountUsdHint : undefined,
+            instrumentType:
+              requestedCategory === 'perp' || requestedCategory === 'event' || requestedCategory === 'deposit'
+                ? (requestedCategory === 'deposit' ? 'defi' : requestedCategory)
+                : undefined,
+            forceRoute: forceCrossChainRoute || requestedCategory === 'cross_chain_route',
           });
+
+          if (!funding.ok) {
+            return res.status(409).json({
+              ok: false,
+              intentId: intentId || '',
+              status: 'failed',
+              error: {
+                stage: 'execute',
+                code: 'CROSS_CHAIN_ROUTE_FAILED',
+                message: funding.userMessage,
+                detailCode: funding.code,
+              },
+              executionMeta: {
+                route: funding.route,
+                ...(fundingPolicySnapshot ? { funding: fundingPolicySnapshot } : {}),
+              },
+            });
+          }
+          crossChainRouteMeta = funding.route;
         }
-        crossChainRouteMeta = funding.route;
       }
     }
 

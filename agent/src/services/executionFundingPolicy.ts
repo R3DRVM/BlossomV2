@@ -100,12 +100,17 @@ function getOperationalRelayerMinEth(): number {
 export async function executionFundingPolicy(params: {
   chain?: RelayerChain;
   userAddress?: string;
+  minUserGasEthOverride?: number;
   attemptTopupSync?: boolean;
   topupTimeoutMs?: number;
   topupReason?: string;
 }): Promise<ExecutionFundingPolicyResult> {
   const chain = (params.chain || 'sepolia') as RelayerChain;
   const userAddress = String(params.userAddress || '').trim();
+  const minUserGasEth =
+    Number.isFinite(params.minUserGasEthOverride) && Number(params.minUserGasEthOverride) > 0
+      ? Number(params.minUserGasEthOverride)
+      : MIN_USER_GAS_ETH;
   const statusBefore = await getRelayerStatus(chain);
   let relayerBalanceEth = normalizeEth(statusBefore.relayer.balanceEth);
   let relayerMinEth = Number(statusBefore.relayer.minEth || 0);
@@ -152,7 +157,7 @@ export async function executionFundingPolicy(params: {
       recommendedAction: 'proceed_relayed',
       relayerBalanceEth,
       relayerMinEth,
-      minUserGasEth: MIN_USER_GAS_ETH,
+      minUserGasEth,
       didTopup,
       ...(topupTxHash ? { topupTxHash } : {}),
     });
@@ -171,7 +176,7 @@ export async function executionFundingPolicy(params: {
       recommendedAction: 'proceed_relayed',
       relayerBalanceEth,
       relayerMinEth,
-      minUserGasEth: MIN_USER_GAS_ETH,
+      minUserGasEth,
       didTopup,
       ...(topupTxHash ? { topupTxHash } : {}),
     });
@@ -186,7 +191,7 @@ export async function executionFundingPolicy(params: {
       recommendedAction: 'retry_later',
       relayerBalanceEth,
       relayerMinEth,
-      minUserGasEth: MIN_USER_GAS_ETH,
+      minUserGasEth,
       didTopup,
       ...(topupTxHash ? { topupTxHash } : {}),
     });
@@ -201,7 +206,7 @@ export async function executionFundingPolicy(params: {
       recommendedAction: 'connect_wallet',
       relayerBalanceEth,
       relayerMinEth,
-      minUserGasEth: MIN_USER_GAS_ETH,
+      minUserGasEth,
       didTopup,
       ...(topupTxHash ? { topupTxHash } : {}),
     });
@@ -209,7 +214,7 @@ export async function executionFundingPolicy(params: {
 
   try {
     const userBalance = await getUserEthBalance(chain, userAddress);
-    if (userBalance.balanceEth >= MIN_USER_GAS_ETH) {
+    if (userBalance.balanceEth >= minUserGasEth) {
       noteFundingRecoveryMode('user_pays_gas');
       return buildResult({
         mode: 'user_paid_required',
@@ -220,7 +225,7 @@ export async function executionFundingPolicy(params: {
         relayerBalanceEth,
         relayerMinEth,
         userBalanceEth: userBalance.balanceEth,
-        minUserGasEth: MIN_USER_GAS_ETH,
+        minUserGasEth,
         didTopup,
         ...(topupTxHash ? { topupTxHash } : {}),
       });
@@ -238,7 +243,7 @@ export async function executionFundingPolicy(params: {
           relayerBalanceEth,
           relayerMinEth,
           userBalanceEth: userBalance.balanceEth,
-          minUserGasEth: MIN_USER_GAS_ETH,
+          minUserGasEth,
           didTopup,
           ...(topupTxHash ? { topupTxHash } : {}),
           sponsorEligible: true,
@@ -255,7 +260,7 @@ export async function executionFundingPolicy(params: {
         relayerBalanceEth,
         relayerMinEth,
         userBalanceEth: userBalance.balanceEth,
-        minUserGasEth: MIN_USER_GAS_ETH,
+        minUserGasEth,
         didTopup,
         ...(topupTxHash ? { topupTxHash } : {}),
         sponsorEligible: false,
@@ -272,7 +277,7 @@ export async function executionFundingPolicy(params: {
       relayerBalanceEth,
       relayerMinEth,
       userBalanceEth: userBalance.balanceEth,
-      minUserGasEth: MIN_USER_GAS_ETH,
+      minUserGasEth,
       didTopup,
       ...(topupTxHash ? { topupTxHash } : {}),
     });
@@ -285,7 +290,7 @@ export async function executionFundingPolicy(params: {
       recommendedAction: 'retry_later',
       relayerBalanceEth,
       relayerMinEth,
-      minUserGasEth: MIN_USER_GAS_ETH,
+      minUserGasEth,
       didTopup,
       ...(topupTxHash ? { topupTxHash } : {}),
       sponsorEligible: false,
