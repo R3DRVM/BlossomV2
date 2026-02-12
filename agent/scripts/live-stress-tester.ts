@@ -1404,9 +1404,9 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
       const failureClass = classifyFailure(error, { category: action.category, chain: action.chain });
       const lowerError = lowerErrorText(error);
       const errorCode = String(
-        effectiveRes.json?.error?.code ||
+        effectiveRes.json?.error?.detailCode ||
           effectiveRes.json?.errorCode ||
-          effectiveRes.json?.error?.detailCode ||
+          effectiveRes.json?.error?.code ||
           effectiveRes.json?.code ||
           ''
       ).toUpperCase();
