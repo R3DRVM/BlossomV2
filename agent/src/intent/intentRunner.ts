@@ -2596,6 +2596,9 @@ async function executePerpEthereum(
     const perpAdapterAbi = parseAbi([
       'function execute(bytes calldata innerData) external payable returns (bytes memory)',
     ]);
+    const routerAbi = parseAbi([
+      'function execute(address adapter, bytes calldata adapterData) external payable returns (bytes memory)',
+    ]);
     const erc20Abi = parseAbi([
       'function approve(address spender, uint256 amount) external returns (bool)',
       'function allowance(address owner, address spender) external view returns (uint256)',
