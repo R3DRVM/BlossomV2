@@ -2630,7 +2630,7 @@ async function executePerpEthereum(
         // Wait for mint confirmation with short timeout (1 confirmation, 10s max)
         await publicClient.waitForTransactionReceipt({
           hash: mintTxHash,
-          timeout: 10000,
+          timeout: 3000,
           confirmations: 1,
         });
 
@@ -2700,10 +2700,16 @@ async function executePerpEthereum(
         args: [DEMO_PERP_ADAPTER_ADDRESS as `0x${string}`, marginAmount * BigInt(10)], // Approve 10x to avoid future approvals
       });
 
-      await publicClient.waitForTransactionReceipt({
-        hash: approveTxHash,
-        timeout: 15000,
-      });
+      try {
+        await publicClient.waitForTransactionReceipt({
+          hash: approveTxHash,
+          timeout: 5000,
+        });
+      } catch (approveWaitError: any) {
+        console.log(
+          `[executePerpEthereum] Approval receipt wait timed out for ${approveTxHash}; continuing with best-effort execution`
+        );
+      }
     }
 
     // Execute the perp position directly via adapter
@@ -2726,7 +2732,7 @@ async function executePerpEthereum(
     try {
       receipt = await publicClient.waitForTransactionReceipt({
         hash: txHash,
-        timeout: 15000,
+        timeout: 8000,
       });
       receiptStatus = receipt.status === 'success' ? 'confirmed' : 'failed';
     } catch (receiptError: any) {

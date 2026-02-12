@@ -537,7 +537,7 @@ function buildSolanaOriginToSepoliaPerpAction(sessionIndex: number): Action {
     id: buildActionId('cross_chain_route', sessionIndex),
     category: 'cross_chain_route',
     chain: 'ethereum',
-    intentText: `Long BTC with 3x leverage using ${collateral} bUSDC collateral (route from Solana devnet to Sepolia).`,
+    intentText: `Open a BTC long perp on Sepolia with ${collateral} bUSDC collateral and 3x leverage. Source funds from Solana devnet.`,
     metadata: {
       scenario: 'solana_origin_to_sepolia_perp',
       fromChain: 'solana_devnet',
@@ -545,6 +545,7 @@ function buildSolanaOriginToSepoliaPerpAction(sessionIndex: number): Action {
       amountUsd: collateral,
       expectedRouteType: 'testnet_credit',
       userSolanaAddress: STRESS_SOLANA_ADDRESS || undefined,
+      forceCrossChainRoute: true,
     },
   };
 }
@@ -561,9 +562,12 @@ function buildSessionActions(sessionIndex: number, mode: Mode): Action[] {
     ];
 
     if (mode === 'tier1_crosschain_required') {
+      const crossChainTier1Actions = tier1Actions.filter(action =>
+        ['swap', 'deposit', 'perp', 'perp_close'].includes(action.category)
+      );
       return [
         buildSolanaOriginToSepoliaPerpAction(sessionIndex),
-        ...tier1Actions.filter(action =>
+        ...crossChainTier1Actions.filter(action =>
           isTier1RelayedExecutionSupported({ chain: action.chain, category: action.category })
         ),
       ];

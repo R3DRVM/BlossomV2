@@ -74,6 +74,7 @@ export type EnsureExecutionFundingParams = {
   amountUsdRequired?: number;
   spendEstimateUnits?: bigint;
   instrumentType?: 'swap' | 'perp' | 'defi' | 'event';
+  forceRoute?: boolean;
 };
 
 export type EnsureExecutionFundingResult =
@@ -332,7 +333,7 @@ export async function ensureExecutionFunding(
     };
   }
 
-  if (targetBalanceUsd >= requiredUsd) {
+  if (!params.forceRoute && targetBalanceUsd >= requiredUsd) {
     return {
       ok: true,
       route: {

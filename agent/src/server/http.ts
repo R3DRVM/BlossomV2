@@ -9770,6 +9770,7 @@ app.post('/api/ledger/intents/execute', checkLedgerSecret, async (req, res) => {
     const requestedMode = String(callerMetadata.mode || '').toLowerCase();
     const tier1RelayedRequired = isTier1RelayedMode(requestedMode);
     const requestedCategory = typeof callerMetadata.category === 'string' ? callerMetadata.category : undefined;
+    const forceCrossChainRoute = callerMetadata.forceCrossChainRoute === true;
     let crossChainRouteMeta: any = null;
 
     const userEvmAddressRaw = String(
@@ -9826,6 +9827,7 @@ app.post('/api/ledger/intents/execute', checkLedgerSecret, async (req, res) => {
             requestedCategory === 'perp' || requestedCategory === 'event' || requestedCategory === 'deposit'
               ? (requestedCategory === 'deposit' ? 'defi' : requestedCategory)
               : undefined,
+          forceRoute: forceCrossChainRoute || requestedCategory === 'cross_chain_route',
         });
 
         if (!funding.ok) {
