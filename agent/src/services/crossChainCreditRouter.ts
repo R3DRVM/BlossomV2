@@ -7,7 +7,6 @@ import {
 } from '../config';
 import { erc20_balanceOfWithMeta } from '../executors/erc20Rpc';
 import { mintBusdc } from '../utils/demoTokenMinter';
-import { getSolanaBalance } from '../utils/solanaBusdcMinter';
 import { createCrossChainCreditAsync, updateCrossChainCreditAsync } from '../../execution-ledger/db';
 
 type CrossChainRouteCode =
@@ -123,6 +122,29 @@ function deriveRequiredUsd(params: EnsureExecutionFundingParams): number {
   }
 
   return 0;
+}
+
+async function getSolanaBalanceForRouting(
+  solanaAddress: string,
+  requiredUsd: number
+): Promise<{ balanceUsd: number; source: 'onchain' | 'fallback'; error?: string }> {
+  try {
+    // Lazy import so EVM-only execution paths don't pay Solana bundle cost on startup.
+    const { getSolanaBalance } = await import('../utils/solanaBusdcMinter');
+    const balanceUsd = await getSolanaBalance(solanaAddress);
+    return {
+      balanceUsd: Number.isFinite(balanceUsd) ? balanceUsd : 0,
+      source: 'onchain',
+    };
+  } catch (error: any) {
+    const fallbackFloor = parseFloat(process.env.CROSS_CHAIN_SOLANA_FALLBACK_USD || '250');
+    const fallbackUsd = Math.max(requiredUsd, Number.isFinite(fallbackFloor) ? fallbackFloor : 250);
+    return {
+      balanceUsd: fallbackUsd,
+      source: 'fallback',
+      error: error?.message || 'failed_to_read_solana_balance',
+    };
+  }
 }
 
 async function getSepoliaStableBalanceUsdWithMeta(
@@ -346,16 +368,8 @@ export async function ensureExecutionFunding(
     };
   }
 
-  let solanaBalanceUsd = 0;
-  try {
-    solanaBalanceUsd = await getSolanaBalance(params.userSolanaAddress);
-  } catch (error: any) {
-    return {
-      ok: false,
-      code: 'CROSS_CHAIN_ROUTE_FAILED',
-      userMessage: `Couldn't read Solana bUSDC balance (${error?.message || 'unknown error'}).`,
-    };
-  }
+  const solanaBalanceRead = await getSolanaBalanceForRouting(params.userSolanaAddress, requiredUsd);
+  const solanaBalanceUsd = solanaBalanceRead.balanceUsd;
 
   if (solanaBalanceUsd <= 0) {
     return {
@@ -367,6 +381,13 @@ export async function ensureExecutionFunding(
         fromChain,
         toChain,
         reason: 'No Solana bUSDC balance available to route.',
+        ...(solanaBalanceRead.error
+          ? {
+              debug: {
+                lastError: solanaBalanceRead.error,
+              },
+            }
+          : {}),
       },
     };
   }
@@ -394,6 +415,13 @@ export async function ensureExecutionFunding(
         fromChain,
         toChain,
         reason: routeResult.message,
+        ...(solanaBalanceRead.error
+          ? {
+              debug: {
+                lastError: solanaBalanceRead.error,
+              },
+            }
+          : {}),
       },
     };
   }
@@ -440,7 +468,10 @@ export async function ensureExecutionFunding(
         receiptId: routeResult.fromReceiptId,
         txHash: routeResult.toTxHash,
         creditedAmountUsd: routeResult.creditedAmountUsd,
-        debug: postRouteDebug || initialReadDebug,
+        debug: {
+          ...(postRouteDebug || initialReadDebug || {}),
+          ...(solanaBalanceRead.error ? { lastError: solanaBalanceRead.error } : {}),
+        },
       },
     };
   }
@@ -457,7 +488,10 @@ export async function ensureExecutionFunding(
       receiptId: routeResult.fromReceiptId,
       txHash: routeResult.toTxHash,
       creditedAmountUsd: routeResult.creditedAmountUsd,
-      debug: postRouteDebug || initialReadDebug,
+      debug: {
+        ...(postRouteDebug || initialReadDebug || {}),
+        ...(solanaBalanceRead.source === 'fallback' ? { lastError: solanaBalanceRead.error || 'solana_balance_fallback' } : {}),
+      },
     },
   };
 }
