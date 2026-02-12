@@ -5,7 +5,7 @@ import {
   DEMO_BUSDC_ADDRESS,
   DEMO_REDACTED_ADDRESS,
 } from '../config';
-import { erc20_balanceOf } from '../executors/erc20Rpc';
+import { erc20_balanceOfWithMeta } from '../executors/erc20Rpc';
 import { mintBusdc } from '../utils/demoTokenMinter';
 import { getSolanaBalance } from '../utils/solanaBusdcMinter';
 import { createCrossChainCreditAsync, updateCrossChainCreditAsync } from '../../execution-ledger/db';
@@ -16,6 +16,7 @@ type CrossChainRouteCode =
   | 'CROSS_CHAIN_ROUTE_UNSUPPORTED'
   | 'CROSS_CHAIN_ROUTE_INSUFFICIENT_FUNDS'
   | 'CROSS_CHAIN_ROUTE_MINT_FAILED'
+  | 'CROSS_CHAIN_ROUTE_READ_FAILED'
   | 'CROSS_CHAIN_ROUTE_FAILED';
 
 type StableSymbol = 'bUSDC';
@@ -57,6 +58,11 @@ export type ExecutionRouteMeta = {
   receiptId?: string;
   txHash?: string;
   creditedAmountUsd?: number;
+  debug?: {
+    rpcUsed?: string;
+    attempts?: number;
+    lastError?: string;
+  };
 };
 
 export type EnsureExecutionFundingParams = {
@@ -119,14 +125,29 @@ function deriveRequiredUsd(params: EnsureExecutionFundingParams): number {
   return 0;
 }
 
-async function getSepoliaStableBalanceUsd(address: string): Promise<number> {
+async function getSepoliaStableBalanceUsdWithMeta(
+  address: string
+): Promise<{ balanceUsd: number; debug: { rpcUsed?: string; attempts?: number; lastError?: string } }> {
   const stableAddress = getStableAddress();
   if (!stableAddress) {
     throw new Error('Missing stable token address (DEMO_BUSDC_ADDRESS/DEMO_REDACTED_ADDRESS)');
   }
-  const raw = await erc20_balanceOf(stableAddress, address);
+
+  const { balance: raw, meta } = await erc20_balanceOfWithMeta(stableAddress, address, {
+    retries: 5,
+    timeoutMs: parseInt(process.env.CROSS_CHAIN_READ_TIMEOUT_MS || '12000', 10),
+    retryBackoffMs: 350,
+  });
+
   const formatted = Number(formatUnits(raw, STABLE_DECIMALS));
-  return Number.isFinite(formatted) ? formatted : 0;
+  return {
+    balanceUsd: Number.isFinite(formatted) ? formatted : 0,
+    debug: {
+      rpcUsed: meta.rpcUsed,
+      attempts: meta.attempts,
+      ...(meta.lastError ? { lastError: meta.lastError } : {}),
+    },
+  };
 }
 
 export async function routeStableCreditForExecution(
@@ -261,13 +282,27 @@ export async function ensureExecutionFunding(
   }
 
   let targetBalanceUsd = 0;
+  let initialReadDebug: { rpcUsed?: string; attempts?: number; lastError?: string } | undefined;
   try {
-    targetBalanceUsd = await getSepoliaStableBalanceUsd(params.userEvmAddress);
+    const read = await getSepoliaStableBalanceUsdWithMeta(params.userEvmAddress);
+    targetBalanceUsd = read.balanceUsd;
+    initialReadDebug = read.debug;
   } catch (error: any) {
     return {
       ok: false,
-      code: 'CROSS_CHAIN_ROUTE_FAILED',
-      userMessage: `Couldn't verify Sepolia bUSDC balance (${error?.message || 'unknown error'}).`,
+      code: 'CROSS_CHAIN_ROUTE_READ_FAILED',
+      userMessage: "Couldn't verify Sepolia bUSDC balance right now. Please retry in a moment.",
+      route: {
+        didRoute: false,
+        fromChain,
+        toChain,
+        reason: 'Failed to read Sepolia stable balance before routing.',
+        debug: {
+          rpcUsed: error?.rpcUsed,
+          attempts: Number.isFinite(error?.attempts) ? Number(error.attempts) : undefined,
+          lastError: error?.lastError || error?.message || 'unknown error',
+        },
+      },
     };
   }
 
@@ -363,7 +398,34 @@ export async function ensureExecutionFunding(
     };
   }
 
-  const postRouteBalanceUsd = await getSepoliaStableBalanceUsd(params.userEvmAddress);
+  let postRouteBalanceUsd = 0;
+  let postRouteDebug: { rpcUsed?: string; attempts?: number; lastError?: string } | undefined;
+  try {
+    const read = await getSepoliaStableBalanceUsdWithMeta(params.userEvmAddress);
+    postRouteBalanceUsd = read.balanceUsd;
+    postRouteDebug = read.debug;
+  } catch (error: any) {
+    return {
+      ok: false,
+      code: 'CROSS_CHAIN_ROUTE_READ_FAILED',
+      userMessage: "Couldn't verify Sepolia bUSDC balance right now. Please retry in a moment.",
+      route: {
+        didRoute: true,
+        routeType: routeResult.routeType,
+        fromChain,
+        toChain,
+        reason: 'Routing completed but post-route Sepolia balance verification failed.',
+        receiptId: routeResult.fromReceiptId,
+        txHash: routeResult.toTxHash,
+        creditedAmountUsd: routeResult.creditedAmountUsd,
+        debug: {
+          rpcUsed: error?.rpcUsed,
+          attempts: Number.isFinite(error?.attempts) ? Number(error.attempts) : undefined,
+          lastError: error?.lastError || error?.message || 'unknown error',
+        },
+      },
+    };
+  }
   if (postRouteBalanceUsd < requiredUsd) {
     return {
       ok: false,
@@ -378,6 +440,7 @@ export async function ensureExecutionFunding(
         receiptId: routeResult.fromReceiptId,
         txHash: routeResult.toTxHash,
         creditedAmountUsd: routeResult.creditedAmountUsd,
+        debug: postRouteDebug || initialReadDebug,
       },
     };
   }
@@ -394,6 +457,7 @@ export async function ensureExecutionFunding(
       receiptId: routeResult.fromReceiptId,
       txHash: routeResult.toTxHash,
       creditedAmountUsd: routeResult.creditedAmountUsd,
+      debug: postRouteDebug || initialReadDebug,
     },
   };
 }

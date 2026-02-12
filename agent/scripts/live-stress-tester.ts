@@ -87,6 +87,12 @@ type ActionResult = {
   expectedRoute?: ExpectedRoute;
   actualRoute?: ExpectedRoute;
   failureClass?: FailureClass;
+  routeType?: string;
+  routeDidRoute?: boolean;
+  routeFromChain?: string;
+  routeToChain?: string;
+  routeTxHash?: string;
+  receiptConfirmed?: boolean;
 };
 
 type SessionResult = {
@@ -388,6 +394,34 @@ async function getWalletClient(agent: AgentState) {
   } catch {
     return null;
   }
+}
+
+async function confirmSepoliaReceipt(txHash: string): Promise<boolean> {
+  if (!txHash || !ETH_RPC_URL) return false;
+  try {
+    const { createPublicClient, http } = await import('viem');
+    const { sepolia } = await import('viem/chains');
+    const publicClient = createPublicClient({ chain: sepolia, transport: http(ETH_RPC_URL) });
+
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      try {
+        const receipt = await publicClient.waitForTransactionReceipt({
+          hash: txHash as `0x${string}`,
+          timeout: 35_000,
+        });
+        return receipt?.status === 'success';
+      } catch (error: any) {
+        const lower = lowerErrorText(error?.message || String(error));
+        if (!isRetryableReceiptOrRpcError(lower) && !isHyperliquidRateLimitError(lower)) {
+          break;
+        }
+        await sleep(retryBackoffMs(attempt, 800, 8000));
+      }
+    }
+  } catch {
+    return false;
+  }
+  return false;
 }
 
 function buildSwapAction(sessionIndex: number, forcedChain?: Chain): Action {
@@ -1139,6 +1173,12 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
         const isWalletFallback =
           String(res.json?.mode || '').toLowerCase() === 'wallet_fallback' ||
           res.json?.needs_wallet_signature === true;
+        const routeMeta = res.json?.executionMeta?.route;
+        const routeType = String(routeMeta?.routeType || '');
+        const routeDidRoute = routeMeta?.didRoute === true;
+        const routeFromChain = String(routeMeta?.fromChain || '');
+        const routeToChain = String(routeMeta?.toChain || '');
+        const txHash = res.json?.txHash || res.json?.execution?.txHash || routeMeta?.txHash;
 
         if (MODE === 'tier1_relayed_required' || MODE === 'tier1_crosschain_required') {
           if (isProofOnly) {
@@ -1165,6 +1205,11 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
               error: 'relayed_required_violation: execution remained queued',
               failureClass: 'rpc_rate_limit' as FailureClass,
               intentId: res.json?.intentId,
+              routeType,
+              routeDidRoute,
+              routeFromChain,
+              routeToChain,
+              routeTxHash: txHash,
             };
           }
           if (isWalletFallback && !ALLOW_RELAYED_WALLET_FALLBACK) {
@@ -1178,14 +1223,19 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
               error: 'relayed_required_violation: wallet fallback requested',
               failureClass: 'blossom_logic' as FailureClass,
               intentId: res.json?.intentId,
+              routeType,
+              routeDidRoute,
+              routeFromChain,
+              routeToChain,
+              routeTxHash: txHash,
             };
           }
           if (MODE === 'tier1_crosschain_required' && action.category === 'cross_chain_route') {
-            const route = res.json?.executionMeta?.route;
-            const routeType = String(route?.routeType || '').toLowerCase();
-            const didRoute = route?.didRoute === true;
-            const hasTx = !!(res.json?.txHash || res.json?.execution?.txHash);
-            if (!didRoute || routeType !== 'testnet_credit' || !hasTx) {
+            const normalizedRouteType = routeType.toLowerCase();
+            const didRoute = routeDidRoute;
+            const hasTx = !!txHash;
+            const receiptConfirmed = hasTx ? await confirmSepoliaReceipt(txHash) : false;
+            if (!didRoute || normalizedRouteType !== 'testnet_credit' || routeToChain.toLowerCase() !== 'sepolia' || !hasTx || !receiptConfirmed) {
               return {
                 actionId: action.id,
                 category: action.category,
@@ -1193,11 +1243,34 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
                 endpoint,
                 status: 'fail' as const,
                 latencyMs: latency,
-                error: `cross_chain_route_assertion_failed: didRoute=${didRoute} routeType=${routeType || 'missing'} txHash=${hasTx ? 'present' : 'missing'}`,
+                error: `cross_chain_route_assertion_failed: didRoute=${didRoute} routeType=${normalizedRouteType || 'missing'} toChain=${routeToChain || 'missing'} txHash=${hasTx ? 'present' : 'missing'} receipt=${receiptConfirmed ? 'confirmed' : 'missing'}`,
                 failureClass: 'cross_chain_route_failed' as FailureClass,
                 intentId: res.json?.intentId,
+                routeType,
+                routeDidRoute,
+                routeFromChain,
+                routeToChain,
+                routeTxHash: txHash,
+                receiptConfirmed,
               };
             }
+
+            return {
+              actionId: action.id,
+              category: action.category,
+              chain: action.chain,
+              endpoint,
+              status: 'ok' as const,
+              latencyMs: latency,
+              txHash,
+              intentId: res.json?.intentId,
+              routeType,
+              routeDidRoute,
+              routeFromChain,
+              routeToChain,
+              routeTxHash: txHash,
+              receiptConfirmed,
+            };
           }
         }
 
@@ -1208,8 +1281,13 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
           endpoint,
           status: 'ok' as const,
           latencyMs: latency,
-          txHash: res.json?.txHash || res.json?.execution?.txHash,
+          txHash,
           intentId: res.json?.intentId,
+          routeType,
+          routeDidRoute,
+          routeFromChain,
+          routeToChain,
+          routeTxHash: txHash,
         };
       }
 
@@ -1220,15 +1298,16 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
       const errorCode = String(res.json?.error?.code || res.json?.code || '').toUpperCase();
 
       if ((MODE === 'tier1_relayed_required' || MODE === 'tier1_crosschain_required') && errorCode === 'UNSUPPORTED_VENUE') {
+        const skipAsFailForCrossChainRequired = MODE === 'tier1_crosschain_required' && action.category === 'cross_chain_route';
         return {
           actionId: action.id,
           category: action.category,
           chain: action.chain,
           endpoint,
-          status: 'skipped' as const,
+          status: skipAsFailForCrossChainRequired ? 'fail' as const : 'skipped' as const,
           latencyMs: latency,
           error,
-          failureClass: 'venue_flake' as FailureClass,
+          failureClass: skipAsFailForCrossChainRequired ? 'cross_chain_route_failed' as FailureClass : 'venue_flake' as FailureClass,
         };
       }
 
@@ -1287,15 +1366,16 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
       }
 
       if (isFunctionInvocationFailed(error)) {
+        const skipAsFailForCrossChainRequired = MODE === 'tier1_crosschain_required' && action.category === 'cross_chain_route';
         return {
           actionId: action.id,
           category: action.category,
           chain: action.chain,
           endpoint,
-          status: 'skipped' as const,
+          status: skipAsFailForCrossChainRequired ? 'fail' as const : 'skipped' as const,
           latencyMs: latency,
           error,
-          failureClass: 'rpc_rate_limit' as FailureClass,
+          failureClass: skipAsFailForCrossChainRequired ? 'cross_chain_route_failed' as FailureClass : 'rpc_rate_limit' as FailureClass,
         };
       }
 
@@ -1303,15 +1383,16 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
         if (lowerError.includes('insufficient funds for gas') || lowerError.includes('gas required exceeds allowance')) {
           globalExecuteDisabledReason = 'relayer gas depleted';
         }
+        const skipAsFailForCrossChainRequired = MODE === 'tier1_crosschain_required' && action.category === 'cross_chain_route';
         return {
           actionId: action.id,
           category: action.category,
           chain: action.chain,
           endpoint,
-          status: 'skipped' as const,
+          status: skipAsFailForCrossChainRequired ? 'fail' as const : 'skipped' as const,
           latencyMs: latency,
           error,
-          failureClass,
+          failureClass: skipAsFailForCrossChainRequired ? 'cross_chain_route_failed' as FailureClass : failureClass,
         };
       }
 
@@ -1907,6 +1988,21 @@ async function runExecutionSession(sessionIndex: number, mode: Mode): Promise<Se
       actionResults = [await executeIntent(agent, sessionId, action)];
     }
 
+    if (mode === 'tier1_crosschain_required' && action.category === 'cross_chain_route') {
+      actionResults = actionResults.map(result => {
+        const userCancelled = /user\s+cancel/i.test(String(result.error || ''));
+        if (result.status === 'skipped' && !userCancelled) {
+          return {
+            ...result,
+            status: 'fail' as const,
+            error: `cross_chain_route_required_violation: skipped (${result.error || 'unknown'})`,
+            failureClass: 'cross_chain_route_failed' as FailureClass,
+          };
+        }
+        return result;
+      });
+    }
+
     const latestFailure = [...actionResults]
       .reverse()
       .find(
@@ -2167,6 +2263,29 @@ function summarize(results: SessionResult[]) {
   };
 }
 
+function collectCrossChainProofs(results: SessionResult[]) {
+  return results.flatMap(session =>
+    session.actions
+      .filter(action =>
+        action.category === 'cross_chain_route' &&
+        action.status === 'ok' &&
+        action.routeDidRoute === true &&
+        String(action.routeType || '').toLowerCase() === 'testnet_credit' &&
+        String(action.routeToChain || '').toLowerCase() === 'sepolia' &&
+        !!action.routeTxHash &&
+        action.receiptConfirmed === true
+      )
+      .map(action => ({
+        sessionId: session.sessionId,
+        agentId: session.agentId,
+        originWallet: 'solana',
+        routeType: action.routeType,
+        toChain: action.routeToChain,
+        txHash: action.routeTxHash,
+      }))
+  );
+}
+
 async function hydrateAgentsFromKeys() {
   if (!WALLET_KEYS.length && !rotatedWalletPool.length) return;
   try {
@@ -2205,6 +2324,20 @@ async function runRelayedRequiredPreflight(): Promise<void> {
 
   if (!res.ok || !res.json) {
     throw new Error(`Relayed preflight failed: unable to fetch /api/relayer/status (${res.status})`);
+  }
+
+  if (MODE === 'tier1_crosschain_required') {
+    if (!ETH_RPC_URL) {
+      throw new Error(
+        'tier1_crosschain_required preflight failed: missing ETH RPC URL for receipt confirmation and session signing (set STRESS_TEST_ETH_RPC_URL or ETH_TESTNET_RPC_URL)'
+      );
+    }
+    const hasWalletSigner = agents.some(agent => !!agent.privateKey) || WALLET_KEYS.length > 0;
+    if (!hasWalletSigner) {
+      throw new Error(
+        'tier1_crosschain_required preflight failed: missing wallet private key for /api/session/prepare signing (set STRESS_TEST_WALLET_PRIVATE_KEYS or TEST_WALLET_PRIVATE_KEY)'
+      );
+    }
   }
 
   const relayerBalance = Number(res.json?.relayer?.balanceEth || '0');
@@ -2248,6 +2381,16 @@ async function runSessionByMode(sessionIndex: number): Promise<SessionResult> {
 
 async function main() {
   await hydrateAgentsFromKeys();
+  if (!WALLET_KEYS.length && process.env.TEST_WALLET_PRIVATE_KEY) {
+    const rawFallbackKey = process.env.TEST_WALLET_PRIVATE_KEY.trim();
+    const fallbackKey = rawFallbackKey.startsWith('0x') ? rawFallbackKey : `0x${rawFallbackKey}`;
+    if (fallbackKey) {
+      agents.forEach((agent) => {
+        if (!agent.privateKey) agent.privateKey = fallbackKey;
+      });
+      await hydrateAgentsFromKeys();
+    }
+  }
   const rotatedWalletCount = rotatedWalletPool.filter(w => !!w.walletAddress || !!w.privateKey).length;
   const executeModes =
     MODE === 'full' ||
@@ -2283,9 +2426,9 @@ async function main() {
   if (!STRESS_EVM_ADDRESS) log('   ⚠️  Missing STRESS_TEST_EVM_ADDRESS (mint to Ethereum may be skipped)');
   if (!STRESS_SOLANA_ADDRESS) log('   ⚠️  Missing STRESS_TEST_SOLANA_ADDRESS (mint to Solana may be skipped)');
   if (!STRESS_HYPERLIQUID_ADDRESS) log('   ⚠️  Missing STRESS_TEST_HYPERLIQUID_ADDRESS (mint to Hyperliquid may be skipped)');
-  if (MODE === 'tier1_crosschain_required' && !STRESS_SOLANA_ADDRESS) {
-    throw new Error('tier1_crosschain_required requires STRESS_TEST_SOLANA_ADDRESS');
-  }
+    if (MODE === 'tier1_crosschain_required' && !STRESS_SOLANA_ADDRESS) {
+      throw new Error('tier1_crosschain_required requires STRESS_TEST_SOLANA_ADDRESS');
+    }
 
   await runRelayedRequiredPreflight();
 
@@ -2311,6 +2454,7 @@ async function main() {
   await Promise.all(workers);
 
   const summary = summarize(results);
+  const crossChainProofs = MODE === 'tier1_crosschain_required' ? collectCrossChainProofs(results) : [];
   log('\n=== Summary ===');
   log(`Mode: ${summary.mode}`);
   log(`Sessions: ${summary.sessions}`);
@@ -2323,10 +2467,20 @@ async function main() {
   log(`Latency p50/p95: ${summary.latencyMs.p50}ms / ${summary.latencyMs.p95}ms`);
   log(`Routing accuracy: ${summary.routing.accuracyPct}% (${summary.routing.matched}/${summary.routing.checked})`);
   log(`Safety accidental execute payloads in chat-only: ${summary.safety.accidentalExecutePayloadsInChatOnly}`);
+  if (MODE === 'tier1_crosschain_required') {
+    log(`Cross-chain confirmed proofs: ${crossChainProofs.length}`);
+    crossChainProofs.slice(0, 5).forEach((proof, idx) => {
+      log(`  [proof ${idx + 1}] session=${proof.sessionId} wallet=${proof.originWallet} route=${proof.routeType} to=${proof.toChain} tx=${proof.txHash}`);
+    });
+  }
 
   if (OUTPUT_FILE) {
-    fs.writeFileSync(OUTPUT_FILE, JSON.stringify({ runId: RUN_ID, summary, results, mode: MODE }, null, 2));
+    fs.writeFileSync(OUTPUT_FILE, JSON.stringify({ runId: RUN_ID, summary, results, mode: MODE, crossChainProofs }, null, 2));
     log(`\nResults saved to ${OUTPUT_FILE}`);
+  }
+
+  if (MODE === 'tier1_crosschain_required' && crossChainProofs.length < 3) {
+    throw new Error(`tier1_crosschain_required failed: expected at least 3 confirmed cross-chain proofs, got ${crossChainProofs.length}`);
   }
 }
 

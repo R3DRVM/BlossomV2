@@ -3,7 +3,7 @@
  * Read ERC20 token balance and allowance via JSON-RPC eth_call
  */
 
-import { ETH_TESTNET_RPC_URL } from '../config';
+import { ETH_RPC_FALLBACK_URLS, ETH_TESTNET_RPC_URL } from '../config';
 
 /**
  * JSON-RPC Response type
@@ -11,6 +11,19 @@ import { ETH_TESTNET_RPC_URL } from '../config';
 type JsonRpcResponse<T = unknown> = {
   result?: T;
   error?: { message?: string; code?: number; data?: unknown };
+};
+
+type Erc20ReadOptions = {
+  rpcUrls?: string[];
+  timeoutMs?: number;
+  retries?: number;
+  retryBackoffMs?: number;
+};
+
+type Erc20ReadMeta = {
+  rpcUsed: string;
+  attempts: number;
+  lastError?: string;
 };
 
 /**
@@ -53,6 +66,185 @@ function decodeUint256(hex: string): bigint {
   return BigInt(hex);
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function normalizeRpcUrls(options?: Erc20ReadOptions): string[] {
+  const urls = [
+    ...(options?.rpcUrls || []),
+    ETH_TESTNET_RPC_URL || '',
+    ...ETH_RPC_FALLBACK_URLS,
+  ]
+    .map((url) => url.trim())
+    .filter((url) => /^https?:\/\//i.test(url));
+
+  return [...new Set(urls)];
+}
+
+async function ethCallWithFallback(
+  to: `0x${string}`,
+  data: `0x${string}`,
+  options?: Erc20ReadOptions
+): Promise<{ result: string } & Erc20ReadMeta> {
+  const rpcUrls = normalizeRpcUrls(options);
+  if (!rpcUrls.length) {
+    throw new Error('ETH_TESTNET_RPC_URL not configured');
+  }
+
+  const timeoutMs = options?.timeoutMs ?? parseInt(process.env.ERC20_RPC_TIMEOUT_MS || '10000', 10);
+  const retries = Math.max(1, options?.retries ?? parseInt(process.env.ERC20_RPC_RETRIES || '3', 10));
+  const baseBackoffMs = Math.max(100, options?.retryBackoffMs ?? 300);
+
+  let attempts = 0;
+  let lastError = '';
+  let lastRpc = rpcUrls[0];
+
+  for (let retry = 0; retry < retries; retry += 1) {
+    for (const rpcUrl of rpcUrls) {
+      attempts += 1;
+      lastRpc = rpcUrl;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+      try {
+        const response = await fetch(rpcUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: attempts,
+            method: 'eth_call',
+            params: [
+              {
+                to,
+                data,
+              },
+              'latest',
+            ],
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`RPC call failed: ${response.status} ${response.statusText}`);
+        }
+
+        const jsonResult: unknown = await response.json();
+        const result = jsonResult as JsonRpcResponse<string>;
+        if (result.error) {
+          throw new Error(`RPC error: ${result.error.message || JSON.stringify(result.error)}`);
+        }
+
+        if (!result.result) {
+          return { result: '0x', rpcUsed: rpcUrl, attempts, ...(lastError ? { lastError } : {}) };
+        }
+
+        return { result: result.result, rpcUsed: rpcUrl, attempts, ...(lastError ? { lastError } : {}) };
+      } catch (error: any) {
+        lastError = error?.message || String(error);
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    if (retry < retries - 1) {
+      const jitter = Math.floor(Math.random() * 200);
+      const backoffMs = Math.min(4000, baseBackoffMs * (2 ** retry)) + jitter;
+      await sleep(backoffMs);
+    }
+  }
+
+  const finalError: any = new Error(`Failed to fetch ERC20 data: ${lastError || 'unknown error'}`);
+  finalError.rpcUsed = lastRpc;
+  finalError.attempts = attempts;
+  finalError.lastError = lastError;
+  throw finalError;
+}
+
+export async function erc20_balanceOfWithMeta(
+  token: string,
+  owner: string,
+  options?: Erc20ReadOptions
+): Promise<{ balance: bigint; meta: Erc20ReadMeta }> {
+  const { encodeFunctionData } = await import('viem');
+  const to = token.toLowerCase() as `0x${string}`;
+  const ownerAddr = owner.toLowerCase() as `0x${string}`;
+
+  const data = encodeFunctionData({
+    abi: ERC20_ABI,
+    functionName: 'balanceOf',
+    args: [ownerAddr],
+  }) as `0x${string}`;
+
+  const call = await ethCallWithFallback(to, data, options);
+  return {
+    balance: decodeUint256(call.result),
+    meta: {
+      rpcUsed: call.rpcUsed,
+      attempts: call.attempts,
+      ...(call.lastError ? { lastError: call.lastError } : {}),
+    },
+  };
+}
+
+export async function erc20_decimalsWithMeta(
+  token: string,
+  options?: Erc20ReadOptions
+): Promise<{ decimals: number; meta: Erc20ReadMeta }> {
+  const { encodeFunctionData } = await import('viem');
+  const to = token.toLowerCase() as `0x${string}`;
+
+  const data = encodeFunctionData({
+    abi: ERC20_ABI,
+    functionName: 'decimals',
+    args: [],
+  }) as `0x${string}`;
+
+  const call = await ethCallWithFallback(to, data, options);
+  const dec = Number(decodeUint256(call.result));
+  if (!Number.isFinite(dec) || dec < 0 || dec > 255) {
+    throw new Error(`Invalid decimals: ${dec}`);
+  }
+
+  return {
+    decimals: dec,
+    meta: {
+      rpcUsed: call.rpcUsed,
+      attempts: call.attempts,
+      ...(call.lastError ? { lastError: call.lastError } : {}),
+    },
+  };
+}
+
+export async function erc20_allowanceWithMeta(
+  token: string,
+  owner: string,
+  spender: string,
+  options?: Erc20ReadOptions
+): Promise<{ allowance: bigint; meta: Erc20ReadMeta }> {
+  const { encodeFunctionData } = await import('viem');
+  const to = token.toLowerCase() as `0x${string}`;
+  const ownerAddr = owner.toLowerCase() as `0x${string}`;
+  const spenderAddr = spender.toLowerCase() as `0x${string}`;
+
+  const data = encodeFunctionData({
+    abi: ERC20_ABI,
+    functionName: 'allowance',
+    args: [ownerAddr, spenderAddr],
+  }) as `0x${string}`;
+
+  const call = await ethCallWithFallback(to, data, options);
+  return {
+    allowance: decodeUint256(call.result),
+    meta: {
+      rpcUsed: call.rpcUsed,
+      attempts: call.attempts,
+      ...(call.lastError ? { lastError: call.lastError } : {}),
+    },
+  };
+}
+
 /**
  * Get ERC20 token balance for an address
  * @param token Token contract address
@@ -63,55 +255,8 @@ export async function erc20_balanceOf(
   token: string,
   owner: string
 ): Promise<bigint> {
-  if (!ETH_TESTNET_RPC_URL) {
-    throw new Error('ETH_TESTNET_RPC_URL not configured');
-  }
-
-  const { encodeFunctionData } = await import('viem');
-  const to = token.toLowerCase() as `0x${string}`;
-  const ownerAddr = owner.toLowerCase() as `0x${string}`;
-
-  const data = encodeFunctionData({
-    abi: ERC20_ABI,
-    functionName: 'balanceOf',
-    args: [ownerAddr],
-  });
-
-  // Debug log (no secrets)
-  console.log(`[erc20Rpc] balanceOf: token=${to.substring(0, 10)}..., owner=${ownerAddr.substring(0, 10)}..., data=${data.substring(0, 10)}...`);
-
-  try {
-    const response = await fetch(ETH_TESTNET_RPC_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'eth_call',
-        params: [
-          {
-            to,
-            data,
-          },
-          'latest',
-        ],
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`RPC call failed: ${response.statusText}`);
-    }
-
-    const result = await response.json();
-
-    if (result.error) {
-      throw new Error(`RPC error: ${result.error.message || JSON.stringify(result.error)}`);
-    }
-
-    return decodeUint256(result.result);
-  } catch (error: any) {
-    throw new Error(`Failed to fetch ERC20 balance: ${error.message}`);
-  }
+  const { balance } = await erc20_balanceOfWithMeta(token, owner);
+  return balance;
 }
 
 /**
@@ -120,60 +265,8 @@ export async function erc20_balanceOf(
  * @returns Token decimals as number
  */
 export async function erc20_decimals(token: string): Promise<number> {
-  if (!ETH_TESTNET_RPC_URL) {
-    throw new Error('ETH_TESTNET_RPC_URL not configured');
-  }
-
-  const { encodeFunctionData } = await import('viem');
-  const to = token.toLowerCase() as `0x${string}`;
-
-  const data = encodeFunctionData({
-    abi: ERC20_ABI,
-    functionName: 'decimals',
-    args: [],
-  });
-
-  try {
-    const response = await fetch(ETH_TESTNET_RPC_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'eth_call',
-        params: [
-          {
-            to,
-            data,
-          },
-          'latest',
-        ],
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`RPC call failed: ${response.statusText}`);
-    }
-
-    const jsonResult: unknown = await response.json();
-    const result = jsonResult as JsonRpcResponse<string>;
-
-    if (result.error) {
-      throw new Error(`RPC error: ${result.error.message || JSON.stringify(result.error)}`);
-    }
-
-    if (!result.result) {
-      throw new Error('RPC response missing result field');
-    }
-
-    const dec = Number(decodeUint256(result.result));
-    if (!Number.isFinite(dec) || dec < 0 || dec > 255) {
-      throw new Error(`Invalid decimals: ${dec}`);
-    }
-    return dec;
-  } catch (error: any) {
-    throw new Error(`Failed to fetch ERC20 decimals: ${error.message}`);
-  }
+  const { decimals } = await erc20_decimalsWithMeta(token);
+  return decimals;
 }
 
 /**
@@ -188,60 +281,6 @@ export async function erc20_allowance(
   owner: string,
   spender: string
 ): Promise<bigint> {
-  if (!ETH_TESTNET_RPC_URL) {
-    throw new Error('ETH_TESTNET_RPC_URL not configured');
-  }
-
-  const { encodeFunctionData } = await import('viem');
-  const to = token.toLowerCase() as `0x${string}`;
-  const ownerAddr = owner.toLowerCase() as `0x${string}`;
-  const spenderAddr = spender.toLowerCase() as `0x${string}`;
-
-  const data = encodeFunctionData({
-    abi: ERC20_ABI,
-    functionName: 'allowance',
-    args: [ownerAddr, spenderAddr],
-  });
-
-  // Debug log (no secrets)
-  console.log(`[erc20Rpc] allowance: token=${to.substring(0, 10)}..., owner=${ownerAddr.substring(0, 10)}..., spender=${spenderAddr.substring(0, 10)}..., data=${data.substring(0, 10)}...`);
-
-  try {
-    const response = await fetch(ETH_TESTNET_RPC_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'eth_call',
-        params: [
-          {
-            to,
-            data,
-          },
-          'latest',
-        ],
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`RPC call failed: ${response.statusText}`);
-    }
-
-    const jsonResult: unknown = await response.json();
-    const result = jsonResult as JsonRpcResponse<string>;
-
-    if (result.error) {
-      throw new Error(`RPC error: ${result.error.message || JSON.stringify(result.error)}`);
-    }
-
-    if (!result.result) {
-      throw new Error('RPC response missing result field');
-    }
-
-    return decodeUint256(result.result);
-  } catch (error: any) {
-    throw new Error(`Failed to fetch ERC20 allowance: ${error.message}`);
-  }
+  const { allowance } = await erc20_allowanceWithMeta(token, owner, spender);
+  return allowance;
 }
-
