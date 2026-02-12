@@ -1913,12 +1913,21 @@ async function runExecutionSession(sessionIndex: number, mode: Mode): Promise<Se
     const sessionPrepare = await runSessionPrepare(agent);
     results.push(sessionPrepare);
     if (sessionPrepare.status !== 'ok') {
+      if (mode === 'tier1_crosschain_required' && sessionPrepare.status === 'skipped') {
+        results[results.length - 1] = {
+          ...sessionPrepare,
+          status: 'fail',
+          error: `cross_chain_route_required_violation: session_prepare_skipped (${sessionPrepare.error || 'unknown'})`,
+          failureClass: 'cross_chain_route_failed',
+        };
+      }
       const finishedAt = Date.now();
+      const modeStrict = mode === 'tier1_crosschain_required';
       return {
         sessionId,
         agentId: agent.id,
         agentType: agent.type,
-        ok: results.every(r => r.status === 'ok' || r.status === 'skipped'),
+        ok: modeStrict ? results.every(r => r.status === 'ok') : results.every(r => r.status === 'ok' || r.status === 'skipped'),
         actions: results,
         startedAt,
         finishedAt,
@@ -1940,12 +1949,21 @@ async function runExecutionSession(sessionIndex: number, mode: Mode): Promise<Se
         error: 'SESSION_NOT_ACTIVE after prepare gating; skipped execute actions for this session',
         failureClass: 'rpc_rate_limit',
       });
+      if (mode === 'tier1_crosschain_required') {
+        results[results.length - 1] = {
+          ...results[results.length - 1],
+          status: 'fail',
+          error: 'cross_chain_route_required_violation: session_not_active_after_prepare',
+          failureClass: 'cross_chain_route_failed',
+        };
+      }
       const finishedAt = Date.now();
+      const modeStrict = mode === 'tier1_crosschain_required';
       return {
         sessionId,
         agentId: agent.id,
         agentType: agent.type,
-        ok: results.every(r => r.status === 'ok' || r.status === 'skipped'),
+        ok: modeStrict ? results.every(r => r.status === 'ok') : results.every(r => r.status === 'ok' || r.status === 'skipped'),
         actions: results,
         startedAt,
         finishedAt,
@@ -2055,7 +2073,10 @@ async function runExecutionSession(sessionIndex: number, mode: Mode): Promise<Se
   }
 
   const finishedAt = Date.now();
-  const ok = results.every(r => r.status === 'ok' || r.status === 'skipped');
+  const ok =
+    mode === 'tier1_crosschain_required'
+      ? results.every(r => r.status === 'ok')
+      : results.every(r => r.status === 'ok' || r.status === 'skipped');
 
   return {
     sessionId,
@@ -2368,10 +2389,21 @@ async function runRelayedRequiredPreflight(): Promise<void> {
     if (!fundingAddress || fundingBalanceRaw === undefined) {
       log('[preflight] funding details redacted (unauthenticated status call); skipping funding wallet balance assertion');
     } else if (fundingBalanceEth < targetEth) {
+      if (MODE === 'tier1_crosschain_required') {
+        throw new Error(
+          `tier1_crosschain_required preflight failed: funding wallet balance ${fundingBalanceEth} ETH < target ${targetEth} ETH (insufficient for deterministic relayed execution)`
+        );
+      }
       log(
         `[preflight] warning: funding wallet balance ${fundingBalanceEth} ETH < target ${targetEth} ETH; proceeding with relayed-required run`
       );
     }
+  }
+
+  if (MODE === 'tier1_crosschain_required' && relayerBalance < minEth) {
+    throw new Error(
+      `tier1_crosschain_required preflight failed: relayer balance ${relayerBalance} ETH < min ${minEth} ETH`
+    );
   }
 
   log(
