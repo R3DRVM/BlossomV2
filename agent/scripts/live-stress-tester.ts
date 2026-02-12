@@ -32,6 +32,7 @@ type ExpectedRoute = 'chat' | 'planner';
 type FailureClass =
   | 'blossom_logic'
   | 'rpc_rate_limit'
+  | 'invocation_timeout'
   | 'nonce_collision'
   | 'venue_flake'
   | 'erc8004_validation'
@@ -706,6 +707,15 @@ function classifyFailure(errorText: string | undefined, action: Pick<ActionResul
   if (action.category === 'validate') return 'erc8004_validation';
   if (action.category === 'mint') return 'faucet_mint_fail';
   if (action.category === 'cross_chain_route' || lower.includes('cross_chain_route')) return 'cross_chain_route_failed';
+  if (
+    lower.includes('function_invocation_failed') ||
+    lower.includes('invocation timeout') ||
+    lower.includes('timeout budget') ||
+    lower.includes('gateway timeout') ||
+    lower.includes('504')
+  ) {
+    return 'invocation_timeout';
+  }
   if (lower.includes('unsupported_venue') || lower.includes('proof_only_blocked')) return 'venue_flake';
   if (lower.includes('guardrail') || lower.includes('route mismatch') || lower.includes('hallucination')) return 'guardrail_failure';
   if (isHyperliquidRateLimitError(lower) || lower.includes('too many requests') || lower.includes('gateway timeout') || lower.includes('timed out')) return 'rpc_rate_limit';
@@ -716,13 +726,16 @@ function classifyFailure(errorText: string | undefined, action: Pick<ActionResul
     lower.includes('path_violation') ||
     lower.includes('missing_execution_request') ||
     lower.includes('route mismatch') ||
+    lower.includes('session_prepare_missing_prereq') ||
+    lower.includes('cross_chain_route_read_failed') ||
+    lower.includes('cross_chain_route_pending') ||
     lower.includes('wrong venue') ||
     lower.includes('malformed executionrequest') ||
     lower.includes('malformed actions')
   ) {
     return 'blossom_logic';
   }
-  return 'unknown';
+  return 'blossom_logic';
 }
 
 function inferRouteFromResponse(payload: any): ExpectedRoute {
@@ -2399,6 +2412,7 @@ function summarize(results: SessionResult[]) {
   const byClass: Record<FailureClass, number> = {
     blossom_logic: 0,
     rpc_rate_limit: 0,
+    invocation_timeout: 0,
     nonce_collision: 0,
     venue_flake: 0,
     erc8004_validation: 0,
@@ -2504,9 +2518,12 @@ function collectCrossChainProofs(results: SessionResult[]) {
         agentId: session.agentId,
         originWallet: 'solana',
         routeType: action.routeType,
+        fromChain: action.routeFromChain || 'solana_devnet',
         toChain: action.routeToChain,
         creditTxHash: action.routeTxHash,
         executionTxHash: action.txHash,
+        creditReceiptConfirmed: action.creditReceiptConfirmed === true,
+        executionReceiptConfirmed: action.executionReceiptConfirmed === true,
       }))
   );
 }

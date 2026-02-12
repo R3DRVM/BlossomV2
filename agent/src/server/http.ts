@@ -4383,6 +4383,7 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
     const DEMO_REDACTED_ADDRESS = configModule.DEMO_REDACTED_ADDRESS || configModule.DEMO_BUSDC_ADDRESS;
     const REDACTED_ADDRESS_SEPOLIA = configModule.REDACTED_ADDRESS_SEPOLIA;
     const WETH_ADDRESS_SEPOLIA = configModule.WETH_ADDRESS_SEPOLIA;
+    const ALLOW_PROOF_ONLY = configModule.ALLOW_PROOF_ONLY;
 
     // Add missing plan fields
     if (!plan.user) {
@@ -5094,17 +5095,43 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
     );
 
     const { ensureExecutionFunding } = await import('../services/crossChainCreditRouter');
-    const fundingResult = await ensureExecutionFunding({
-      userId: req.body?.metadata?.userId || userAddress?.toLowerCase(),
-      sessionId,
-      userEvmAddress: userAddress,
-      userSolanaAddress: userSolanaAddress || undefined,
-      fromChain: requestedFromChain || undefined,
-      toChain: 'sepolia',
-      amountUsdRequired: Number.isFinite(amountUsdHint) && amountUsdHint > 0 ? amountUsdHint : undefined,
-      spendEstimateUnits: spendEstimate?.spendWei,
-      instrumentType,
-    });
+    const fundingTimeoutMs = Math.max(1_000, parseInt(process.env.EXECUTION_FUNDING_TIMEOUT_MS || '20000', 10));
+    let fundingResult;
+    try {
+      fundingResult = await Promise.race([
+        ensureExecutionFunding({
+          userId: req.body?.metadata?.userId || userAddress?.toLowerCase(),
+          sessionId,
+          userEvmAddress: userAddress,
+          userSolanaAddress: userSolanaAddress || undefined,
+          fromChain: requestedFromChain || undefined,
+          toChain: 'sepolia',
+          amountUsdRequired: Number.isFinite(amountUsdHint) && amountUsdHint > 0 ? amountUsdHint : undefined,
+          spendEstimateUnits: spendEstimate?.spendWei,
+          instrumentType,
+        }),
+        new Promise((_, reject) => {
+          setTimeout(() => reject(new Error(`CROSS_CHAIN_ROUTE_TIMEOUT:${fundingTimeoutMs}`)), fundingTimeoutMs);
+        }),
+      ]);
+    } catch (error: any) {
+      return res.status(504).json({
+        ok: false,
+        success: false,
+        error: "Couldn't verify routing prerequisites in time. Please retry.",
+        errorCode: 'CROSS_CHAIN_ROUTE_TIMEOUT',
+        executionMeta: {
+          route: {
+            didRoute: false,
+            fromChain: requestedFromChain || 'unknown',
+            toChain: 'sepolia',
+            reason: 'Cross-chain funding stage timed out before execution.',
+          },
+        },
+        queued: false,
+        correlationId,
+      });
+    }
 
     if (!fundingResult.ok) {
       return res.status(409).json({
@@ -5321,61 +5348,103 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
 
     const relayerStatus = await getRelayerStatus('sepolia');
     if (!relayerStatus.relayer.okToExecute) {
-      void maybeTopUpRelayerBeforeSend('sepolia', {
-        reason: 'relayed_low_balance_queue',
-        fireAndForget: true,
-      });
+      const strictCrossChainMode = String(req.body?.metadata?.mode || '').toLowerCase() === 'tier1_crosschain_required';
+      const topupTimeoutMs = Math.max(1_000, parseInt(process.env.RELAYER_TOPUP_SYNC_TIMEOUT_MS || '12000', 10));
+      let topupTimedOut = false;
+      let topupResult: Awaited<ReturnType<typeof maybeTopUpRelayerBeforeSend>> | null = null;
 
-      enqueueRelayedExecution({
-        key: queueKey,
-        correlationId,
-        requestId: `${draftId}:${String(plan.nonce || 'na')}`,
-        walletFallbackTx: {
-          to: EXECUTION_ROUTER_ADDRESS!,
-          data,
-          value: req.body.value || '0x0',
-        },
-        run: async () => {
-          const queuedTxHash = await sendRelayedTx({
+      try {
+        topupResult = await Promise.race([
+          maybeTopUpRelayerBeforeSend('sepolia', {
+            reason: 'relayed_low_balance_sync',
+            fireAndForget: false,
+          }),
+          new Promise<never>((_, reject) => {
+            setTimeout(() => {
+              topupTimedOut = true;
+              reject(new Error('RELAYER_TOPUP_TIMEOUT'));
+            }, topupTimeoutMs);
+          }),
+        ]);
+      } catch (topupError: any) {
+        // Keep running deterministic fallback below.
+      }
+
+      const relayerStatusAfterTopup = await getRelayerStatus('sepolia');
+      if (!relayerStatusAfterTopup.relayer.okToExecute) {
+        if (strictCrossChainMode || !ALLOW_PROOF_ONLY) {
+          return res.status(503).json({
+            ok: false,
+            success: false,
+            queued: false,
+            errorCode: topupTimedOut ? 'RELAYER_TOPUP_TIMEOUT' : (topupResult?.reason?.includes('topup_failed') ? 'RELAYER_TOPUP_FAILED' : 'RELAYER_LOW_BALANCE'),
+            error: topupTimedOut
+              ? 'Relayer top-up timed out before execution.'
+              : 'Relayer has insufficient ETH to execute. Fund relayer or funding wallet and retry.',
+            machine: {
+              queued: false,
+              reason: 'relayer_low_balance',
+            },
+            relayer: {
+              balanceEth: relayerStatusAfterTopup.relayer.balanceEth,
+              minEth: relayerStatusAfterTopup.relayer.minEth,
+              okToExecute: relayerStatusAfterTopup.relayer.okToExecute,
+            },
+            correlationId,
+          });
+        }
+
+        enqueueRelayedExecution({
+          key: queueKey,
+          correlationId,
+          requestId: `${draftId}:${String(plan.nonce || 'na')}`,
+          walletFallbackTx: {
             to: EXECUTION_ROUTER_ADDRESS!,
             data,
             value: req.body.value || '0x0',
-          });
-
-          let queuedReceiptStatus: 'confirmed' | 'failed' | 'timeout' | 'pending' = 'pending';
-          let queuedBlockNumber: number | undefined;
-          let queuedReceiptError: string | undefined;
-          if (ETH_TESTNET_RPC_URL) {
-            const { waitForReceipt: waitForQueuedReceipt } = await import('../executors/evmReceipt');
-            const queuedReceipt = await waitForQueuedReceipt(ETH_TESTNET_RPC_URL, queuedTxHash, {
-              timeoutMs: 60_000,
-              pollMs: 2_000,
+          },
+          run: async () => {
+            const queuedTxHash = await sendRelayedTx({
+              to: EXECUTION_ROUTER_ADDRESS!,
+              data,
+              value: req.body.value || '0x0',
             });
-            queuedReceiptStatus = queuedReceipt.status;
-            queuedBlockNumber = queuedReceipt.blockNumber;
-            queuedReceiptError = queuedReceipt.error;
-          }
 
-          return {
-            success: queuedReceiptStatus === 'confirmed',
-            status: queuedReceiptStatus === 'confirmed' ? 'success' : 'pending',
-            txHash: queuedTxHash,
-            receiptStatus: queuedReceiptStatus,
-            blockNumber: queuedBlockNumber,
-            error: queuedReceiptError,
-            explorerUrl: `https://sepolia.etherscan.io/tx/${queuedTxHash}`,
-            chainId: 11155111,
-            notes: ['execution_path:relayed', 'queued_retry'],
-          };
-        },
-      });
+            let queuedReceiptStatus: 'confirmed' | 'failed' | 'timeout' | 'pending' = 'pending';
+            let queuedBlockNumber: number | undefined;
+            let queuedReceiptError: string | undefined;
+            if (ETH_TESTNET_RPC_URL) {
+              const { waitForReceipt: waitForQueuedReceipt } = await import('../executors/evmReceipt');
+              const queuedReceipt = await waitForQueuedReceipt(ETH_TESTNET_RPC_URL, queuedTxHash, {
+                timeoutMs: 60_000,
+                pollMs: 2_000,
+              });
+              queuedReceiptStatus = queuedReceipt.status;
+              queuedBlockNumber = queuedReceipt.blockNumber;
+              queuedReceiptError = queuedReceipt.error;
+            }
 
-      const queuedResponse = getQueuedResponseAfterEnqueue(queueKey);
-      if (queuedResponse) {
-        return res.status(queuedResponse.statusCode).json({
-          ...queuedResponse.body,
-          correlationId,
+            return {
+              success: queuedReceiptStatus === 'confirmed',
+              status: queuedReceiptStatus === 'confirmed' ? 'success' : 'pending',
+              txHash: queuedTxHash,
+              receiptStatus: queuedReceiptStatus,
+              blockNumber: queuedBlockNumber,
+              error: queuedReceiptError,
+              explorerUrl: `https://sepolia.etherscan.io/tx/${queuedTxHash}`,
+              chainId: 11155111,
+              notes: ['execution_path:relayed', 'queued_retry'],
+            };
+          },
         });
+
+        const queuedResponse = getQueuedResponseAfterEnqueue(queueKey);
+        if (queuedResponse) {
+          return res.status(queuedResponse.statusCode).json({
+            ...queuedResponse.body,
+            correlationId,
+          });
+        }
       }
     }
 
@@ -5657,9 +5726,16 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
       });
     }
 
-    res.status(500).json({
+    const errorLower = String(error?.message || '').toLowerCase();
+    const isTimeoutError =
+      errorLower.includes('timed out') ||
+      errorLower.includes('timeout') ||
+      errorLower.includes('function_invocation_failed');
+    const statusCode = isTimeoutError ? 504 : 500;
+
+    res.status(statusCode).json({
       ...result,
-      errorCode,
+      errorCode: isTimeoutError && errorCode === 'RELAYER_FAILED' ? 'INVOCATION_TIMEOUT' : errorCode,
       ...(errorBucket ? { failureBucket: errorBucket } : {}),
       correlationId, // Include correlationId in error response
       executionMeta: {

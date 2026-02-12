@@ -1,7 +1,7 @@
 import { useRef, useEffect, useState } from 'react';
 import { ParsedStrategy } from '../lib/mockParser';
 import { useBlossomContext, getBaseAsset } from '../context/BlossomContext';
-import { USE_AGENT_BACKEND } from '../lib/config';
+import { USE_AGENT_BACKEND, executionMode as appExecutionMode } from '../lib/config';
 import { closeStrategy as closeStrategyApi } from '../lib/blossomApi';
 import { BlossomLogo } from './BlossomLogo';
 import RiskBadge from './RiskBadge';
@@ -133,6 +133,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
   const { pushEvent } = useActivityFeed();
   const [isClosing, setIsClosing] = useState(false);
   const [showReasoning, setShowReasoning] = useState(false);
+  const [showExecutionDebug, setShowExecutionDebug] = useState(false);
   const [isCardExpanded, setIsCardExpanded] = useState(false);
   const [livePrices, setLivePrices] = useState<{ BTC?: number; ETH?: number; SOL?: number; AVAX?: number; LINK?: number }>({});
   const [liveEntrySnapshot, setLiveEntrySnapshot] = useState<{ entryUsd: number; source: 'coingecko' | 'agent' } | null>(null);
@@ -184,6 +185,13 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
     : false;
   
   const biasWarning = strategy ? getPortfolioBiasWarning(strategies, strategy) : null;
+  const routeMeta = currentStrategy?.executionMeta?.route;
+  const isBetaTestnetMode = appExecutionMode === 'eth_testnet';
+  const hasExecutionDebug =
+    !!routeMeta ||
+    !!currentStrategy?.txHash ||
+    !!currentStrategy?.explorerUrl ||
+    (currentStatus as string) === 'blocked';
   
   // Fetch live prices for perp instruments (display-only)
   useEffect(() => {
@@ -1285,6 +1293,58 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
             {biasWarning && getStrategyReasoning(strategy, currentStrategy?.instrumentType).length <= 2 && (
               <div className="mt-1.5 rounded-md bg-blossom-pinkSoft/60 px-2 py-1 text-[10px] text-blossom-ink border border-blossom-pink/30">
                 {biasWarning}
+              </div>
+            )}
+            {isBetaTestnetMode && hasExecutionDebug && (
+              <div className="mt-1.5 pt-1.5 border-t border-gray-200/60">
+                <button
+                  onClick={() => setShowExecutionDebug(!showExecutionDebug)}
+                  className="text-left w-full"
+                >
+                  <span className="text-[10px] text-gray-500 hover:text-gray-700 underline">
+                    {showExecutionDebug ? 'Hide execution debug' : 'Execution debug'}
+                  </span>
+                </button>
+                {showExecutionDebug && (
+                  <div className="mt-1.5 space-y-1 text-[10px] text-gray-600">
+                    {routeMeta?.routeType && <div>{`routeType: ${routeMeta.routeType}`}</div>}
+                    {(routeMeta?.fromChain || routeMeta?.toChain) && (
+                      <div>{`route: ${formatRouteChainLabel(routeMeta?.fromChain)} -> ${formatRouteChainLabel(routeMeta?.toChain)}`}</div>
+                    )}
+                    {routeMeta?.reason && <div>{`reason: ${routeMeta.reason}`}</div>}
+                    {routeMeta?.txHash && (
+                      <div>
+                        credit tx:{' '}
+                        <a
+                          href={`https://sepolia.etherscan.io/tx/${routeMeta.txHash}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-blue-600 underline"
+                        >
+                          {`${routeMeta.txHash.slice(0, 10)}...${routeMeta.txHash.slice(-8)}`}
+                        </a>
+                      </div>
+                    )}
+                    {currentStrategy?.txHash && (
+                      <div>
+                        execution tx:{' '}
+                        <a
+                          href={currentStrategy.explorerUrl || `https://sepolia.etherscan.io/tx/${currentStrategy.txHash}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-blue-600 underline"
+                        >
+                          {`${currentStrategy.txHash.slice(0, 10)}...${currentStrategy.txHash.slice(-8)}`}
+                        </a>
+                      </div>
+                    )}
+                    {(currentStatus as string) === 'blocked' && (
+                      <div className="text-amber-700">
+                        {`error: ${routeMeta?.reason || 'Execution blocked due to funding or policy guardrails.'}`}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>
