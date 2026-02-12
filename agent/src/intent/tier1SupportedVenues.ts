@@ -18,7 +18,8 @@ const CHAIN_SET = new Set<string>(TIER1_SUPPORTED_CHAINS);
 const CATEGORY_SET = new Set<string>(TIER1_SUPPORTED_CATEGORIES);
 
 export function isTier1RelayedMode(mode: string | undefined | null): boolean {
-  return String(mode || '').trim().toLowerCase() === 'tier1_relayed_required';
+  const normalized = String(mode || '').trim().toLowerCase();
+  return normalized === 'tier1_relayed_required' || normalized === 'tier1_crosschain_required';
 }
 
 export function isTier1RelayedExecutionSupported(input: {

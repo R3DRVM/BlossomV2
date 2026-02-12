@@ -1120,19 +1120,24 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
       'X-Ledger-Secret': LEDGER_SECRET,
     };
 
+    const backendCategory = action.category === 'cross_chain_route' ? 'perp' : action.category;
+    const actionSolanaAddress = (action.metadata?.userSolanaAddress as string | undefined) || undefined;
+    const actionFromChain = (action.metadata?.fromChain as string | undefined) || undefined;
+    const actionToChain = (action.metadata?.toChain as string | undefined) || undefined;
+
     const metadata = {
       runId: RUN_ID,
       sessionId,
       agentId: agent.id,
       agentType: agent.type,
-      category: action.category,
+      category: backendCategory,
       chain: action.chain,
       source: 'live_stress_tester',
       mode: MODE,
       userAddress: agent.walletAddress || STRESS_EVM_ADDRESS || undefined,
-      userSolanaAddress: (action.metadata?.userSolanaAddress as string | undefined) || STRESS_SOLANA_ADDRESS || undefined,
-      fromChain: (action.metadata?.fromChain as string | undefined) || (action.chain === 'solana' ? 'solana_devnet' : 'sepolia'),
-      toChain: (action.metadata?.toChain as string | undefined) || (action.chain === 'ethereum' ? 'sepolia' : undefined),
+      userSolanaAddress: actionSolanaAddress,
+      fromChain: actionFromChain || (action.chain === 'solana' ? 'solana_devnet' : undefined),
+      toChain: actionToChain || (action.chain === 'ethereum' ? 'sepolia' : undefined),
     };
 
     const body: Record<string, any> = {

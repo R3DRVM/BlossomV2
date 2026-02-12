@@ -90,7 +90,11 @@ export async function mintDemoTokens(recipientAddress: string) {
  * Mint a custom amount of bUSDC for testnet use.
  * Amount is in whole bUSDC units (6 decimals applied internally).
  */
-export async function mintBusdc(recipientAddress: string, amount: number) {
+export async function mintBusdc(
+  recipientAddress: string,
+  amount: number,
+  options?: { waitForReceipt?: boolean; receiptTimeoutMs?: number }
+) {
   const {
     ETH_TESTNET_RPC_URL,
     DEMO_BUSDC_ADDRESS,
@@ -138,7 +142,15 @@ export async function mintBusdc(recipientAddress: string, amount: number) {
     args: [recipientAddress as `0x${string}`, amountUnits]
   });
 
-  await client.waitForTransactionReceipt({ hash: txHash });
+  const shouldWaitForReceipt = options?.waitForReceipt !== false;
+  if (shouldWaitForReceipt) {
+    await client.waitForTransactionReceipt({
+      hash: txHash,
+      ...(options?.receiptTimeoutMs && Number.isFinite(options.receiptTimeoutMs)
+        ? { timeout: options.receiptTimeoutMs }
+        : {}),
+    });
+  }
   return { txHash, amount };
 }
 

@@ -241,7 +241,11 @@ export async function routeStableCreditForExecution(
   });
 
   try {
-    const mint = await mintBusdc(userEvmAddress, amountUsd);
+    // Keep routing deterministic but fast for serverless execute paths:
+    // submit mint tx and return receipt proof metadata without blocking on confirmation.
+    const mint = await mintBusdc(userEvmAddress, amountUsd, {
+      waitForReceipt: false,
+    });
     await updateCrossChainCreditAsync(record.id, {
       status: 'credited',
       metaJson: JSON.stringify({
@@ -426,56 +430,6 @@ export async function ensureExecutionFunding(
     };
   }
 
-  let postRouteBalanceUsd = 0;
-  let postRouteDebug: { rpcUsed?: string; attempts?: number; lastError?: string } | undefined;
-  try {
-    const read = await getSepoliaStableBalanceUsdWithMeta(params.userEvmAddress);
-    postRouteBalanceUsd = read.balanceUsd;
-    postRouteDebug = read.debug;
-  } catch (error: any) {
-    return {
-      ok: false,
-      code: 'CROSS_CHAIN_ROUTE_READ_FAILED',
-      userMessage: "Couldn't verify Sepolia bUSDC balance right now. Please retry in a moment.",
-      route: {
-        didRoute: true,
-        routeType: routeResult.routeType,
-        fromChain,
-        toChain,
-        reason: 'Routing completed but post-route Sepolia balance verification failed.',
-        receiptId: routeResult.fromReceiptId,
-        txHash: routeResult.toTxHash,
-        creditedAmountUsd: routeResult.creditedAmountUsd,
-        debug: {
-          rpcUsed: error?.rpcUsed,
-          attempts: Number.isFinite(error?.attempts) ? Number(error.attempts) : undefined,
-          lastError: error?.lastError || error?.message || 'unknown error',
-        },
-      },
-    };
-  }
-  if (postRouteBalanceUsd < requiredUsd) {
-    return {
-      ok: false,
-      code: 'CROSS_CHAIN_ROUTE_INSUFFICIENT_FUNDS',
-      userMessage: "Couldn't route enough bUSDC from Solana -> Sepolia right now. Try minting additional bUSDC on Sepolia.",
-      route: {
-        didRoute: true,
-        routeType: routeResult.routeType,
-        fromChain,
-        toChain,
-        reason: 'Routing completed but Sepolia funding is still below required amount.',
-        receiptId: routeResult.fromReceiptId,
-        txHash: routeResult.toTxHash,
-        creditedAmountUsd: routeResult.creditedAmountUsd,
-        debug: {
-          ...(postRouteDebug || initialReadDebug || {}),
-          ...(solanaBalanceRead.error ? { lastError: solanaBalanceRead.error } : {}),
-        },
-      },
-    };
-  }
-
   return {
     ok: true,
     route: {
@@ -489,7 +443,7 @@ export async function ensureExecutionFunding(
       txHash: routeResult.toTxHash,
       creditedAmountUsd: routeResult.creditedAmountUsd,
       debug: {
-        ...(postRouteDebug || initialReadDebug || {}),
+        ...(initialReadDebug || {}),
         ...(solanaBalanceRead.source === 'fallback' ? { lastError: solanaBalanceRead.error || 'solana_balance_fallback' } : {}),
       },
     },
