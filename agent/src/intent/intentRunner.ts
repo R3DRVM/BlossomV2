@@ -2519,24 +2519,26 @@ async function executePerpEthereum(
 
   try {
     // Import viem for transaction
-    const { encodeFunctionData, parseAbi } = await import('viem');
+    const { createPublicClient, createWalletClient, encodeFunctionData, http, parseAbi } = await import('viem');
     const { privateKeyToAccount } = await import('viem/accounts');
-
-    // Use failover RPC clients for reliability
-    const {
-      createFailoverPublicClient,
-      createFailoverWalletClient,
-      executeWithFailover,
-    } = await import('../providers/rpcProvider');
+    const { sepolia } = await import('viem/chains');
 
     const account = privateKeyToAccount(RELAYER_PRIVATE_KEY as `0x${string}`);
 
     // Update fromAddress now that we have the account
     executionData.fromAddress = account.address;
 
-    // Create clients with failover support (includes retry and circuit breaker)
-    const publicClient = createFailoverPublicClient();
-    const walletClient = createFailoverWalletClient(account);
+    // Use a single deterministic RPC endpoint for perp execution on serverless.
+    // Failover wallet transports can trigger incompatible RPC methods on some providers.
+    const publicClient = createPublicClient({
+      chain: sepolia,
+      transport: http(ETH_TESTNET_RPC_URL),
+    });
+    const walletClient = createWalletClient({
+      account,
+      chain: sepolia,
+      transport: http(ETH_TESTNET_RPC_URL),
+    });
 
     // Map market string to enum value
     const marketMap: Record<string, number> = {
