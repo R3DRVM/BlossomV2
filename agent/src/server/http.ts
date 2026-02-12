@@ -124,6 +124,12 @@ type JsonRpcResponse<T = unknown> = {
 
 const app = express();
 
+// Vercel/production runs behind proxies and sets X-Forwarded-For.
+// express-rate-limit will throw if `trust proxy` is false in that scenario.
+if (process.env.VERCEL === '1' || process.env.NODE_ENV === 'production') {
+  app.set('trust proxy', 1);
+}
+
 // Rate limits for high-risk execution endpoints
 // Increased limits for testing and legitimate usage
 const executeRateLimit = rateLimit({
