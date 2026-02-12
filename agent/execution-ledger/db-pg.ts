@@ -90,13 +90,13 @@ interface CreateCrossChainCreditParams {
   stableSymbol: string;
   fromAddress?: string;
   toAddress?: string;
-  status?: 'created' | 'credited' | 'failed';
+  status?: 'created' | 'credit_submitted' | 'credited' | 'failed';
   errorCode?: string;
   metaJson?: string;
 }
 
 interface UpdateCrossChainCreditParams {
-  status?: 'created' | 'credited' | 'failed';
+  status?: 'created' | 'credit_submitted' | 'credited' | 'failed';
   errorCode?: string;
   metaJson?: string;
 }
@@ -423,6 +423,23 @@ export async function updateCrossChainCredit(id: string, updates: UpdateCrossCha
 
   values.push(id);
   await query(`UPDATE cross_chain_credits SET ${fields.join(', ')} WHERE id = $${paramIndex}`, values);
+}
+
+export async function getCrossChainCreditsByStatus(
+  statuses: Array<'created' | 'credit_submitted' | 'credited' | 'failed'>,
+  limit: number = 50
+) {
+  await ensureCrossChainCreditsTable();
+
+  const normalized = (statuses || []).filter(Boolean);
+  if (normalized.length === 0) return [];
+
+  const cappedLimit = Math.max(1, Math.min(limit, 200));
+  const statusParams = normalized.map((_, idx) => `$${idx + 1}`).join(', ');
+  const sql = `SELECT * FROM cross_chain_credits WHERE status IN (${statusParams}) ORDER BY created_at DESC LIMIT $${
+    normalized.length + 1
+  }`;
+  return queryRows(sql, [...normalized, cappedLimit]);
 }
 
 /**

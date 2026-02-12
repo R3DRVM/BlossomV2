@@ -92,7 +92,8 @@ type ActionResult = {
   routeFromChain?: string;
   routeToChain?: string;
   routeTxHash?: string;
-  receiptConfirmed?: boolean;
+  creditReceiptConfirmed?: boolean;
+  executionReceiptConfirmed?: boolean;
 };
 
 type SessionResult = {
@@ -1211,7 +1212,9 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
         const routeDidRoute = routeMeta?.didRoute === true;
         const routeFromChain = String(routeMeta?.fromChain || '');
         const routeToChain = String(routeMeta?.toChain || '');
-        const txHash = effectiveRes.json?.txHash || effectiveRes.json?.execution?.txHash || routeMeta?.txHash;
+        const executionTxHash = effectiveRes.json?.txHash || effectiveRes.json?.execution?.txHash;
+        const creditTxHash = routeMeta?.txHash;
+        const txHash = executionTxHash || creditTxHash;
 
         if (MODE === 'tier1_relayed_required' || MODE === 'tier1_crosschain_required') {
           if (isProofOnly) {
@@ -1266,9 +1269,19 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
           if (MODE === 'tier1_crosschain_required' && action.category === 'cross_chain_route') {
             const normalizedRouteType = routeType.toLowerCase();
             const didRoute = routeDidRoute;
-            const hasTx = !!txHash;
-            const receiptConfirmed = hasTx ? await confirmSepoliaReceipt(txHash) : false;
-            if (!didRoute || normalizedRouteType !== 'testnet_credit' || routeToChain.toLowerCase() !== 'sepolia' || !hasTx || !receiptConfirmed) {
+            const hasCreditTx = !!creditTxHash;
+            const hasExecutionTx = !!executionTxHash;
+            const creditReceiptConfirmed = hasCreditTx ? await confirmSepoliaReceipt(creditTxHash) : false;
+            const executionReceiptConfirmed = hasExecutionTx ? await confirmSepoliaReceipt(executionTxHash) : false;
+            if (
+              !didRoute ||
+              normalizedRouteType !== 'testnet_credit' ||
+              routeToChain.toLowerCase() !== 'sepolia' ||
+              !hasCreditTx ||
+              !hasExecutionTx ||
+              !creditReceiptConfirmed ||
+              !executionReceiptConfirmed
+            ) {
               return {
                 actionId: action.id,
                 category: action.category,
@@ -1276,15 +1289,17 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
                 endpoint,
                 status: 'fail' as const,
                 latencyMs: latency,
-                error: `cross_chain_route_assertion_failed: didRoute=${didRoute} routeType=${normalizedRouteType || 'missing'} toChain=${routeToChain || 'missing'} txHash=${hasTx ? 'present' : 'missing'} receipt=${receiptConfirmed ? 'confirmed' : 'missing'}`,
+                error: `cross_chain_route_assertion_failed: didRoute=${didRoute} routeType=${normalizedRouteType || 'missing'} toChain=${routeToChain || 'missing'} creditTx=${hasCreditTx ? 'present' : 'missing'} creditReceipt=${creditReceiptConfirmed ? 'confirmed' : 'missing'} execTx=${hasExecutionTx ? 'present' : 'missing'} execReceipt=${executionReceiptConfirmed ? 'confirmed' : 'missing'}`,
                 failureClass: 'cross_chain_route_failed' as FailureClass,
                 intentId: effectiveRes.json?.intentId,
                 routeType,
                 routeDidRoute,
                 routeFromChain,
                 routeToChain,
-                routeTxHash: txHash,
-                receiptConfirmed,
+                routeTxHash: creditTxHash,
+                txHash: executionTxHash,
+                creditReceiptConfirmed,
+                executionReceiptConfirmed,
               };
             }
 
@@ -1295,14 +1310,15 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
               endpoint,
               status: 'ok' as const,
               latencyMs: latency,
-              txHash,
+              txHash: executionTxHash,
               intentId: effectiveRes.json?.intentId,
               routeType,
               routeDidRoute,
               routeFromChain,
               routeToChain,
-              routeTxHash: txHash,
-              receiptConfirmed,
+              routeTxHash: creditTxHash,
+              creditReceiptConfirmed,
+              executionReceiptConfirmed,
             };
           }
         }
@@ -1328,7 +1344,29 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
       const error = normalizeStableSymbols(effectiveRes.json?.error?.message || effectiveRes.json?.error || effectiveRes.text || 'execution failed');
       const failureClass = classifyFailure(error, { category: action.category, chain: action.chain });
       const lowerError = lowerErrorText(error);
-      const errorCode = String(effectiveRes.json?.error?.code || effectiveRes.json?.code || '').toUpperCase();
+      const errorCode = String(
+        effectiveRes.json?.error?.code ||
+          effectiveRes.json?.errorCode ||
+          effectiveRes.json?.error?.detailCode ||
+          effectiveRes.json?.code ||
+          ''
+      ).toUpperCase();
+
+      // Cross-chain credit can legitimately take >1 block. In crosschain_required, wait for the credit receipt then retry.
+      if (
+        MODE === 'tier1_crosschain_required' &&
+        action.category === 'cross_chain_route' &&
+        errorCode === 'CROSS_CHAIN_ROUTE_PENDING' &&
+        attempt < 6
+      ) {
+        const pendingCreditTx = String(effectiveRes.json?.executionMeta?.route?.txHash || '');
+        if (pendingCreditTx) {
+          await confirmSepoliaReceipt(pendingCreditTx);
+        }
+        attempt += 1;
+        await sleep(retryBackoffMs(attempt, 1200, 9000));
+        continue;
+      }
 
       if ((MODE === 'tier1_relayed_required' || MODE === 'tier1_crosschain_required') && errorCode === 'UNSUPPORTED_VENUE') {
         const skipAsFailForCrossChainRequired = MODE === 'tier1_crosschain_required' && action.category === 'cross_chain_route';
@@ -2327,7 +2365,9 @@ function collectCrossChainProofs(results: SessionResult[]) {
         String(action.routeType || '').toLowerCase() === 'testnet_credit' &&
         String(action.routeToChain || '').toLowerCase() === 'sepolia' &&
         !!action.routeTxHash &&
-        action.receiptConfirmed === true
+        !!action.txHash &&
+        action.creditReceiptConfirmed === true &&
+        action.executionReceiptConfirmed === true
       )
       .map(action => ({
         sessionId: session.sessionId,
@@ -2335,7 +2375,8 @@ function collectCrossChainProofs(results: SessionResult[]) {
         originWallet: 'solana',
         routeType: action.routeType,
         toChain: action.routeToChain,
-        txHash: action.routeTxHash,
+        creditTxHash: action.routeTxHash,
+        executionTxHash: action.txHash,
       }))
   );
 }
@@ -2537,7 +2578,9 @@ async function main() {
   if (MODE === 'tier1_crosschain_required') {
     log(`Cross-chain confirmed proofs: ${crossChainProofs.length}`);
     crossChainProofs.slice(0, 5).forEach((proof, idx) => {
-      log(`  [proof ${idx + 1}] session=${proof.sessionId} wallet=${proof.originWallet} route=${proof.routeType} to=${proof.toChain} tx=${proof.txHash}`);
+      log(
+        `  [proof ${idx + 1}] session=${proof.sessionId} wallet=${proof.originWallet} route=${proof.routeType} to=${proof.toChain} creditTx=${proof.creditTxHash} execTx=${proof.executionTxHash}`
+      );
     });
   }
 

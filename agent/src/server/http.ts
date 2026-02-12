@@ -71,6 +71,7 @@ import { callLlm } from '../services/llmClient';
 import * as perpsSim from '../plugins/perps-sim';
 import * as defiSim from '../plugins/defi-sim';
 import { verifyRequestAuth, getAuthMode } from '../auth';
+import { startCrossChainCreditFinalizer } from '../services/crossChainCreditRouter';
 
 // Allowed CORS origins for MVP
 const ALLOWED_ORIGINS = [
@@ -123,6 +124,9 @@ type JsonRpcResponse<T = unknown> = {
 };
 
 const app = express();
+
+// Best-effort finalizer for cross-chain credit receipts. Safe no-op on cold instances.
+startCrossChainCreditFinalizer();
 
 // Vercel/production runs behind proxies and sets X-Forwarded-For.
 // express-rate-limit will throw if `trust proxy` is false in that scenario.
@@ -3917,6 +3921,29 @@ app.post('/api/session/prepare', async (req, res) => {
       ETH_TESTNET_RPC_URL,
       requireRelayerConfig,
     } = await import('../config');
+
+    // Preflight: fail with structured 400 when session signing prerequisites are missing.
+    // This avoids opaque 500s (FUNCTION_INVOCATION_FAILED) and makes stress runner bucketing deterministic.
+    const missingPrereqs: string[] = [];
+    if (!RELAYER_PRIVATE_KEY) missingPrereqs.push('RELAYER_PRIVATE_KEY');
+    if (!ETH_TESTNET_RPC_URL) missingPrereqs.push('ETH_TESTNET_RPC_URL');
+    if (!EXECUTION_ROUTER_ADDRESS) missingPrereqs.push('EXECUTION_ROUTER_ADDRESS');
+    if (missingPrereqs.length > 0) {
+      logSessionTrace(correlationId, 'prepare:error', {
+        error: 'Missing session prepare prerequisites',
+        code: 'SESSION_PREPARE_MISSING_PREREQ',
+        missingPrereqs,
+      });
+      return res.status(400).json({
+        ok: false,
+        correlationId,
+        error: {
+          code: 'SESSION_PREPARE_MISSING_PREREQ',
+          message: `Missing prerequisites: ${missingPrereqs.join(', ')}`,
+          missingPrereqs,
+        },
+      });
+    }
 
     requireRelayerConfig();
 

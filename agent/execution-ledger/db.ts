@@ -228,7 +228,7 @@ export interface Wallet {
   created_at: number;
 }
 
-export type CrossChainCreditStatus = 'created' | 'credited' | 'failed';
+export type CrossChainCreditStatus = 'created' | 'credit_submitted' | 'credited' | 'failed';
 
 export interface CrossChainCredit {
   id: string;
@@ -1997,6 +1997,27 @@ export function updateCrossChainCredit(
   db.prepare(`UPDATE cross_chain_credits SET ${fields.join(', ')} WHERE id = ?`).run(...values);
 }
 
+export function getCrossChainCreditsByStatus(
+  statuses: CrossChainCreditStatus[],
+  limit: number = 50
+): CrossChainCredit[] {
+  const db = getDatabase();
+  const normalizedStatuses = (statuses || []).filter(Boolean);
+  if (normalizedStatuses.length === 0) return [];
+
+  const placeholders = normalizedStatuses.map(() => '?').join(', ');
+  return db
+    .prepare(
+      `
+    SELECT * FROM cross_chain_credits
+    WHERE status IN (${placeholders})
+    ORDER BY created_at DESC
+    LIMIT ?
+  `
+    )
+    .all(...normalizedStatuses, Math.max(1, Math.min(limit, 200))) as CrossChainCredit[];
+}
+
 // ============================================
 // Aliases for API compatibility
 // ============================================
@@ -2171,6 +2192,18 @@ export async function updateCrossChainCreditAsync(
 
   updateCrossChainCredit(id, updates);
   return Promise.resolve();
+}
+
+export async function getCrossChainCreditsByStatusAsync(
+  statuses: CrossChainCreditStatus[],
+  limit: number = 50
+): Promise<CrossChainCredit[]> {
+  if (dbType === 'postgres') {
+    const pgDb = await import('./db-pg.js');
+    return pgDb.getCrossChainCreditsByStatus(statuses as any, limit) as Promise<CrossChainCredit[]>;
+  }
+
+  return Promise.resolve(getCrossChainCreditsByStatus(statuses, limit));
 }
 
 /**
