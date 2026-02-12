@@ -532,7 +532,8 @@ function buildLeverageChangeAction(sessionIndex: number): Action {
 }
 
 function buildSolanaOriginToSepoliaPerpAction(sessionIndex: number): Action {
-  const collateral = pick([100, 120, 150]);
+  // Keep margin above DemoPerpEngine minimums so cross-chain proof runs are deterministic.
+  const collateral = pick([300, 350, 400]);
   return {
     id: buildActionId('cross_chain_route', sessionIndex),
     category: 'cross_chain_route',
@@ -709,6 +710,11 @@ function admitsMissingPortfolioVisibility(assistantMessage: string): boolean {
     text.includes('no balances') ||
     text.includes('i do not have access')
   );
+}
+
+function isVercelInvocationFailure(text: string | undefined): boolean {
+  const lower = String(text || '').toLowerCase();
+  return lower.includes('function_invocation_failed');
 }
 
 async function fetchJson(endpoint: string, options: any = {}, timeoutMs = 45000) {
@@ -1175,20 +1181,37 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
         ? await withHyperliquidSubmissionGate(agent, sendRequest)
         : await sendRequest();
 
+      // Vercel can return transient invocation failures under load.
+      // Retry once for deterministic suites.
+      let effectiveRes = res;
+      if (
+        !effectiveRes.ok &&
+        endpoint === '/api/ledger/intents/execute' &&
+        isVercelInvocationFailure(effectiveRes.text) &&
+        (MODE === 'tier1' || MODE === 'tier1_relayed_required' || MODE === 'tier1_crosschain_required') &&
+        functionFailureRetries < 1
+      ) {
+        functionFailureRetries += 1;
+        await sleep(650 + Math.floor(Math.random() * 500));
+        effectiveRes = action.chain === 'hyperliquid'
+          ? await withHyperliquidSubmissionGate(agent, sendRequest)
+          : await sendRequest();
+      }
+
       const latency = Date.now() - started;
-      if (res.ok && res.json?.ok) {
-        const executedKind = String(res.json?.metadata?.executedKind || '').toLowerCase();
+      if (effectiveRes.ok && effectiveRes.json?.ok) {
+        const executedKind = String(effectiveRes.json?.metadata?.executedKind || '').toLowerCase();
         const isProofOnly = executedKind === 'proof_only';
-        const isQueuedResponse = res.json?.queued === true || String(res.json?.status || '').toLowerCase() === 'queued';
+        const isQueuedResponse = effectiveRes.json?.queued === true || String(effectiveRes.json?.status || '').toLowerCase() === 'queued';
         const isWalletFallback =
-          String(res.json?.mode || '').toLowerCase() === 'wallet_fallback' ||
-          res.json?.needs_wallet_signature === true;
-        const routeMeta = res.json?.executionMeta?.route;
+          String(effectiveRes.json?.mode || '').toLowerCase() === 'wallet_fallback' ||
+          effectiveRes.json?.needs_wallet_signature === true;
+        const routeMeta = effectiveRes.json?.executionMeta?.route;
         const routeType = String(routeMeta?.routeType || '');
         const routeDidRoute = routeMeta?.didRoute === true;
         const routeFromChain = String(routeMeta?.fromChain || '');
         const routeToChain = String(routeMeta?.toChain || '');
-        const txHash = res.json?.txHash || res.json?.execution?.txHash || routeMeta?.txHash;
+        const txHash = effectiveRes.json?.txHash || effectiveRes.json?.execution?.txHash || routeMeta?.txHash;
 
         if (MODE === 'tier1_relayed_required' || MODE === 'tier1_crosschain_required') {
           if (isProofOnly) {
@@ -1201,7 +1224,7 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
               latencyMs: latency,
               error: 'relayed_required_violation: proof-only execution returned',
               failureClass: 'blossom_logic' as FailureClass,
-              intentId: res.json?.intentId,
+              intentId: effectiveRes.json?.intentId,
             };
           }
           if (isQueuedResponse) {
@@ -1214,7 +1237,7 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
               latencyMs: latency,
               error: 'relayed_required_violation: execution remained queued',
               failureClass: 'rpc_rate_limit' as FailureClass,
-              intentId: res.json?.intentId,
+              intentId: effectiveRes.json?.intentId,
               routeType,
               routeDidRoute,
               routeFromChain,
@@ -1232,7 +1255,7 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
               latencyMs: latency,
               error: 'relayed_required_violation: wallet fallback requested',
               failureClass: 'blossom_logic' as FailureClass,
-              intentId: res.json?.intentId,
+              intentId: effectiveRes.json?.intentId,
               routeType,
               routeDidRoute,
               routeFromChain,
@@ -1255,7 +1278,7 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
                 latencyMs: latency,
                 error: `cross_chain_route_assertion_failed: didRoute=${didRoute} routeType=${normalizedRouteType || 'missing'} toChain=${routeToChain || 'missing'} txHash=${hasTx ? 'present' : 'missing'} receipt=${receiptConfirmed ? 'confirmed' : 'missing'}`,
                 failureClass: 'cross_chain_route_failed' as FailureClass,
-                intentId: res.json?.intentId,
+                intentId: effectiveRes.json?.intentId,
                 routeType,
                 routeDidRoute,
                 routeFromChain,
@@ -1273,7 +1296,7 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
               status: 'ok' as const,
               latencyMs: latency,
               txHash,
-              intentId: res.json?.intentId,
+              intentId: effectiveRes.json?.intentId,
               routeType,
               routeDidRoute,
               routeFromChain,
@@ -1292,7 +1315,7 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
           status: 'ok' as const,
           latencyMs: latency,
           txHash,
-          intentId: res.json?.intentId,
+          intentId: effectiveRes.json?.intentId,
           routeType,
           routeDidRoute,
           routeFromChain,
@@ -1301,11 +1324,11 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
         };
       }
 
-      printFailureDiagnostics(endpoint, res.status, res.json, res.text);
-      const error = normalizeStableSymbols(res.json?.error?.message || res.json?.error || res.text || 'execution failed');
+      printFailureDiagnostics(endpoint, effectiveRes.status, effectiveRes.json, effectiveRes.text);
+      const error = normalizeStableSymbols(effectiveRes.json?.error?.message || effectiveRes.json?.error || effectiveRes.text || 'execution failed');
       const failureClass = classifyFailure(error, { category: action.category, chain: action.chain });
       const lowerError = lowerErrorText(error);
-      const errorCode = String(res.json?.error?.code || res.json?.code || '').toUpperCase();
+      const errorCode = String(effectiveRes.json?.error?.code || effectiveRes.json?.code || '').toUpperCase();
 
       if ((MODE === 'tier1_relayed_required' || MODE === 'tier1_crosschain_required') && errorCode === 'UNSUPPORTED_VENUE') {
         const skipAsFailForCrossChainRequired = MODE === 'tier1_crosschain_required' && action.category === 'cross_chain_route';

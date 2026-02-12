@@ -118,7 +118,9 @@ function clampTopupAmountWei(balanceWei: bigint): bigint {
   const minWei = parseEther(String(MIN_RELAYER_ETH_SEPOLIA));
   const targetWei = parseEther(String(TARGET_RELAYER_ETH_SEPOLIA));
 
-  if (balanceWei >= minWei || targetWei <= balanceWei) {
+  // Keep the relayer topped up to target when possible.
+  // minWei is for "okToExecute" gating, not for deciding whether to top up.
+  if (targetWei <= balanceWei) {
     return 0n;
   }
 

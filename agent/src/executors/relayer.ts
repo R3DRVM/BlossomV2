@@ -22,6 +22,17 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function getMaxRelayerGasLimit(): bigint {
+  const raw = String(process.env.RELAYER_MAX_GAS_LIMIT || '').trim();
+  const parsed = raw ? Number(raw) : NaN;
+  // Default below block gas limit so the node doesn't require an outsized balance pre-check.
+  const fallback = 6_000_000;
+  if (Number.isFinite(parsed) && parsed > 50_000) {
+    return BigInt(Math.floor(parsed));
+  }
+  return BigInt(fallback);
+}
+
 function withRelayerSendLock<T>(fn: () => Promise<T>): Promise<T> {
   const previous = relayerSendLock;
   let release: () => void = () => {};
@@ -135,6 +146,7 @@ export async function sendRelayedTx({
       transport: http(ETH_TESTNET_RPC_URL),
     });
 
+    const maxGasLimit = getMaxRelayerGasLimit();
     const maxAttempts = 3;
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       try {
@@ -146,11 +158,8 @@ export async function sendRelayedTx({
             value: BigInt(value),
             account,
           });
-          const maxGasLimit = BigInt(12_000_000);
           gasLimit = (estimatedGas * 120n) / 100n;
-          if (gasLimit > maxGasLimit) {
-            gasLimit = maxGasLimit;
-          }
+          if (gasLimit > maxGasLimit) gasLimit = maxGasLimit;
         } catch (estimateError: any) {
           throw new Error(`Gas estimation failed: ${estimateError.message}`);
         }
