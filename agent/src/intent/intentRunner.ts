@@ -2524,6 +2524,8 @@ async function executePerpEthereum(
     const { sepolia } = await import('viem/chains');
     const { withRelayerNonceLock } = await import('../executors/relayer');
 
+    const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
     const account = privateKeyToAccount(RELAYER_PRIVATE_KEY as `0x${string}`);
 
     // Update fromAddress now that we have the account
@@ -2679,23 +2681,50 @@ async function executePerpEthereum(
       });
 
       if (allowance < marginAmount) {
+        const MAX_UINT256 = (1n << 256n) - 1n;
         const approveTxHash = await walletClient.writeContract({
           address: DEMO_REDACTED_ADDRESS as `0x${string}`,
           abi: erc20Abi,
           functionName: 'approve',
-          args: [DEMO_PERP_ADAPTER_ADDRESS as `0x${string}`, marginAmount * BigInt(10)],
+          // Approve max once so we don't race allowances under serverless latency.
+          args: [DEMO_PERP_ADAPTER_ADDRESS as `0x${string}`, MAX_UINT256],
           nonce: nextNonce,
         });
         nextNonce += 1;
 
-        try {
-          await publicClient.waitForTransactionReceipt({
-            hash: approveTxHash,
-            timeout: 5000,
-          });
-        } catch (approveWaitError: any) {
-          console.log(
-            `[executePerpEthereum] Approval receipt wait timed out for ${approveTxHash}; continuing with best-effort execution`
+        // Do not proceed until the allowance is actually visible on-chain.
+        // Otherwise DemoPerpAdapter.execute will revert with ERC20InsufficientAllowance (0xfb8f41b2).
+        const deadlineMs = Date.now() + 25_000;
+        let lastAllowance = 0n;
+        while (Date.now() < deadlineMs) {
+          try {
+            lastAllowance = await publicClient.readContract({
+              address: DEMO_REDACTED_ADDRESS as `0x${string}`,
+              abi: erc20Abi,
+              functionName: 'allowance',
+              args: [account.address, DEMO_PERP_ADAPTER_ADDRESS as `0x${string}`],
+            });
+            if (lastAllowance >= marginAmount) break;
+          } catch {
+            // Ignore and retry until deadline.
+          }
+
+          try {
+            await publicClient.waitForTransactionReceipt({
+              hash: approveTxHash,
+              timeout: 2500,
+              confirmations: 1,
+            });
+          } catch {
+            // Ignore and retry allowance read.
+          }
+
+          await sleep(650);
+        }
+
+        if (lastAllowance < marginAmount) {
+          throw new Error(
+            `Approval not confirmed: allowance=${lastAllowance.toString()} needed=${marginAmount.toString()} tx=${approveTxHash}`
           );
         }
       }
