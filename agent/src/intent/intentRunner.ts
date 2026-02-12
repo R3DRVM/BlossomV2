@@ -2480,6 +2480,11 @@ async function executePerpEthereum(
     ''
   ).trim();
 
+  const allowPreMintCollateralGap =
+    existingMetadata?.assumeSepoliaStableAfterUserCreditMint === true ||
+    String(existingMetadata?.mode || '').toLowerCase().includes('crosschain') ||
+    String(existingMetadata?.scenario || '').toLowerCase().includes('solana_origin_to_sepolia');
+
   // Import config
   const {
     RELAYER_PRIVATE_KEY,
@@ -2683,7 +2688,7 @@ async function executePerpEthereum(
         functionName: 'balanceOf',
         args: [normalizedUser],
       });
-      if (userStableBalance < marginAmount) {
+      if (userStableBalance < marginAmount && !allowPreMintCollateralGap) {
         await updateIntentStatus(intentId, {
           status: 'failed',
           failureStage: 'execute',

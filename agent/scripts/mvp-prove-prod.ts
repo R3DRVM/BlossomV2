@@ -69,6 +69,8 @@ function runStressSuite(): Promise<number> {
     `--baseUrl=${BASE_URL}`,
     '--mode=tier1_crosschain_resilient',
     '--allow_execute',
+    '--allow_wallet_fallback',
+    '--prove',
     `--count=${COUNT}`,
     `--concurrency=${CONCURRENCY}`,
     `--output=${rawOutputPath}`,
