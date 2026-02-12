@@ -176,6 +176,7 @@ const walletLocks = new Map<string, Promise<any>>();
 const hlLastSubmitAtByWallet = new Map<string, number>();
 const hlGlobalSubmitLockKey = '__hyperliquid_global_submit_lock__';
 const rotatedWalletPool: Array<{ walletAddress?: string; privateKey?: string }> = [];
+const sessionCacheByWallet = new Map<string, { sessionId: string; updatedAt: number }>();
 let globalExecuteDisabledReason: string | null = null;
 
 agents.forEach((agent, index) => {
@@ -394,6 +395,64 @@ async function getWalletClient(agent: AgentState) {
     return { publicClient, walletClient, account };
   } catch {
     return null;
+  }
+}
+
+function isWalletGasFundingError(text: string | undefined): boolean {
+  const lower = lowerErrorText(text);
+  return (
+    lower.includes('insufficient funds for gas') ||
+    lower.includes('gas required exceeds allowance') ||
+    lower.includes('insufficient funds') ||
+    lower.includes('max fee per gas') && lower.includes('exceeds')
+  );
+}
+
+async function maybeFundEvmWalletFromRelayer(
+  toAddress: string,
+  options?: { minEth?: number; targetEth?: number }
+): Promise<{ ok: boolean; funded: boolean; txHash?: string; error?: string }> {
+  const relayerPkRaw = String(process.env.RELAYER_PRIVATE_KEY || '').trim();
+  if (!ETH_RPC_URL) return { ok: false, funded: false, error: 'missing_eth_rpc_url' };
+  if (!relayerPkRaw) return { ok: false, funded: false, error: 'missing_relayer_private_key' };
+  if (!/^0x[a-fA-F0-9]{40}$/.test(String(toAddress || '').trim())) {
+    return { ok: false, funded: false, error: 'invalid_to_address' };
+  }
+
+  const minEth = Number.isFinite(options?.minEth) ? Number(options?.minEth) : 0.006;
+  const targetEth = Number.isFinite(options?.targetEth) ? Number(options?.targetEth) : 0.02;
+  try {
+    const { createWalletClient, createPublicClient, http, parseEther, formatEther } = await import('viem');
+    const { sepolia } = await import('viem/chains');
+    const { privateKeyToAccount } = await import('viem/accounts');
+
+    const relayerPk = relayerPkRaw.startsWith('0x') ? relayerPkRaw : `0x${relayerPkRaw}`;
+    const account = privateKeyToAccount(relayerPk as `0x${string}`);
+    const publicClient = createPublicClient({ chain: sepolia, transport: http(ETH_RPC_URL) });
+    const walletClient = createWalletClient({ account, chain: sepolia, transport: http(ETH_RPC_URL) });
+
+    const currentWei = await publicClient.getBalance({ address: toAddress as `0x${string}` });
+    const currentEth = Number(formatEther(currentWei));
+    if (Number.isFinite(currentEth) && currentEth >= minEth) {
+      return { ok: true, funded: false };
+    }
+
+    const deltaEth = Math.max(targetEth - (Number.isFinite(currentEth) ? currentEth : 0), 0.0);
+    const valueWei = parseEther(deltaEth.toFixed(6));
+    if (valueWei <= 0n) return { ok: true, funded: false };
+
+    const txHash = await walletClient.sendTransaction({
+      to: toAddress as `0x${string}`,
+      value: valueWei,
+    });
+    try {
+      await publicClient.waitForTransactionReceipt({ hash: txHash, timeout: 45_000 });
+    } catch {
+      // Best-effort; caller can retry.
+    }
+    return { ok: true, funded: true, txHash };
+  } catch (error: any) {
+    return { ok: false, funded: false, error: error?.message || String(error) };
   }
 }
 
@@ -1598,14 +1657,38 @@ async function runSessionPrepare(agent: AgentState): Promise<ActionResult> {
           const { walletClient, publicClient } = client;
           const value = valueRaw ? BigInt(valueRaw) : BigInt(0);
 
-          const txHash = await walletClient.sendTransaction({
-            to,
-            data,
-            value,
-          });
+          let txHash: string | null = null;
+          let fundedRetry = false;
+          const sendSessionTx = async () =>
+            walletClient.sendTransaction({
+              to,
+              data,
+              value,
+            });
+
+          while (true) {
+            try {
+              txHash = await sendSessionTx();
+              break;
+            } catch (err: any) {
+              const msg = normalizeStableSymbols(err?.shortMessage || err?.message || String(err));
+              if (!fundedRetry && isWalletGasFundingError(msg)) {
+                fundedRetry = true;
+                const fund = await maybeFundEvmWalletFromRelayer(String(agent.walletAddress), {
+                  minEth: 0.006,
+                  targetEth: 0.02,
+                });
+                if (fund.ok) {
+                  await sleep(1200);
+                  continue;
+                }
+              }
+              throw err;
+            }
+          }
 
           try {
-            await publicClient.waitForTransactionReceipt({ hash: txHash, timeout: 15000 });
+            await publicClient.waitForTransactionReceipt({ hash: txHash as `0x${string}`, timeout: 15000 });
           } catch {
             // Pending receipts are validated in next step.
           }
@@ -1971,8 +2054,33 @@ async function runExecutionSession(sessionIndex: number, mode: Mode): Promise<Se
   const results: ActionResult[] = [];
 
   if (agent.type === 'human') {
-    const sessionPrepare = await runSessionPrepare(agent);
-    results.push(sessionPrepare);
+    const cacheKey = String(agent.walletAddress || '').toLowerCase();
+    const cached = cacheKey ? sessionCacheByWallet.get(cacheKey) : undefined;
+    if (mode === 'tier1_crosschain_required' && cached && !agent.sessionId) {
+      agent.sessionId = cached.sessionId;
+    }
+
+    if (mode === 'tier1_crosschain_required' && cached) {
+      const active = await waitForSessionActive(agent, { maxPolls: 2, pollMs: 800 });
+      if (active) {
+        results.push({
+          actionId: buildActionId('session', sessionIndex),
+          category: 'session',
+          chain: 'ethereum',
+          endpoint: '/api/session/prepare',
+          status: 'ok',
+          latencyMs: 0,
+        });
+      } else {
+        const sessionPrepare = await runSessionPrepare(agent);
+        results.push(sessionPrepare);
+      }
+    } else {
+      const sessionPrepare = await runSessionPrepare(agent);
+      results.push(sessionPrepare);
+    }
+
+    const sessionPrepare = results[results.length - 1];
     if (sessionPrepare.status !== 'ok') {
       if (mode === 'tier1_crosschain_required' && sessionPrepare.status === 'skipped') {
         results[results.length - 1] = {
@@ -1993,6 +2101,11 @@ async function runExecutionSession(sessionIndex: number, mode: Mode): Promise<Se
         startedAt,
         finishedAt,
       };
+    }
+
+    if (cacheKey && agent.sessionId) {
+      sessionCacheByWallet.set(cacheKey, { sessionId: agent.sessionId, updatedAt: Date.now() });
+      agentTemplate.sessionId = agent.sessionId;
     }
 
     const sessionActive = await waitForSessionActive(agent, {
