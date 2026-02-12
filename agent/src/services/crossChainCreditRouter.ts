@@ -398,7 +398,8 @@ export async function ensureExecutionFunding(
   }
 
   const deficitUsd = Math.max(requiredUsd - targetBalanceUsd, 0);
-  const routeAmountUsd = clampUsd(Math.min(deficitUsd, solanaBalanceUsd));
+  const desiredRouteUsd = params.forceRoute ? requiredUsd : deficitUsd;
+  const routeAmountUsd = clampUsd(Math.min(desiredRouteUsd, solanaBalanceUsd));
   const routeResult = await routeStableCreditForExecution({
     userId: params.userId,
     sessionId: params.sessionId,

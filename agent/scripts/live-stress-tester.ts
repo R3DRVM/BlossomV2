@@ -543,6 +543,7 @@ function buildSolanaOriginToSepoliaPerpAction(sessionIndex: number): Action {
       fromChain: 'solana_devnet',
       toChain: 'sepolia',
       amountUsd: collateral,
+      amountUsdRequired: collateral,
       expectedRouteType: 'testnet_credit',
       userSolanaAddress: STRESS_SOLANA_ADDRESS || undefined,
       forceCrossChainRoute: true,

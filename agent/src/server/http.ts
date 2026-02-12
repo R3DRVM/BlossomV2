@@ -9803,7 +9803,8 @@ app.post('/api/ledger/intents/execute', checkLedgerSecret, async (req, res) => {
       const parsedAmount = Number(amountMatch[1]);
       return Number.isFinite(parsedAmount) && parsedAmount > 0 ? parsedAmount : undefined;
     })();
-    const amountUsdHint = Number(callerMetadata.amountUsd || inferredAmountFromIntent || 0);
+    // Prefer explicit caller-provided amountUsd for deterministic test flows.
+    const amountUsdHint = Number(callerMetadata.amountUsd || callerMetadata.amountUsdRequired || inferredAmountFromIntent || 0);
 
     if (!planOnly) {
       void maybeTopUpRelayer('sepolia', {
