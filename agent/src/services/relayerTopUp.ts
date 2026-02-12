@@ -7,6 +7,17 @@ import {
   TARGET_RELAYER_ETH_SEPOLIA,
   MAX_TOPUPS_PER_HOUR,
   MAX_TOPUP_ETH_PER_DAY,
+  GAS_CREDITS_ENABLED,
+  GAS_CREDITS_FEE_BUSDC_PER_EXECUTE,
+  GAS_SWAP_TOPUP_ENABLED,
+  GAS_SWAP_DEX_ROUTER,
+  GAS_SWAP_MAX_ETH_PER_DAY,
+  GAS_SWAP_MIN_QUOTE_ETH,
+  GAS_DRIP_ENABLED,
+  GAS_DRIP_AMOUNT_ETH,
+  GAS_DRIP_MAX_GLOBAL_PER_DAY_ETH,
+  GAS_DRIP_MAX_PER_ADDRESS_PER_DAY,
+  GAS_DRIP_MAX_PER_HOUR,
 } from '../config';
 import { createPublicClient, createWalletClient, formatEther, http, parseEther } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
@@ -25,6 +36,22 @@ type TopupResult = {
   txHash?: string;
   reason?: string;
   error?: string;
+};
+
+export type GasDripResult = {
+  ok: boolean;
+  attempted: boolean;
+  txHash?: string;
+  amountEth?: number;
+  reason?: string;
+  error?: string;
+};
+
+type GasDripEvent = {
+  at: number;
+  address: string;
+  ethAmount: number;
+  txHash: string;
 };
 
 type RelayerStatus = {
@@ -53,15 +80,48 @@ type RelayerStatus = {
       topupEthToday: number;
     };
   };
+  gasCredits?: {
+    feePerExecuteBusdc: number;
+    accruedTodayBusdc: number;
+    lastAccrualAt?: number;
+    lastFundingRecoveryMode?: 'relayed' | 'user_pays_gas' | 'sponsor_gas_drip';
+    lastTopUpAt?: number;
+    lastDripAt?: number;
+    swapCaps: {
+      maxEthPerDay: number;
+      minQuoteEth: number;
+    };
+    lastSwap?: {
+      at?: number;
+      mode?: 'topup' | 'swap';
+    };
+    lastSwapError?: string;
+  };
+  swap?: {
+    enabled: boolean;
+    router?: string;
+    quoteOk: boolean;
+    lastQuoteEth?: string;
+  };
 };
 
 const HOUR_MS = 60 * 60 * 1000;
 let topupEvents: TopupEvent[] = [];
 let dailyKey = getUtcDayKey();
 let topupEthToday = 0;
+let gasDripEthToday = 0;
+let gasCreditsAccruedToday = 0;
 let lastTopUpAt: number | undefined;
+let lastDripAt: number | undefined;
+let lastGasCreditAt: number | undefined;
+let lastFundingRecoveryMode: 'relayed' | 'user_pays_gas' | 'sponsor_gas_drip' | undefined;
+let lastSwapQuoteEth: string | undefined;
+let lastSwapError: string | undefined;
 let lastError: string | undefined;
 let topupInFlight: Promise<TopupResult> | null = null;
+let gasDripInFlightByAddress = new Map<string, Promise<GasDripResult>>();
+let gasDripEvents: GasDripEvent[] = [];
+let gasDripsByAddressToday = new Map<string, number>();
 let serviceStarted = false;
 
 function getUtcDayKey() {
@@ -73,11 +133,15 @@ function resetDailyIfNeeded() {
   if (nowKey !== dailyKey) {
     dailyKey = nowKey;
     topupEthToday = 0;
+    gasDripEthToday = 0;
+    gasCreditsAccruedToday = 0;
+    gasDripsByAddressToday = new Map();
   }
 }
 
 function trimOldEvents(now = Date.now()) {
   topupEvents = topupEvents.filter((evt) => now - evt.at <= HOUR_MS);
+  gasDripEvents = gasDripEvents.filter((evt) => now - evt.at <= HOUR_MS);
 }
 
 function getStats(now = Date.now()) {
@@ -86,7 +150,16 @@ function getStats(now = Date.now()) {
   return {
     topupsLastHour: topupEvents.length,
     topupEthToday,
+    gasDripsLastHour: gasDripEvents.length,
+    gasDripEthToday,
   };
+}
+
+function getFundingAccount() {
+  if (!FUNDING_WALLET_PRIVATE_KEY_SEPOLIA) {
+    throw new Error('FUNDING_WALLET_PRIVATE_KEY_SEPOLIA is required');
+  }
+  return privateKeyToAccount(parsePrivateKey(FUNDING_WALLET_PRIVATE_KEY_SEPOLIA));
 }
 
 function getPublicClient() {
@@ -132,6 +205,239 @@ function clampTopupAmountWei(balanceWei: bigint): bigint {
   }
 
   return requested > remainingWeiCap ? remainingWeiCap : requested;
+}
+
+function getAddressDripCountToday(address: string): number {
+  resetDailyIfNeeded();
+  return gasDripsByAddressToday.get(address.toLowerCase()) || 0;
+}
+
+export async function getUserEthBalance(chain: RelayerChain, address: string): Promise<{ balanceWei: bigint; balanceEth: number }> {
+  if (chain !== 'sepolia') {
+    throw new Error(`Unsupported chain for user balance: ${chain}`);
+  }
+  const publicClient = getPublicClient();
+  const normalizedAddress = address.toLowerCase() as `0x${string}`;
+  const balanceWei = await publicClient.getBalance({ address: normalizedAddress });
+  return {
+    balanceWei,
+    balanceEth: Number(formatEther(balanceWei)),
+  };
+}
+
+export async function canSponsorGasDrip(
+  chain: RelayerChain,
+  userAddress: string,
+  amountEth: number = GAS_DRIP_AMOUNT_ETH
+): Promise<{
+  ok: boolean;
+  reason?: string;
+  amountEth: number;
+  fundingBalanceEth?: number;
+  remainingGlobalEthToday?: number;
+  addressDripsToday?: number;
+}> {
+  if (chain !== 'sepolia') {
+    return { ok: false, reason: `unsupported_chain:${chain}`, amountEth };
+  }
+  if (!GAS_DRIP_ENABLED) {
+    return { ok: false, reason: 'gas_drip_disabled', amountEth };
+  }
+  if (!FUNDING_WALLET_PRIVATE_KEY_SEPOLIA) {
+    return { ok: false, reason: 'funding_wallet_missing', amountEth };
+  }
+
+  const normalizedAddress = String(userAddress || '').toLowerCase();
+  if (!/^0x[a-f0-9]{40}$/.test(normalizedAddress)) {
+    return { ok: false, reason: 'invalid_address', amountEth };
+  }
+
+  const stats = getStats();
+  if (stats.gasDripsLastHour >= GAS_DRIP_MAX_PER_HOUR) {
+    return { ok: false, reason: 'gas_drip_hourly_cap_reached', amountEth };
+  }
+
+  const addressDripsToday = getAddressDripCountToday(normalizedAddress);
+  if (addressDripsToday >= GAS_DRIP_MAX_PER_ADDRESS_PER_DAY) {
+    return { ok: false, reason: 'gas_drip_address_daily_cap_reached', amountEth, addressDripsToday };
+  }
+
+  const remainingGlobalEthToday = Math.max(0, GAS_DRIP_MAX_GLOBAL_PER_DAY_ETH - gasDripEthToday);
+  if (remainingGlobalEthToday < amountEth) {
+    return { ok: false, reason: 'gas_drip_global_daily_cap_reached', amountEth, remainingGlobalEthToday };
+  }
+
+  try {
+    const publicClient = getPublicClient();
+    const fundingAccount = getFundingAccount();
+    const fundingBalanceWei = await publicClient.getBalance({ address: fundingAccount.address });
+    const fundingBalanceEth = Number(formatEther(fundingBalanceWei));
+    const valueWei = parseEther(amountEth.toFixed(6));
+    const gasBufferWei = parseEther('0.0003');
+    if (fundingBalanceWei < valueWei + gasBufferWei) {
+      return { ok: false, reason: 'funding_wallet_insufficient', amountEth, fundingBalanceEth };
+    }
+    return {
+      ok: true,
+      amountEth,
+      fundingBalanceEth,
+      remainingGlobalEthToday,
+      addressDripsToday,
+    };
+  } catch (error: any) {
+    return { ok: false, reason: `gas_drip_precheck_failed:${error?.message || 'unknown'}`, amountEth };
+  }
+}
+
+async function runGasDripAttempt(
+  chain: RelayerChain,
+  userAddress: string,
+  amountEth: number,
+  reason: string
+): Promise<GasDripResult> {
+  const eligibility = await canSponsorGasDrip(chain, userAddress, amountEth);
+  if (!eligibility.ok) {
+    return {
+      ok: false,
+      attempted: false,
+      reason: eligibility.reason,
+      error: eligibility.reason,
+    };
+  }
+
+  try {
+    const publicClient = getPublicClient();
+    const fundingAccount = getFundingAccount();
+    const walletClient = createWalletClient({
+      account: fundingAccount,
+      chain: sepolia,
+      transport: http(ETH_TESTNET_RPC_URL!),
+    });
+    const normalizedAddress = userAddress.toLowerCase() as `0x${string}`;
+    const valueWei = parseEther(amountEth.toFixed(6));
+    const txHash = await walletClient.sendTransaction({
+      to: normalizedAddress,
+      value: valueWei,
+    });
+
+    try {
+      await publicClient.waitForTransactionReceipt({
+        hash: txHash,
+        timeout: 45_000,
+      });
+    } catch {
+      // Receipt wait is best-effort for drip.
+    }
+
+    const now = Date.now();
+    gasDripEvents.push({
+      at: now,
+      address: normalizedAddress,
+      ethAmount: amountEth,
+      txHash,
+    });
+    gasDripEthToday += amountEth;
+    gasDripsByAddressToday.set(normalizedAddress, getAddressDripCountToday(normalizedAddress) + 1);
+    lastDripAt = now;
+    lastFundingRecoveryMode = 'sponsor_gas_drip';
+
+    console.log('[relayerTopUp] Sent user gas drip', {
+      chain,
+      reason,
+      txHash,
+      amountEth,
+      to: normalizedAddress,
+      funding: fundingAccount.address,
+    });
+
+    return {
+      ok: true,
+      attempted: true,
+      txHash,
+      amountEth,
+      reason: 'gas_drip_sent',
+    };
+  } catch (error: any) {
+    const message = error?.message || 'Gas drip failed';
+    return {
+      ok: false,
+      attempted: true,
+      reason: 'gas_drip_failed',
+      error: message,
+    };
+  }
+}
+
+export async function maybeDripUserGas(
+  chain: RelayerChain = 'sepolia',
+  userAddress: string,
+  opts?: {
+    reason?: string;
+    amountEth?: number;
+    fireAndForget?: boolean;
+  }
+): Promise<GasDripResult> {
+  const normalizedAddress = String(userAddress || '').toLowerCase();
+  const reason = opts?.reason || 'manual_drip';
+  const amountEth = Number.isFinite(opts?.amountEth as number) ? Number(opts?.amountEth) : GAS_DRIP_AMOUNT_ETH;
+  const lockKey = `${chain}:${normalizedAddress}`;
+  let inFlight = gasDripInFlightByAddress.get(lockKey);
+  if (!inFlight) {
+    inFlight = runGasDripAttempt(chain, normalizedAddress, amountEth, reason).finally(() => {
+      gasDripInFlightByAddress.delete(lockKey);
+    });
+    gasDripInFlightByAddress.set(lockKey, inFlight);
+  }
+
+  if (opts?.fireAndForget) {
+    void inFlight.catch(() => undefined);
+    return {
+      ok: true,
+      attempted: true,
+      reason: 'gas_drip_queued',
+    };
+  }
+  return inFlight;
+}
+
+export function recordGasCreditAccrual(opts?: { amountBusdc?: number; fundingMode?: 'relayed' | 'user_pays_gas' | 'sponsor_gas_drip' }): void {
+  if (!GAS_CREDITS_ENABLED) return;
+  resetDailyIfNeeded();
+  const amount = Number.isFinite(opts?.amountBusdc as number)
+    ? Number(opts?.amountBusdc)
+    : GAS_CREDITS_FEE_BUSDC_PER_EXECUTE;
+  gasCreditsAccruedToday = Number((gasCreditsAccruedToday + Math.max(0, amount)).toFixed(6));
+  lastGasCreditAt = Date.now();
+  if (opts?.fundingMode) {
+    lastFundingRecoveryMode = opts.fundingMode;
+  }
+}
+
+export function noteFundingRecoveryMode(mode: 'relayed' | 'user_pays_gas' | 'sponsor_gas_drip'): void {
+  lastFundingRecoveryMode = mode;
+}
+
+export function getGasCreditsSnapshot() {
+  resetDailyIfNeeded();
+  return {
+    feePerExecuteBusdc: GAS_CREDITS_FEE_BUSDC_PER_EXECUTE,
+    accruedTodayBusdc: Number(gasCreditsAccruedToday.toFixed(6)),
+    ...(lastGasCreditAt ? { lastAccrualAt: lastGasCreditAt } : {}),
+    ...(lastFundingRecoveryMode ? { lastFundingRecoveryMode } : {}),
+    ...(lastTopUpAt ? { lastTopUpAt } : {}),
+    ...(lastDripAt ? { lastDripAt } : {}),
+    swapCaps: {
+      maxEthPerDay: GAS_SWAP_MAX_ETH_PER_DAY,
+      minQuoteEth: GAS_SWAP_MIN_QUOTE_ETH,
+    },
+    lastSwap: {
+      ...(lastTopUpAt || lastDripAt ? { at: Math.max(lastTopUpAt || 0, lastDripAt || 0) } : {}),
+      ...(lastFundingRecoveryMode === 'relayed' || lastFundingRecoveryMode === 'sponsor_gas_drip'
+        ? { mode: 'topup' as const }
+        : {}),
+    },
+    ...(lastSwapError ? { lastSwapError } : {}),
+  };
 }
 
 async function runTopupAttempt(chain: RelayerChain, reason = 'manual'): Promise<TopupResult> {
@@ -340,6 +646,31 @@ export async function getRelayerStatus(chain: RelayerChain = 'sepolia'): Promise
         topupsLastHour: stats.topupsLastHour,
         topupEthToday: Number(topupEthToday.toFixed(8)),
       },
+    },
+    gasCredits: {
+      feePerExecuteBusdc: GAS_CREDITS_FEE_BUSDC_PER_EXECUTE,
+      accruedTodayBusdc: Number(gasCreditsAccruedToday.toFixed(6)),
+      ...(lastGasCreditAt ? { lastAccrualAt: lastGasCreditAt } : {}),
+      ...(lastFundingRecoveryMode ? { lastFundingRecoveryMode } : {}),
+      ...(lastTopUpAt ? { lastTopUpAt } : {}),
+      ...(lastDripAt ? { lastDripAt } : {}),
+      swapCaps: {
+        maxEthPerDay: GAS_SWAP_MAX_ETH_PER_DAY,
+        minQuoteEth: GAS_SWAP_MIN_QUOTE_ETH,
+      },
+      ...(lastSwapError ? { lastSwapError } : {}),
+      lastSwap: {
+        ...(lastTopUpAt || lastDripAt ? { at: Math.max(lastTopUpAt || 0, lastDripAt || 0) } : {}),
+        ...(lastFundingRecoveryMode === 'relayed' || lastFundingRecoveryMode === 'sponsor_gas_drip'
+          ? { mode: 'topup' as const }
+          : {}),
+      },
+    },
+    swap: {
+      enabled: GAS_SWAP_TOPUP_ENABLED,
+      ...(GAS_SWAP_DEX_ROUTER ? { router: GAS_SWAP_DEX_ROUTER } : {}),
+      quoteOk: false,
+      ...(lastSwapQuoteEth ? { lastQuoteEth: lastSwapQuoteEth } : {}),
     },
   };
 

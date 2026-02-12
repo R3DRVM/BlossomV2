@@ -255,12 +255,62 @@ export const RELAYER_TOPUP_ENABLED = process.env.RELAYER_TOPUP_ENABLED === 'true
 export const FUNDING_WALLET_PRIVATE_KEY_SEPOLIA = process.env.FUNDING_WALLET_PRIVATE_KEY_SEPOLIA;
 const parsedMinRelayerEth = parseFloat(process.env.MIN_RELAYER_ETH_SEPOLIA || '0.02');
 const parsedTargetRelayerEth = parseFloat(process.env.TARGET_RELAYER_ETH_SEPOLIA || '0.12');
+const parsedFundingFloorEth = parseFloat(process.env.FUNDING_WALLET_FLOOR_ETH_SEPOLIA || '0.03');
 const parsedMaxTopupsPerHour = parseInt(process.env.MAX_TOPUPS_PER_HOUR || '2', 10);
 const parsedMaxTopupEthPerDay = parseFloat(process.env.MAX_TOPUP_ETH_PER_DAY || '0.2');
 export const MIN_RELAYER_ETH_SEPOLIA = Number.isFinite(parsedMinRelayerEth) ? parsedMinRelayerEth : 0.02;
 export const TARGET_RELAYER_ETH_SEPOLIA = Number.isFinite(parsedTargetRelayerEth) ? parsedTargetRelayerEth : 0.12;
+export const FUNDING_WALLET_FLOOR_ETH_SEPOLIA = Number.isFinite(parsedFundingFloorEth) ? parsedFundingFloorEth : 0.03;
 export const MAX_TOPUPS_PER_HOUR = Number.isFinite(parsedMaxTopupsPerHour) ? parsedMaxTopupsPerHour : 2;
 export const MAX_TOPUP_ETH_PER_DAY = Number.isFinite(parsedMaxTopupEthPerDay) ? parsedMaxTopupEthPerDay : 0.2;
+export const ALERT_WEBHOOK_URL = process.env.ALERT_WEBHOOK_URL;
+const parsedAlertDedupWindowMinutes = parseInt(process.env.ALERT_DEDUP_WINDOW_MINUTES || '30', 10);
+export const ALERT_DEDUP_WINDOW_MINUTES = Number.isFinite(parsedAlertDedupWindowMinutes)
+  ? parsedAlertDedupWindowMinutes
+  : 30;
+const parsedGasSolvencyMonitorIntervalMs = parseInt(process.env.GAS_SOLVENCY_MONITOR_INTERVAL_MS || '60000', 10);
+export const GAS_SOLVENCY_MONITOR_INTERVAL_MS = Number.isFinite(parsedGasSolvencyMonitorIntervalMs)
+  ? parsedGasSolvencyMonitorIntervalMs
+  : 60_000;
+const parsedMinUserGasEth = parseFloat(process.env.MIN_USER_GAS_ETH || '0.003');
+export const MIN_USER_GAS_ETH = Number.isFinite(parsedMinUserGasEth) ? parsedMinUserGasEth : 0.003;
+export const USER_PAYS_GAS_FALLBACK_ENABLED = process.env.USER_PAYS_GAS_FALLBACK_ENABLED !== 'false';
+export const GAS_DRIP_ENABLED = process.env.GAS_DRIP_ENABLED === 'true';
+const parsedGasDripAmountEth = parseFloat(process.env.GAS_DRIP_AMOUNT_ETH || '0.005');
+export const GAS_DRIP_AMOUNT_ETH = Number.isFinite(parsedGasDripAmountEth) ? parsedGasDripAmountEth : 0.005;
+const parsedGasDripMaxPerAddressPerDay = parseInt(process.env.GAS_DRIP_MAX_PER_ADDRESS_PER_DAY || '2', 10);
+export const GAS_DRIP_MAX_PER_ADDRESS_PER_DAY = Number.isFinite(parsedGasDripMaxPerAddressPerDay)
+  ? parsedGasDripMaxPerAddressPerDay
+  : 2;
+const parsedGasDripMaxPerHour = parseInt(process.env.GAS_DRIP_MAX_PER_HOUR || '10', 10);
+export const GAS_DRIP_MAX_PER_HOUR = Number.isFinite(parsedGasDripMaxPerHour) ? parsedGasDripMaxPerHour : 10;
+const parsedGasDripMaxGlobalPerDayEth = parseFloat(process.env.GAS_DRIP_MAX_GLOBAL_PER_DAY_ETH || '0.2');
+export const GAS_DRIP_MAX_GLOBAL_PER_DAY_ETH = Number.isFinite(parsedGasDripMaxGlobalPerDayEth)
+  ? parsedGasDripMaxGlobalPerDayEth
+  : 0.2;
+export const GAS_CREDITS_ENABLED = process.env.GAS_CREDITS_ENABLED !== 'false';
+const parsedGasCreditsFeeBusdcPerExecute = parseFloat(process.env.GAS_CREDITS_FEE_BUSDC_PER_EXECUTE || '0.25');
+export const GAS_CREDITS_FEE_BUSDC_PER_EXECUTE = Number.isFinite(parsedGasCreditsFeeBusdcPerExecute)
+  ? parsedGasCreditsFeeBusdcPerExecute
+  : 0.25;
+export const GAS_SWAP_TOPUP_ENABLED = process.env.GAS_SWAP_TOPUP_ENABLED === 'true';
+const parsedGasSwapMaxSlippageBps = parseInt(process.env.GAS_SWAP_MAX_SLIPPAGE_BPS || '300', 10);
+export const GAS_SWAP_MAX_SLIPPAGE_BPS = Number.isFinite(parsedGasSwapMaxSlippageBps)
+  ? parsedGasSwapMaxSlippageBps
+  : 300;
+const parsedGasSwapMaxEthPerDay = parseFloat(process.env.GAS_SWAP_MAX_ETH_PER_DAY || '0.2');
+export const GAS_SWAP_MAX_ETH_PER_DAY = Number.isFinite(parsedGasSwapMaxEthPerDay)
+  ? parsedGasSwapMaxEthPerDay
+  : 0.2;
+const parsedGasSwapMinQuoteEth = parseFloat(process.env.GAS_SWAP_MIN_QUOTE_ETH || '0.005');
+export const GAS_SWAP_MIN_QUOTE_ETH = Number.isFinite(parsedGasSwapMinQuoteEth)
+  ? parsedGasSwapMinQuoteEth
+  : 0.005;
+const parsedGasSwapPoolHealthMinLiquidityUsd = parseFloat(process.env.GAS_SWAP_POOL_HEALTH_MIN_LIQUIDITY_USD || '2000');
+export const GAS_SWAP_POOL_HEALTH_MIN_LIQUIDITY_USD = Number.isFinite(parsedGasSwapPoolHealthMinLiquidityUsd)
+  ? parsedGasSwapPoolHealthMinLiquidityUsd
+  : 2000;
+export const GAS_SWAP_DEX_ROUTER = process.env.GAS_SWAP_DEX_ROUTER || UNISWAP_V3_ROUTER_ADDRESS;
 export const WALLET_FALLBACK_ENABLED = process.env.WALLET_FALLBACK_ENABLED === 'true';
 export const ALLOW_PROOF_ONLY = process.env.ALLOW_PROOF_ONLY === 'true';
 export const CROSS_CHAIN_CREDIT_ROUTING_ENABLED = process.env.CROSS_CHAIN_CREDIT_ROUTING_ENABLED !== 'false';

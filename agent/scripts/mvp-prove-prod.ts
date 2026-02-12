@@ -33,6 +33,7 @@ type CrossChainProof = {
   routeType: string;
   fromChain?: string;
   toChain: string;
+  fundingMode?: 'relayed' | 'user_pays_gas' | 'sponsor_gas_drip' | 'unknown';
   creditTxHash: string;
   executionTxHash: string;
   creditReceiptConfirmed?: boolean;
@@ -52,7 +53,7 @@ const COUNT = parseInt(process.env.STRESS_PROVE_COUNT || '10', 10);
 const CONCURRENCY = parseInt(process.env.STRESS_PROVE_CONCURRENCY || '2', 10);
 const logsDir = path.resolve(process.cwd(), 'logs');
 const runStamp = new Date().toISOString().replace(/[:.]/g, '-');
-const rawOutputPath = path.join(logsDir, `stress-tier1-crosschain-required-${runStamp}.json`);
+const rawOutputPath = path.join(logsDir, `stress-tier1-crosschain-resilient-${runStamp}.json`);
 const reportPath = path.join(logsDir, 'mvp-prove-report.json');
 
 function runStressSuite(): Promise<number> {
@@ -60,7 +61,7 @@ function runStressSuite(): Promise<number> {
     'tsx',
     'agent/scripts/live-stress-tester.ts',
     `--baseUrl=${BASE_URL}`,
-    '--mode=tier1_crosschain_required',
+    '--mode=tier1_crosschain_resilient',
     '--allow_execute',
     `--count=${COUNT}`,
     `--concurrency=${CONCURRENCY}`,
@@ -92,7 +93,7 @@ async function main() {
   }
 
   const summary: StressSummary = parsed?.summary || {
-    mode: 'tier1_crosschain_required',
+    mode: 'tier1_crosschain_resilient',
     sessions: 0,
     sessionsOk: 0,
     sessionsFail: 0,
@@ -104,6 +105,15 @@ async function main() {
   };
   const results = Array.isArray(parsed?.results) ? parsed!.results : [];
   const proofs = ((parsed?.crossChainProofs || []) as CrossChainProof[]).filter((proof) =>
+    proof.routeType === 'testnet_credit' &&
+    String(proof.toChain || '').toLowerCase() === 'sepolia' &&
+    (proof.fundingMode === 'relayed' || proof.fundingMode === 'user_pays_gas') &&
+    assertHash(proof.creditTxHash) &&
+    assertHash(proof.executionTxHash) &&
+    proof.creditReceiptConfirmed === true &&
+    proof.executionReceiptConfirmed === true
+  );
+  const crossChainProofs = ((parsed?.crossChainProofs || []) as CrossChainProof[]).filter((proof) =>
     proof.routeType === 'testnet_credit' &&
     String(proof.toChain || '').toLowerCase() === 'sepolia' &&
     assertHash(proof.creditTxHash) &&
@@ -124,6 +134,7 @@ async function main() {
     processExitZero: exitCode === 0,
     sessionsAllPassed: summary.sessions === COUNT && summary.sessionsOk === COUNT && summary.sessionsFail === 0,
     minimumProofs: proofs.length >= 5,
+    minimumCrossChainProofs: crossChainProofs.length >= 3,
     noCrossChainSkips: skippedCrossChain === 0,
     noProofOnly: proofOnlyViolations === 0,
   };
@@ -133,17 +144,21 @@ async function main() {
     ok,
     generatedAt: new Date().toISOString(),
     baseUrl: BASE_URL,
-    mode: 'tier1_crosschain_required',
+    mode: 'tier1_crosschain_resilient',
     requirements: {
       sessions: COUNT,
       minProofs: 5,
+      minCrossChainProofs: 3,
       noCrossChainSkips: true,
       noProofOnly: true,
+      allowedFundingModes: ['relayed', 'user_pays_gas'],
     },
     checks,
     summary,
     proofCount: proofs.length,
+    crossChainProofCount: crossChainProofs.length,
     proofs,
+    crossChainProofs,
     processExitCode: exitCode,
     rawStressOutputPath: rawOutputPath,
   };

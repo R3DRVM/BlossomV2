@@ -4005,17 +4005,58 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
               'SESSION_SETUP_FAILED',
               'SESSION_SETUP_PENDING',
             ]);
+            const gasFallbackCodes = new Set([
+              'USER_PAYS_GAS_REQUIRED',
+              'GAS_DRIP_COMPLETED_RETRY',
+            ]);
+            const capacityPausedCodes = new Set([
+              'RELAYER_UNDERFUNDED',
+              'FUNDING_WALLET_UNDERFUNDED',
+              'INSUFFICIENT_GAS_CAPACITY',
+            ]);
             const shouldFallbackToManual =
               (result.errorCode ? sessionFallbackCodes.has(result.errorCode) : false) ||
+              (result.errorCode ? gasFallbackCodes.has(result.errorCode) : false) ||
               errorText.includes('not_created') ||
               errorText.includes('session not found') ||
               errorText.includes('session expired') ||
               errorText.includes('session revoked');
 
+            if (result.errorCode && capacityPausedCodes.has(result.errorCode)) {
+              updateStrategy(draftId, {
+                status: 'blocked',
+                executionNote: 'Execution temporarily unavailable due to network gas capacity.',
+                executionMeta: {
+                  ...(result.executionMeta || {}),
+                  route: {
+                    ...(result.executionMeta?.route || {}),
+                    didRoute: !!result.executionMeta?.route?.didRoute,
+                    reason: result.error || 'Execution temporarily unavailable due to network gas capacity.',
+                  },
+                  fundingMode: result.fundingMode || 'relayed',
+                  errorCode: result.errorCode,
+                  chain: 'sepolia',
+                },
+              } as any);
+              const errorMessage: ChatMessage = {
+                id: `capacity-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                text: safeErrorText(result.error),
+                isUser: false,
+                timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+              };
+              appendMessageToChat(targetChatId, errorMessage);
+              return;
+            }
+
             if (shouldFallbackToManual) {
+              const fallbackText = result.errorCode === 'GAS_DRIP_COMPLETED_RETRY'
+                ? `Gas top-up submitted${result.gasDripTxHash ? ` (${result.gasDripTxHash.slice(0, 10)}...)` : ''}. Falling back to manual wallet confirmation.`
+                : (result.errorCode === 'USER_PAYS_GAS_REQUIRED'
+                    ? 'Relayer is underfunded. Falling back to manual wallet confirmation (user-paid gas).'
+                    : 'Session relay unavailable for this trade. Falling back to manual wallet confirmation.');
               const fallbackMessage: ChatMessage = {
                 id: `session-fallback-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-                text: 'Session relay unavailable for this trade. Falling back to manual wallet confirmation.',
+                text: fallbackText,
                 isUser: false,
                 timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
               };
@@ -4763,9 +4804,61 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
       }
     }
     
-    // TRUTHFUL UI: Status update only happens in execution success paths above
-    // If we reach here, execution didn't happen (sim mode or early return)
-    // Don't mark as executed - strategy remains in draft/pending state
+  // TRUTHFUL UI: Status update only happens in execution success paths above
+  // If we reach here, execution didn't happen (sim mode or early return)
+  // Don't mark as executed - strategy remains in draft/pending state
+  };
+
+  const handleGasTopUpAndRetry = async (draftId: string) => {
+    const targetChatId = activeDraftChatIdRef.current || activeChatId;
+    if (!targetChatId) return;
+
+    let userAddress = await getAddress();
+    if (!userAddress) {
+      try {
+        userAddress = await connectWallet();
+      } catch (error: any) {
+        appendMessageToChat(targetChatId, {
+          id: `gas-drip-connect-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          text: `Wallet connection failed: ${error?.message || 'Unknown error'}.`,
+          isUser: false,
+          timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+        });
+        return;
+      }
+    }
+
+    const statusId = `gas-drip-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    appendMessageToChat(targetChatId, {
+      id: statusId,
+      text: 'Requesting Sepolia gas top-up...',
+      isUser: false,
+      timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+    });
+
+    try {
+      const response = await callAgent(`/api/gas/drip?chain=sepolia&address=${encodeURIComponent(userAddress)}`, {
+        method: 'POST',
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload?.ok) {
+        updateMessageInChat(targetChatId, statusId, {
+          text: payload?.error || 'Gas top-up failed. Please retry in a moment.',
+        });
+        return;
+      }
+
+      const txHash = payload.txHash ? String(payload.txHash) : '';
+      updateMessageInChat(targetChatId, statusId, {
+        text: `Gas top-up sent${txHash ? ` (${txHash.slice(0, 10)}...)` : ''}. Retrying execution...`,
+      });
+
+      await handleConfirmTrade(draftId);
+    } catch (error: any) {
+      updateMessageInChat(targetChatId, statusId, {
+        text: `Gas top-up request failed: ${error?.message || 'Unknown error'}`,
+      });
+    }
   };
 
   // Step 4: Invariant 0.5 - High-risk proceed executes specific draftId (no re-processing)
@@ -4942,6 +5035,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
                   }}
                       // Part 1: Pass draft action handler and risk warning
                       onConfirmDraft={msgStrategyId ? handleConfirmTrade : undefined}
+                      onTopUpGasDraft={msgStrategyId ? handleGasTopUpAndRetry : undefined}
                       showRiskWarning={msgShowRiskWarning}
                       riskReasons={msgRiskReasons}
                       // Intent confirmation (confirm mode)

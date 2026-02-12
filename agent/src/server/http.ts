@@ -4333,6 +4333,7 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
       toChain: 'sepolia',
       reason: 'Execution funded directly on Ethereum Sepolia.',
     };
+    let executionFundingMode: 'relayed' | 'user_pays_gas' | 'sponsor_gas_drip' = 'relayed';
     const {
       buildRelayedQueueKey,
       getRelayedExecutionQueueResponse,
@@ -5340,15 +5341,14 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
     const {
       getRelayerStatus,
       maybeTopUpRelayer: maybeTopUpRelayerBeforeSend,
+      maybeDripUserGas,
+      noteFundingRecoveryMode,
+      recordGasCreditAccrual,
     } = await import('../services/relayerTopUp');
-    const {
-      enqueueRelayedExecution,
-      getRelayedExecutionQueueResponse: getQueuedResponseAfterEnqueue,
-    } = await import('../services/relayedExecutionQueue');
+    const { decideExecutionFundingMode } = await import('../services/executionFundingPolicy');
 
     const relayerStatus = await getRelayerStatus('sepolia');
     if (!relayerStatus.relayer.okToExecute) {
-      const strictCrossChainMode = String(req.body?.metadata?.mode || '').toLowerCase() === 'tier1_crosschain_required';
       const topupTimeoutMs = Math.max(1_000, parseInt(process.env.RELAYER_TOPUP_SYNC_TIMEOUT_MS || '12000', 10));
       let topupTimedOut = false;
       let topupResult: Awaited<ReturnType<typeof maybeTopUpRelayerBeforeSend>> | null = null;
@@ -5372,82 +5372,149 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
 
       const relayerStatusAfterTopup = await getRelayerStatus('sepolia');
       if (!relayerStatusAfterTopup.relayer.okToExecute) {
-        if (strictCrossChainMode || !ALLOW_PROOF_ONLY) {
-          return res.status(503).json({
+        const fundingDecision = await decideExecutionFundingMode({
+          chain: 'sepolia',
+          userAddress,
+        });
+
+        if (fundingDecision.ok && fundingDecision.mode === 'user_pays_gas') {
+          executionFundingMode = 'user_pays_gas';
+          noteFundingRecoveryMode('user_pays_gas');
+          return res.status(409).json({
             ok: false,
             success: false,
             queued: false,
-            errorCode: topupTimedOut ? 'RELAYER_TOPUP_TIMEOUT' : (topupResult?.reason?.includes('topup_failed') ? 'RELAYER_TOPUP_FAILED' : 'RELAYER_LOW_BALANCE'),
-            error: topupTimedOut
-              ? 'Relayer top-up timed out before execution.'
-              : 'Relayer has insufficient ETH to execute. Fund relayer or funding wallet and retry.',
+            mode: 'wallet_fallback',
+            fundingMode: 'user_pays_gas',
+            errorCode: 'USER_PAYS_GAS_REQUIRED',
+            error: 'Relayer is underfunded. Sign once in your wallet and proceed with user-paid gas.',
+            needs_wallet_signature: true,
+            execution: {
+              mode: 'wallet_fallback',
+              chain: 'sepolia',
+              tx: {
+                to: EXECUTION_ROUTER_ADDRESS!,
+                data,
+                value: req.body.value || '0x0',
+              },
+            },
             machine: {
               queued: false,
-              reason: 'relayer_low_balance',
+              reason: 'relayer_low_balance_user_pays_gas',
             },
             relayer: {
               balanceEth: relayerStatusAfterTopup.relayer.balanceEth,
               minEth: relayerStatusAfterTopup.relayer.minEth,
               okToExecute: relayerStatusAfterTopup.relayer.okToExecute,
             },
+            executionMeta: {
+              route: executionRouteMeta,
+              fundingMode: 'user_pays_gas',
+              chain: 'sepolia',
+            },
             correlationId,
           });
         }
 
-        enqueueRelayedExecution({
-          key: queueKey,
-          correlationId,
-          requestId: `${draftId}:${String(plan.nonce || 'na')}`,
-          walletFallbackTx: {
-            to: EXECUTION_ROUTER_ADDRESS!,
-            data,
-            value: req.body.value || '0x0',
-          },
-          run: async () => {
-            const queuedTxHash = await sendRelayedTx({
-              to: EXECUTION_ROUTER_ADDRESS!,
-              data,
-              value: req.body.value || '0x0',
+        if (fundingDecision.ok && fundingDecision.mode === 'sponsor_gas_drip') {
+          const dripAttempt = await maybeDripUserGas('sepolia', userAddress, {
+            reason: 'execute_relayer_low_balance',
+            fireAndForget: false,
+          });
+          if (dripAttempt.ok) {
+            executionFundingMode = 'sponsor_gas_drip';
+            return res.status(409).json({
+              ok: false,
+              success: false,
+              queued: false,
+              mode: 'wallet_fallback',
+              fundingMode: 'sponsor_gas_drip',
+              errorCode: 'GAS_DRIP_COMPLETED_RETRY',
+              error: 'Gas top-up sent. Sign once in your wallet to continue execution.',
+              needs_wallet_signature: true,
+              gasDrip: {
+                txHash: dripAttempt.txHash,
+                amountEth: dripAttempt.amountEth,
+              },
+              execution: {
+                mode: 'wallet_fallback',
+                chain: 'sepolia',
+                tx: {
+                  to: EXECUTION_ROUTER_ADDRESS!,
+                  data,
+                  value: req.body.value || '0x0',
+                },
+              },
+              machine: {
+                queued: false,
+                reason: 'relayer_low_balance_gas_drip',
+              },
+              executionMeta: {
+                route: executionRouteMeta,
+                fundingMode: 'sponsor_gas_drip',
+                chain: 'sepolia',
+              },
+              correlationId,
             });
+          }
 
-            let queuedReceiptStatus: 'confirmed' | 'failed' | 'timeout' | 'pending' = 'pending';
-            let queuedBlockNumber: number | undefined;
-            let queuedReceiptError: string | undefined;
-            if (ETH_TESTNET_RPC_URL) {
-              const { waitForReceipt: waitForQueuedReceipt } = await import('../executors/evmReceipt');
-              const queuedReceipt = await waitForQueuedReceipt(ETH_TESTNET_RPC_URL, queuedTxHash, {
-                timeoutMs: 60_000,
-                pollMs: 2_000,
-              });
-              queuedReceiptStatus = queuedReceipt.status;
-              queuedBlockNumber = queuedReceipt.blockNumber;
-              queuedReceiptError = queuedReceipt.error;
-            }
-
-            return {
-              success: queuedReceiptStatus === 'confirmed',
-              status: queuedReceiptStatus === 'confirmed' ? 'success' : 'pending',
-              txHash: queuedTxHash,
-              receiptStatus: queuedReceiptStatus,
-              blockNumber: queuedBlockNumber,
-              error: queuedReceiptError,
-              explorerUrl: `https://sepolia.etherscan.io/tx/${queuedTxHash}`,
-              chainId: 11155111,
-              notes: ['execution_path:relayed', 'queued_retry'],
-            };
-          },
-        });
-
-        const queuedResponse = getQueuedResponseAfterEnqueue(queueKey);
-        if (queuedResponse) {
-          return res.status(queuedResponse.statusCode).json({
-            ...queuedResponse.body,
+          return res.status(402).json({
+            ok: false,
+            success: false,
+            queued: false,
+            errorCode: 'FUNDING_WALLET_UNDERFUNDED',
+            error: "Insufficient gas to execute. Click 'Top up gas' or retry later.",
+            machine: {
+              queued: false,
+              reason: 'sponsor_gas_drip_failed',
+            },
+            relayer: {
+              balanceEth: relayerStatusAfterTopup.relayer.balanceEth,
+              minEth: relayerStatusAfterTopup.relayer.minEth,
+              okToExecute: relayerStatusAfterTopup.relayer.okToExecute,
+            },
+            gasDrip: {
+              attempted: dripAttempt.attempted,
+              reason: dripAttempt.reason,
+              error: dripAttempt.error,
+            },
+            executionMeta: {
+              route: executionRouteMeta,
+              fundingMode: 'sponsor_gas_drip',
+              chain: 'sepolia',
+            },
             correlationId,
           });
         }
+
+        return res.status(402).json({
+          ok: false,
+          success: false,
+          queued: false,
+          errorCode: topupTimedOut
+            ? 'RELAYER_UNDERFUNDED'
+            : (fundingDecision.sponsorReason === 'funding_wallet_insufficient' ? 'FUNDING_WALLET_UNDERFUNDED' : 'RELAYER_UNDERFUNDED'),
+          error: fundingDecision.userMessage || "Insufficient gas to execute. Click 'Top up gas' or retry later.",
+          machine: {
+            queued: false,
+            reason: fundingDecision.reason || 'relayer_low_balance',
+          },
+          relayer: {
+            balanceEth: relayerStatusAfterTopup.relayer.balanceEth,
+            minEth: relayerStatusAfterTopup.relayer.minEth,
+            okToExecute: relayerStatusAfterTopup.relayer.okToExecute,
+          },
+          executionMeta: {
+            route: executionRouteMeta,
+            fundingMode: 'relayed',
+            chain: 'sepolia',
+          },
+          correlationId,
+        });
       }
     }
 
+    noteFundingRecoveryMode('relayed');
     const txHash = await sendRelayedTx({
       to: EXECUTION_ROUTER_ADDRESS!,
       data,
@@ -5489,6 +5556,7 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
 
     // CRITICAL FIX: Record position to ledger when confirmed
     if (receiptStatus === 'confirmed' && txHash) {
+      recordGasCreditAccrual({ fundingMode: 'relayed' });
       try {
         const { createPosition, createExecution, updateExecution } = await import('../../execution-ledger/db');
 
@@ -5650,6 +5718,8 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
       notes: ['execution_path:relayed'], // Task 4: Unambiguous evidence of execution path
       executionMeta: {
         route: executionRouteMeta,
+        fundingMode: executionFundingMode,
+        chain: 'sepolia',
       },
     });
   } catch (error: any) {
@@ -5740,6 +5810,8 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
       correlationId, // Include correlationId in error response
       executionMeta: {
         route: executionRouteMeta,
+        fundingMode: executionFundingMode,
+        chain: 'sepolia',
       },
     });
   }
@@ -5778,6 +5850,105 @@ app.get('/api/relayer/status', async (req, res) => {
       ok: false,
       chain: 'sepolia',
       error: error?.message || 'Failed to fetch relayer status',
+    });
+  }
+});
+
+/**
+ * POST /api/gas/drip?chain=sepolia&address=0x...
+ * Sends a capped ETH drip from funding wallet to a user wallet for beta continuity.
+ */
+app.post('/api/gas/drip', requireAuth, maybeCheckAccess, async (req, res) => {
+  try {
+    const chain = String(req.query.chain || req.body?.chain || 'sepolia').toLowerCase();
+    const address = String(req.query.address || req.body?.address || '').trim();
+    if (chain !== 'sepolia') {
+      return res.status(400).json({ ok: false, errorCode: 'INVALID_CHAIN', error: 'Unsupported chain. Use chain=sepolia.' });
+    }
+    if (!/^0x[a-fA-F0-9]{40}$/.test(address)) {
+      return res.status(400).json({ ok: false, errorCode: 'INVALID_ADDRESS', error: 'A valid EVM address is required.' });
+    }
+
+    const providedSecret = String((req.headers['x-ledger-secret'] as string | undefined) || '');
+    const headerWallet = String((req.headers['x-wallet-address'] as string | undefined) || '').toLowerCase();
+    const isLedgerAuthorized = !!DEV_LEDGER_SECRET && providedSecret === DEV_LEDGER_SECRET;
+    const isWalletOwner = headerWallet === address.toLowerCase();
+    if (!isLedgerAuthorized && !isWalletOwner) {
+      return res.status(403).json({
+        ok: false,
+        errorCode: 'UNAUTHORIZED_DRIP',
+        error: 'Gas drip requires X-Ledger-Secret or matching X-Wallet-Address.',
+      });
+    }
+
+    const { canSponsorGasDrip, maybeDripUserGas, getRelayerStatus } = await import('../services/relayerTopUp');
+    const eligibility = await canSponsorGasDrip('sepolia', address);
+    if (!eligibility.ok) {
+      const insufficientFunding = String(eligibility.reason || '').includes('funding_wallet_insufficient');
+      return res.status(insufficientFunding ? 402 : 429).json({
+        ok: false,
+        errorCode: insufficientFunding ? 'FUNDING_WALLET_UNDERFUNDED' : 'GAS_DRIP_CAP_REACHED',
+        error: "Insufficient gas to execute. Click 'Top up gas' or retry later.",
+        reason: eligibility.reason,
+        eligibility,
+      });
+    }
+
+    const drip = await maybeDripUserGas('sepolia', address, {
+      reason: 'api_gas_drip',
+      fireAndForget: false,
+    });
+    if (!drip.ok || !drip.txHash) {
+      return res.status(500).json({
+        ok: false,
+        errorCode: 'GAS_DRIP_FAILED',
+        error: drip.error || drip.reason || 'Gas drip failed',
+        drip,
+      });
+    }
+
+    try {
+      const { createExecutionAsync, updateExecutionAsync } = await import('../../execution-ledger/db');
+      const relayerStatus = await getRelayerStatus('sepolia');
+      const execution = await createExecutionAsync({
+        chain: 'ethereum',
+        network: 'sepolia',
+        kind: 'transfer',
+        venue: 'native',
+        intent: 'gas_drip',
+        action: 'gas_drip',
+        fromAddress: relayerStatus.funding.fundingAddress || 'funding_wallet',
+        toAddress: address,
+        token: 'ETH',
+        amountDisplay: `${Number(drip.amountEth || 0).toFixed(6)} ETH`,
+        amountUnits: Number(drip.amountEth || 0).toFixed(6),
+        txHash: drip.txHash,
+        status: 'submitted',
+        explorerUrl: `https://sepolia.etherscan.io/tx/${drip.txHash}`,
+      });
+      await updateExecutionAsync(execution.id, {
+        status: 'confirmed',
+        txHash: drip.txHash,
+        explorerUrl: `https://sepolia.etherscan.io/tx/${drip.txHash}`,
+      });
+    } catch (auditError: any) {
+      console.warn('[api/gas/drip] Audit log failed:', auditError?.message || String(auditError));
+    }
+
+    return res.json({
+      ok: true,
+      chain: 'sepolia',
+      address: address.toLowerCase(),
+      txHash: drip.txHash,
+      amountEth: drip.amountEth,
+      explorerUrl: `https://sepolia.etherscan.io/tx/${drip.txHash}`,
+      message: 'Gas drip sent successfully.',
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      ok: false,
+      errorCode: 'GAS_DRIP_FAILED',
+      error: error?.message || 'Failed to send gas drip',
     });
   }
 });

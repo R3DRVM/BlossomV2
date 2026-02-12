@@ -36,6 +36,7 @@ interface MessageBubbleProps {
   onRegisterStrategyRef?: (id: string, element: HTMLDivElement | null) => void;
   // Part 1: Support for draft actions and high-risk warning
   onConfirmDraft?: (draftId: string) => void | Promise<void>;
+  onTopUpGasDraft?: (draftId: string) => void | Promise<void>;
   showRiskWarning?: boolean;
   riskReasons?: string[];
   marketsList?: Array<{
@@ -127,7 +128,7 @@ function formatRouteChainLabel(chain?: string): string {
   return chain || 'unknown chain';
 }
 
-export default function MessageBubble({ text, isUser, timestamp, strategy, strategyId, selectedStrategyId, defiProposalId, executionMode, onInsertPrompt, onRegisterStrategyRef, onConfirmDraft, showRiskWarning, riskReasons, marketsList, defiProtocolsList, onSendMessage, intentExecution, onConfirmIntent, isConfirmingIntent }: MessageBubbleProps) {
+export default function MessageBubble({ text, isUser, timestamp, strategy, strategyId, selectedStrategyId, defiProposalId, executionMode, onInsertPrompt, onRegisterStrategyRef, onConfirmDraft, onTopUpGasDraft, showRiskWarning, riskReasons, marketsList, defiProtocolsList, onSendMessage, intentExecution, onConfirmIntent, isConfirmingIntent }: MessageBubbleProps) {
   const { updateStrategyStatus, recomputeAccountFromStrategies, strategies, setActiveTab, setSelectedStrategyId, setOnboarding, closeStrategy, closeEventStrategy, defiPositions, latestDefiProposal, confirmDefiPlan, updateFromBackendPortfolio, account, riskProfile, venue } = useBlossomContext();
   const { addPendingPlan, removePendingPlan, setLastAction } = useExecution();
   const { pushEvent } = useActivityFeed();
@@ -186,6 +187,13 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
   
   const biasWarning = strategy ? getPortfolioBiasWarning(strategies, strategy) : null;
   const routeMeta = currentStrategy?.executionMeta?.route;
+  const executionMeta = (currentStrategy as any)?.executionMeta || {};
+  const blockedErrorCode = String(executionMeta?.errorCode || '').toUpperCase();
+  const isCapacityBlocked = isBlocked && (
+    blockedErrorCode === 'RELAYER_UNDERFUNDED' ||
+    blockedErrorCode === 'FUNDING_WALLET_UNDERFUNDED' ||
+    blockedErrorCode === 'INSUFFICIENT_GAS_CAPACITY'
+  );
   const isBetaTestnetMode = appExecutionMode === 'eth_testnet';
   const hasExecutionDebug =
     !!routeMeta ||
@@ -273,6 +281,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
 
   const [isConfirmingDraft, setIsConfirmingDraft] = useState(false);
   const [draftPendingPhase, setDraftPendingPhase] = useState<'idle' | 'routing' | 'executing'>('idle');
+  const [isToppingUpGas, setIsToppingUpGas] = useState(false);
   const [confirmingDefiProposalId, setConfirmingDefiProposalId] = useState<string | null>(null);
   const [defiPendingPhase, setDefiPendingPhase] = useState<'idle' | 'routing' | 'executing'>('idle');
   const draftPendingTimerRef = useRef<number | null>(null);
@@ -1059,24 +1068,52 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
             {isBlocked && (
               <div className="pt-1.5 border-t border-blossom-outline/50 space-y-2">
                 <div className="text-[11px] text-amber-700 mb-2 px-1">
-                  {(currentStrategy as any)?.executionNote || 'Insufficient bUSDC collateral to open this position.'}
+                  {isCapacityBlocked
+                    ? 'Execution temporarily unavailable due to network gas capacity.'
+                    : ((currentStrategy as any)?.executionNote || 'Insufficient bUSDC collateral to open this position.')}
                 </div>
-                <button 
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    // Feature 8: Fund REDACTED button (disabled - fundUsdc not available)
-                    // if (fundUsdc) {
-                    //   fundUsdc(2000);
+                {isCapacityBlocked ? (
+                  <div className="space-y-2">
+                    <button
+                      disabled
+                      className="w-full h-10 px-4 text-sm font-medium rounded-xl transition-all bg-slate-200 text-slate-500 cursor-not-allowed"
+                    >
+                      Capacity paused
+                    </button>
+                    {strategyId && onTopUpGasDraft && (
+                      <button
+                        onClick={async (e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          if (isToppingUpGas) return;
+                          setIsToppingUpGas(true);
+                          try {
+                            await Promise.resolve(onTopUpGasDraft(strategyId));
+                          } finally {
+                            setIsToppingUpGas(false);
+                          }
+                        }}
+                        disabled={isToppingUpGas}
+                        className="w-full h-10 px-4 text-sm font-medium rounded-xl transition-all bg-amber-500 hover:bg-amber-600 text-white shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {isToppingUpGas ? 'Topping up gas...' : 'Top up gas'}
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
                       if (import.meta.env.DEV) {
-                      console.warn('[MessageBubble] fundUsdc not available');
+                        console.warn('[MessageBubble] fundUsdc not available');
                       }
-                    // }
-                  }}
-                  className="w-full h-10 px-4 text-sm font-medium rounded-xl transition-all bg-amber-500 hover:bg-amber-600 text-white shadow-sm"
-                >
-                  Fund bUSDC
-                </button>
+                    }}
+                    className="w-full h-10 px-4 text-sm font-medium rounded-xl transition-all bg-amber-500 hover:bg-amber-600 text-white shadow-sm"
+                  >
+                    Fund bUSDC
+                  </button>
+                )}
               </div>
             )}
             {/* Part 1: Inline high-risk warning (compact, collapses after confirm) */}
@@ -1307,6 +1344,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                 </button>
                 {showExecutionDebug && (
                   <div className="mt-1.5 space-y-1 text-[10px] text-gray-600">
+                    {executionMeta?.fundingMode && <div>{`fundingMode: ${executionMeta.fundingMode}`}</div>}
                     {routeMeta?.routeType && <div>{`routeType: ${routeMeta.routeType}`}</div>}
                     {(routeMeta?.fromChain || routeMeta?.toChain) && (
                       <div>{`route: ${formatRouteChainLabel(routeMeta?.fromChain)} -> ${formatRouteChainLabel(routeMeta?.toChain)}`}</div>

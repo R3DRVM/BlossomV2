@@ -8,6 +8,7 @@
  * - tier1: deterministic suite (Ethereum-heavy, execution enabled)
  * - tier1_relayed_required: deterministic suite requiring relayed execution (no proof-only fallback)
  * - tier1_crosschain_required: deterministic suite requiring Solana->Sepolia credit routing + execution
+ * - tier1_crosschain_resilient: deterministic Solana->Sepolia suite allowing relayed OR user-paid gas
  * - tier2: realistic suite (cross-chain, venue flakes classified separately)
  * - chat_only: no execution, route=chat assertions only
  * - mixed: research + planning (+ optional explicit execute)
@@ -18,6 +19,7 @@
  *   npx tsx agent/scripts/live-stress-tester.ts --mode=mixed --count=20 --concurrency=4
  *   npx tsx agent/scripts/live-stress-tester.ts --mode=tier1 --allow_execute --count=40 --concurrency=2
  *   npx tsx agent/scripts/live-stress-tester.ts --mode=tier1_crosschain_required --allow_execute --count=10 --concurrency=2
+ *   npx tsx agent/scripts/live-stress-tester.ts --mode=tier1_crosschain_resilient --allow_execute --count=10 --concurrency=2
  */
 
 import { randomUUID } from 'crypto';
@@ -27,7 +29,7 @@ import { isTier1RelayedExecutionSupported, TIER1_SUPPORTED_CHAINS, TIER1_SUPPORT
 
 type AgentType = 'human' | 'erc8004';
 type Chain = 'ethereum' | 'solana' | 'hyperliquid' | 'both';
-type Mode = 'full' | 'tier1' | 'tier1_relayed_required' | 'tier1_crosschain_required' | 'tier2' | 'chat_only' | 'mixed';
+type Mode = 'full' | 'tier1' | 'tier1_relayed_required' | 'tier1_crosschain_required' | 'tier1_crosschain_resilient' | 'tier2' | 'chat_only' | 'mixed';
 type ExpectedRoute = 'chat' | 'planner';
 type FailureClass =
   | 'blossom_logic'
@@ -95,6 +97,7 @@ type ActionResult = {
   routeTxHash?: string;
   creditReceiptConfirmed?: boolean;
   executionReceiptConfirmed?: boolean;
+  fundingMode?: 'relayed' | 'user_pays_gas' | 'sponsor_gas_drip' | 'unknown';
 };
 
 type SessionResult = {
@@ -213,6 +216,7 @@ const modeRequiresLedger =
   MODE === 'tier1' ||
   MODE === 'tier1_relayed_required' ||
   MODE === 'tier1_crosschain_required' ||
+  MODE === 'tier1_crosschain_resilient' ||
   MODE === 'tier2' ||
   (MODE === 'mixed' && ALLOW_EXECUTE);
 if (!LEDGER_SECRET && !DRY_RUN && modeRequiresLedger) {
@@ -630,7 +634,7 @@ function buildSolanaOriginToSepoliaPerpAction(sessionIndex: number): Action {
 }
 
 function buildSessionActions(sessionIndex: number, mode: Mode): Action[] {
-  if (mode === 'tier1' || mode === 'tier1_relayed_required' || mode === 'tier1_crosschain_required') {
+  if (mode === 'tier1' || mode === 'tier1_relayed_required' || mode === 'tier1_crosschain_required' || mode === 'tier1_crosschain_resilient') {
     const tier1Actions: Action[] = [
       buildSwapAction(sessionIndex, 'ethereum'),
       buildDepositAction(sessionIndex, 'ethereum'),
@@ -640,7 +644,7 @@ function buildSessionActions(sessionIndex: number, mode: Mode): Action[] {
       buildEventCloseAction(sessionIndex),
     ];
 
-    if (mode === 'tier1_crosschain_required') {
+    if (mode === 'tier1_crosschain_required' || mode === 'tier1_crosschain_resilient') {
       const crossChainTier1Actions = tier1Actions.filter(action =>
         ['swap', 'deposit', 'perp', 'perp_close'].includes(action.category)
       );
@@ -1277,7 +1281,7 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
         !effectiveRes.ok &&
         endpoint === '/api/ledger/intents/execute' &&
         isVercelInvocationFailure(effectiveRes.text) &&
-        (MODE === 'tier1' || MODE === 'tier1_relayed_required' || MODE === 'tier1_crosschain_required') &&
+        (MODE === 'tier1' || MODE === 'tier1_relayed_required' || MODE === 'tier1_crosschain_required' || MODE === 'tier1_crosschain_resilient') &&
         functionFailureRetries < 1
       ) {
         functionFailureRetries += 1;
@@ -1300,11 +1304,17 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
         const routeDidRoute = routeMeta?.didRoute === true;
         const routeFromChain = String(routeMeta?.fromChain || '');
         const routeToChain = String(routeMeta?.toChain || '');
+        const fundingMode = String(
+          effectiveRes.json?.fundingMode ||
+          effectiveRes.json?.executionMeta?.fundingMode ||
+          effectiveRes.json?.metadata?.fundingMode ||
+          'unknown'
+        ).toLowerCase() as ActionResult['fundingMode'];
         const executionTxHash = effectiveRes.json?.txHash || effectiveRes.json?.execution?.txHash;
         const creditTxHash = routeMeta?.txHash;
         const txHash = executionTxHash || creditTxHash;
 
-        if (MODE === 'tier1_relayed_required' || MODE === 'tier1_crosschain_required') {
+        if (MODE === 'tier1_relayed_required' || MODE === 'tier1_crosschain_required' || MODE === 'tier1_crosschain_resilient') {
           if (isProofOnly) {
             return {
               actionId: action.id,
@@ -1336,7 +1346,8 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
               routeTxHash: txHash,
             };
           }
-          if (isWalletFallback && !ALLOW_RELAYED_WALLET_FALLBACK) {
+          const strictNoWalletFallback = MODE === 'tier1_relayed_required' || MODE === 'tier1_crosschain_required';
+          if (isWalletFallback && strictNoWalletFallback && !ALLOW_RELAYED_WALLET_FALLBACK) {
             return {
               actionId: action.id,
               category: action.category,
@@ -1354,7 +1365,7 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
               routeTxHash: txHash,
             };
           }
-          if (MODE === 'tier1_crosschain_required' && action.category === 'cross_chain_route') {
+          if ((MODE === 'tier1_crosschain_required' || MODE === 'tier1_crosschain_resilient') && action.category === 'cross_chain_route') {
             const normalizedRouteType = routeType.toLowerCase();
             const didRoute = routeDidRoute;
             const hasCreditTx = !!creditTxHash;
@@ -1388,6 +1399,7 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
                 txHash: executionTxHash,
                 creditReceiptConfirmed,
                 executionReceiptConfirmed,
+                fundingMode,
               };
             }
 
@@ -1407,6 +1419,7 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
               routeTxHash: creditTxHash,
               creditReceiptConfirmed,
               executionReceiptConfirmed,
+              fundingMode,
             };
           }
         }
@@ -1425,6 +1438,7 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
           routeFromChain,
           routeToChain,
           routeTxHash: txHash,
+          fundingMode,
         };
       }
 
@@ -1442,7 +1456,7 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
 
       // Cross-chain credit can legitimately take >1 block. In crosschain_required, wait for the credit receipt then retry.
       if (
-        MODE === 'tier1_crosschain_required' &&
+        (MODE === 'tier1_crosschain_required' || MODE === 'tier1_crosschain_resilient') &&
         action.category === 'cross_chain_route' &&
         errorCode === 'CROSS_CHAIN_ROUTE_PENDING' &&
         attempt < 10
@@ -1457,8 +1471,10 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
         continue;
       }
 
-      if ((MODE === 'tier1_relayed_required' || MODE === 'tier1_crosschain_required') && errorCode === 'UNSUPPORTED_VENUE') {
-        const skipAsFailForCrossChainRequired = MODE === 'tier1_crosschain_required' && action.category === 'cross_chain_route';
+      if ((MODE === 'tier1_relayed_required' || MODE === 'tier1_crosschain_required' || MODE === 'tier1_crosschain_resilient') && errorCode === 'UNSUPPORTED_VENUE') {
+        const skipAsFailForCrossChainRequired =
+          (MODE === 'tier1_crosschain_required' || MODE === 'tier1_crosschain_resilient') &&
+          action.category === 'cross_chain_route';
         return {
           actionId: action.id,
           category: action.category,
@@ -1526,7 +1542,9 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
       }
 
       if (isFunctionInvocationFailed(error)) {
-        const skipAsFailForCrossChainRequired = MODE === 'tier1_crosschain_required' && action.category === 'cross_chain_route';
+        const skipAsFailForCrossChainRequired =
+          (MODE === 'tier1_crosschain_required' || MODE === 'tier1_crosschain_resilient') &&
+          action.category === 'cross_chain_route';
         return {
           actionId: action.id,
           category: action.category,
@@ -1543,7 +1561,9 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
         if (lowerError.includes('insufficient funds for gas') || lowerError.includes('gas required exceeds allowance')) {
           globalExecuteDisabledReason = 'relayer gas depleted';
         }
-        const skipAsFailForCrossChainRequired = MODE === 'tier1_crosschain_required' && action.category === 'cross_chain_route';
+        const skipAsFailForCrossChainRequired =
+          (MODE === 'tier1_crosschain_required' || MODE === 'tier1_crosschain_resilient') &&
+          action.category === 'cross_chain_route';
         return {
           actionId: action.id,
           category: action.category,
@@ -2082,15 +2102,16 @@ async function runExecutionSession(sessionIndex: number, mode: Mode): Promise<Se
   }
 
   const results: ActionResult[] = [];
+  const modeCrosschainStrict = mode === 'tier1_crosschain_required' || mode === 'tier1_crosschain_resilient';
 
   if (agent.type === 'human') {
     const cacheKey = String(agent.walletAddress || '').toLowerCase();
     const cached = cacheKey ? sessionCacheByWallet.get(cacheKey) : undefined;
-    if (mode === 'tier1_crosschain_required' && cached && !agent.sessionId) {
+    if (modeCrosschainStrict && cached && !agent.sessionId) {
       agent.sessionId = cached.sessionId;
     }
 
-    if (mode === 'tier1_crosschain_required' && cached) {
+    if (modeCrosschainStrict && cached) {
       const active = await waitForSessionActive(agent, { maxPolls: 2, pollMs: 800 });
       if (active) {
         results.push({
@@ -2112,7 +2133,7 @@ async function runExecutionSession(sessionIndex: number, mode: Mode): Promise<Se
 
     const sessionPrepare = results[results.length - 1];
     if (sessionPrepare.status !== 'ok') {
-      if (mode === 'tier1_crosschain_required' && sessionPrepare.status === 'skipped') {
+      if (modeCrosschainStrict && sessionPrepare.status === 'skipped') {
         results[results.length - 1] = {
           ...sessionPrepare,
           status: 'fail',
@@ -2121,7 +2142,7 @@ async function runExecutionSession(sessionIndex: number, mode: Mode): Promise<Se
         };
       }
       const finishedAt = Date.now();
-      const modeStrict = mode === 'tier1_crosschain_required';
+      const modeStrict = modeCrosschainStrict;
       return {
         sessionId,
         agentId: agent.id,
@@ -2153,7 +2174,7 @@ async function runExecutionSession(sessionIndex: number, mode: Mode): Promise<Se
         error: 'SESSION_NOT_ACTIVE after prepare gating; skipped execute actions for this session',
         failureClass: 'rpc_rate_limit',
       });
-      if (mode === 'tier1_crosschain_required') {
+      if (modeCrosschainStrict) {
         results[results.length - 1] = {
           ...results[results.length - 1],
           status: 'fail',
@@ -2162,7 +2183,7 @@ async function runExecutionSession(sessionIndex: number, mode: Mode): Promise<Se
         };
       }
       const finishedAt = Date.now();
-      const modeStrict = mode === 'tier1_crosschain_required';
+      const modeStrict = modeCrosschainStrict;
       return {
         sessionId,
         agentId: agent.id,
@@ -2178,7 +2199,7 @@ async function runExecutionSession(sessionIndex: number, mode: Mode): Promise<Se
   const mintOptions: Chain[] =
     mode === 'tier1_relayed_required'
       ? ['ethereum']
-      : mode === 'tier1_crosschain_required'
+      : modeCrosschainStrict
         ? ['solana']
       : (MINT_CHAINS.length ? MINT_CHAINS : ['ethereum']);
   const mintChain = pick(mintOptions);
@@ -2220,7 +2241,7 @@ async function runExecutionSession(sessionIndex: number, mode: Mode): Promise<Se
       actionResults = [await executeIntent(agent, sessionId, action)];
     }
 
-    if (mode === 'tier1_crosschain_required' && action.category === 'cross_chain_route') {
+    if (modeCrosschainStrict && action.category === 'cross_chain_route') {
       actionResults = actionResults.map(result => {
         const userCancelled = /user\s+cancel/i.test(String(result.error || ''));
         if (result.status === 'skipped' && !userCancelled) {
@@ -2278,7 +2299,7 @@ async function runExecutionSession(sessionIndex: number, mode: Mode): Promise<Se
 
   const finishedAt = Date.now();
   const ok =
-    mode === 'tier1_crosschain_required'
+    mode === 'tier1_crosschain_required' || mode === 'tier1_crosschain_resilient'
       ? results.every(r => r.status === 'ok')
       : results.every(r => r.status === 'ok' || r.status === 'skipped');
 
@@ -2518,6 +2539,7 @@ function collectCrossChainProofs(results: SessionResult[]) {
         agentId: session.agentId,
         originWallet: 'solana',
         routeType: action.routeType,
+        fundingMode: action.fundingMode || 'unknown',
         fromChain: action.routeFromChain || 'solana_devnet',
         toChain: action.routeToChain,
         creditTxHash: action.routeTxHash,
@@ -2550,7 +2572,7 @@ async function hydrateAgentsFromKeys() {
 }
 
 async function runRelayedRequiredPreflight(): Promise<void> {
-  if ((MODE !== 'tier1_relayed_required' && MODE !== 'tier1_crosschain_required') || DRY_RUN) {
+  if ((MODE !== 'tier1_relayed_required' && MODE !== 'tier1_crosschain_required' && MODE !== 'tier1_crosschain_resilient') || DRY_RUN) {
     return;
   }
 
@@ -2568,16 +2590,16 @@ async function runRelayedRequiredPreflight(): Promise<void> {
     throw new Error(`Relayed preflight failed: unable to fetch /api/relayer/status (${res.status})`);
   }
 
-  if (MODE === 'tier1_crosschain_required') {
+  if (MODE === 'tier1_crosschain_required' || MODE === 'tier1_crosschain_resilient') {
     if (!ETH_RPC_URL) {
       throw new Error(
-        'tier1_crosschain_required preflight failed: missing ETH RPC URL for receipt confirmation and session signing (set STRESS_TEST_ETH_RPC_URL or ETH_TESTNET_RPC_URL)'
+        `${MODE} preflight failed: missing ETH RPC URL for receipt confirmation and session signing (set STRESS_TEST_ETH_RPC_URL or ETH_TESTNET_RPC_URL)`
       );
     }
     const hasWalletSigner = agents.some(agent => !!agent.privateKey) || WALLET_KEYS.length > 0;
     if (!hasWalletSigner) {
       throw new Error(
-        'tier1_crosschain_required preflight failed: missing wallet private key for /api/session/prepare signing (set STRESS_TEST_WALLET_PRIVATE_KEYS or TEST_WALLET_PRIVATE_KEY)'
+        `${MODE} preflight failed: missing wallet private key for /api/session/prepare signing (set STRESS_TEST_WALLET_PRIVATE_KEYS or TEST_WALLET_PRIVATE_KEY)`
       );
     }
   }
@@ -2590,7 +2612,7 @@ async function runRelayedRequiredPreflight(): Promise<void> {
   const fundingBalanceRaw = res.json?.funding?.fundingBalanceEth;
   const fundingBalanceEth = Number(fundingBalanceRaw || '0');
 
-  if (!topupEnabled && relayerBalance < minEth) {
+  if (!topupEnabled && relayerBalance < minEth && MODE !== 'tier1_crosschain_resilient') {
     throw new Error(
       `Relayed preflight failed: RELAYER_TOPUP_ENABLED=false and relayer balance ${relayerBalance} < min ${minEth}`
     );
@@ -2619,6 +2641,10 @@ async function runRelayedRequiredPreflight(): Promise<void> {
     );
   }
 
+  if (MODE === 'tier1_crosschain_resilient' && relayerBalance < minEth) {
+    log(`[preflight] resilient mode: relayer below min (${relayerBalance} < ${minEth}), expecting user_pays_gas fallback path`);
+  }
+
   log(
     `[preflight] relayer balance=${relayerBalance} min=${minEth} target=${targetEth} topupEnabled=${topupEnabled ? 'yes' : 'no'}`
   );
@@ -2630,6 +2656,7 @@ async function runSessionByMode(sessionIndex: number): Promise<SessionResult> {
   if (MODE === 'tier1') return runExecutionSession(sessionIndex, 'tier1');
   if (MODE === 'tier1_relayed_required') return runExecutionSession(sessionIndex, 'tier1_relayed_required');
   if (MODE === 'tier1_crosschain_required') return runExecutionSession(sessionIndex, 'tier1_crosschain_required');
+  if (MODE === 'tier1_crosschain_resilient') return runExecutionSession(sessionIndex, 'tier1_crosschain_resilient');
   if (MODE === 'tier2') return runExecutionSession(sessionIndex, 'tier2');
   return runExecutionSession(sessionIndex, 'full');
 }
@@ -2652,6 +2679,7 @@ async function main() {
     MODE === 'tier1' ||
     MODE === 'tier1_relayed_required' ||
     MODE === 'tier1_crosschain_required' ||
+    MODE === 'tier1_crosschain_resilient' ||
     MODE === 'tier2' ||
     (MODE === 'mixed' && ALLOW_EXECUTE);
   const effectiveWorkerConcurrency = executeModes
@@ -2668,12 +2696,12 @@ async function main() {
   }
   log(`   Dry run: ${DRY_RUN ? 'yes' : 'no'}`);
   log(`   Allow execute: ${ALLOW_EXECUTE ? 'yes' : 'no'}`);
-  if (MODE === 'tier1_relayed_required' || MODE === 'tier1_crosschain_required') {
+  if (MODE === 'tier1_relayed_required' || MODE === 'tier1_crosschain_required' || MODE === 'tier1_crosschain_resilient') {
     log(`   Allow wallet fallback: ${ALLOW_RELAYED_WALLET_FALLBACK ? 'yes' : 'no'}`);
   }
   log(`   Mint chains: ${MINT_CHAINS.join(', ')}`);
   log(`   Swap chains: ${SWAP_CHAINS.join(', ')}`);
-  if (MODE === 'tier1_relayed_required' || MODE === 'tier1_crosschain_required') {
+  if (MODE === 'tier1_relayed_required' || MODE === 'tier1_crosschain_required' || MODE === 'tier1_crosschain_resilient') {
     log(`   Tier1 supported chains: ${TIER1_SUPPORTED_CHAINS.join(', ')}`);
     log(`   Tier1 supported venues: ${TIER1_SUPPORTED_VENUES.join(', ')}`);
   }
@@ -2681,8 +2709,8 @@ async function main() {
   if (!STRESS_EVM_ADDRESS) log('   ⚠️  Missing STRESS_TEST_EVM_ADDRESS (mint to Ethereum may be skipped)');
   if (!STRESS_SOLANA_ADDRESS) log('   ⚠️  Missing STRESS_TEST_SOLANA_ADDRESS (mint to Solana may be skipped)');
   if (!STRESS_HYPERLIQUID_ADDRESS) log('   ⚠️  Missing STRESS_TEST_HYPERLIQUID_ADDRESS (mint to Hyperliquid may be skipped)');
-    if (MODE === 'tier1_crosschain_required' && !STRESS_SOLANA_ADDRESS) {
-      throw new Error('tier1_crosschain_required requires STRESS_TEST_SOLANA_ADDRESS');
+    if ((MODE === 'tier1_crosschain_required' || MODE === 'tier1_crosschain_resilient') && !STRESS_SOLANA_ADDRESS) {
+      throw new Error(`${MODE} requires STRESS_TEST_SOLANA_ADDRESS`);
     }
 
   await runRelayedRequiredPreflight();
@@ -2709,7 +2737,9 @@ async function main() {
   await Promise.all(workers);
 
   const summary = summarize(results);
-  const crossChainProofs = MODE === 'tier1_crosschain_required' ? collectCrossChainProofs(results) : [];
+  const crossChainProofs = (MODE === 'tier1_crosschain_required' || MODE === 'tier1_crosschain_resilient')
+    ? collectCrossChainProofs(results)
+    : [];
   log('\n=== Summary ===');
   log(`Mode: ${summary.mode}`);
   log(`Sessions: ${summary.sessions}`);
@@ -2722,11 +2752,11 @@ async function main() {
   log(`Latency p50/p95: ${summary.latencyMs.p50}ms / ${summary.latencyMs.p95}ms`);
   log(`Routing accuracy: ${summary.routing.accuracyPct}% (${summary.routing.matched}/${summary.routing.checked})`);
   log(`Safety accidental execute payloads in chat-only: ${summary.safety.accidentalExecutePayloadsInChatOnly}`);
-  if (MODE === 'tier1_crosschain_required') {
+  if (MODE === 'tier1_crosschain_required' || MODE === 'tier1_crosschain_resilient') {
     log(`Cross-chain confirmed proofs: ${crossChainProofs.length}`);
     crossChainProofs.slice(0, 5).forEach((proof, idx) => {
       log(
-        `  [proof ${idx + 1}] session=${proof.sessionId} wallet=${proof.originWallet} route=${proof.routeType} to=${proof.toChain} creditTx=${proof.creditTxHash} execTx=${proof.executionTxHash}`
+        `  [proof ${idx + 1}] session=${proof.sessionId} wallet=${proof.originWallet} route=${proof.routeType} to=${proof.toChain} fundingMode=${proof.fundingMode} creditTx=${proof.creditTxHash} execTx=${proof.executionTxHash}`
       );
     });
   }
@@ -2736,8 +2766,8 @@ async function main() {
     log(`\nResults saved to ${OUTPUT_FILE}`);
   }
 
-  if (MODE === 'tier1_crosschain_required' && crossChainProofs.length < 3) {
-    throw new Error(`tier1_crosschain_required failed: expected at least 3 confirmed cross-chain proofs, got ${crossChainProofs.length}`);
+  if ((MODE === 'tier1_crosschain_required' || MODE === 'tier1_crosschain_resilient') && crossChainProofs.length < 3) {
+    throw new Error(`${MODE} failed: expected at least 3 confirmed cross-chain proofs, got ${crossChainProofs.length}`);
   }
 }
 

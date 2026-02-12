@@ -48,6 +48,14 @@ export interface ExecutionResult {
   receiptStatus?: 'pending' | 'confirmed' | 'failed' | 'timeout';
   error?: string;
   errorCode?: string;
+  fundingMode?: 'relayed' | 'user_pays_gas' | 'sponsor_gas_drip';
+  walletFallbackTx?: {
+    to: string;
+    data: string;
+    value?: string;
+    gas?: string | number;
+  };
+  gasDripTxHash?: string;
   // Extended fields used by Chat.tsx
   mode?: 'simulated' | 'unsupported' | 'relayed' | 'wallet';
   explorerUrl?: string;
@@ -328,6 +336,9 @@ export async function executePlan(
         // Check for specific error codes
         const checkCode = errorCode || (data.error?.code);
         const errorText = String(errorMessage || '').toLowerCase();
+        const isWalletFallback =
+          String(data.mode || '').toLowerCase() === 'wallet_fallback' ||
+          data.needs_wallet_signature === true;
         const sessionErrorCodes = new Set([
           'SESSION_NOT_CREATED',
           'SESSION_NOT_FOUND',
@@ -343,6 +354,20 @@ export async function executePlan(
           errorText.includes('session not found') ||
           errorText.includes('session expired') ||
           errorText.includes('session revoked');
+
+        if (isWalletFallback) {
+          return {
+            ok: false,
+            mode: 'wallet',
+            error: errorMessage || 'Execution requires wallet signature.',
+            errorCode: checkCode || 'USER_PAYS_GAS_REQUIRED',
+            walletFallbackTx: data?.execution?.tx,
+            fundingMode: data?.fundingMode,
+            gasDripTxHash: data?.gasDrip?.txHash,
+            executionMeta: data?.executionMeta,
+            notes: data?.notes || ['Relayer is underfunded. Use wallet-paid gas for this execution.'],
+          };
+        }
 
         // Auto-heal stale session IDs once: recreate session and retry relayed execution.
         if (isSessionNotCreated && userAddr) {
