@@ -484,6 +484,22 @@ async function confirmSepoliaReceipt(txHash: string): Promise<boolean> {
   return false;
 }
 
+async function confirmSepoliaReceiptWithTimeout(txHash: string, timeoutMs: number): Promise<boolean> {
+  if (!txHash || !ETH_RPC_URL) return false;
+  try {
+    const { createPublicClient, http } = await import('viem');
+    const { sepolia } = await import('viem/chains');
+    const publicClient = createPublicClient({ chain: sepolia, transport: http(ETH_RPC_URL) });
+    const receipt = await publicClient.waitForTransactionReceipt({
+      hash: txHash as `0x${string}`,
+      timeout: Math.max(5000, timeoutMs || 60000),
+    });
+    return receipt?.status === 'success';
+  } catch {
+    return false;
+  }
+}
+
 function buildSwapAction(sessionIndex: number, forcedChain?: Chain): Action {
   const chain: Chain = forcedChain || pick(SWAP_CHAINS.length ? SWAP_CHAINS : ['ethereum']);
   const amount = randInt(10, 50);
@@ -1416,11 +1432,12 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
         MODE === 'tier1_crosschain_required' &&
         action.category === 'cross_chain_route' &&
         errorCode === 'CROSS_CHAIN_ROUTE_PENDING' &&
-        attempt < 6
+        attempt < 10
       ) {
         const pendingCreditTx = String(effectiveRes.json?.executionMeta?.route?.txHash || '');
         if (pendingCreditTx) {
-          await confirmSepoliaReceipt(pendingCreditTx);
+          // Sepolia can be spiky; give the credit mint longer than the default receipt wait before retrying execute.
+          await confirmSepoliaReceiptWithTimeout(pendingCreditTx, 90_000);
         }
         attempt += 1;
         await sleep(retryBackoffMs(attempt, 1200, 9000));
