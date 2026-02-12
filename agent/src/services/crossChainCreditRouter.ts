@@ -252,10 +252,11 @@ export async function routeStableCreditForExecution(
   });
 
   try {
-    // Keep routing deterministic but fast for serverless execute paths:
-    // submit mint tx and return receipt proof metadata without blocking on confirmation.
+    // For cross-chain proof flows we need a confirmed routing receipt (mint tx).
+    // Vercel maxDuration is 30s; waiting for 1 confirmation keeps the UI deterministic.
     const mint = await mintBusdc(userEvmAddress, amountUsd, {
-      waitForReceipt: false,
+      waitForReceipt: true,
+      receiptTimeoutMs: parseInt(process.env.CROSS_CHAIN_MINT_RECEIPT_TIMEOUT_MS || '25000', 10),
     });
     await updateCrossChainCreditAsync(record.id, {
       status: 'credited',

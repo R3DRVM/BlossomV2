@@ -2412,9 +2412,11 @@ async function runRelayedRequiredPreflight(): Promise<void> {
     if (!fundingAddress || fundingBalanceRaw === undefined) {
       log('[preflight] funding details redacted (unauthenticated status call); skipping funding wallet balance assertion');
     } else if (fundingBalanceEth < targetEth) {
-      if (MODE === 'tier1_crosschain_required') {
+      // Only block if the relayer itself is already underfunded. If the relayer has >= minEth,
+      // the run can proceed deterministically without relying on an auto top-up.
+      if (MODE === 'tier1_crosschain_required' && relayerBalance < minEth) {
         throw new Error(
-          `tier1_crosschain_required preflight failed: funding wallet balance ${fundingBalanceEth} ETH < target ${targetEth} ETH (insufficient for deterministic relayed execution)`
+          `tier1_crosschain_required preflight failed: relayer balance ${relayerBalance} ETH < min ${minEth} and funding wallet balance ${fundingBalanceEth} ETH < target ${targetEth} ETH`
         );
       }
       log(
