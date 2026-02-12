@@ -214,6 +214,24 @@ export interface IntentExecutionResult {
   executionId?: string;
   txHash?: string;
   explorerUrl?: string;
+  mode?: 'relayed' | 'relayed_after_topup' | 'user_paid_required' | 'blocked_needs_gas';
+  errorCode?: string;
+  execution?: {
+    chain?: string;
+    tx?: {
+      to: string;
+      data: string;
+      value?: string;
+      gas?: string | number;
+    };
+    approvalTx?: {
+      to: string;
+      data: string;
+      value?: string;
+      gas?: string | number;
+    };
+  };
+  executionMeta?: Record<string, any>;
   error?: {
     stage: IntentFailureStage;
     code: string;
@@ -2449,6 +2467,18 @@ async function executePerpEthereum(
   // Get intent's existing metadata to preserve caller info (source, domain, runId)
   const intent = await getIntentAsync(intentId);
   const existingMetadataJson = intent?.metadata_json;
+  let existingMetadata: Record<string, any> = {};
+  try {
+    existingMetadata = JSON.parse(existingMetadataJson || '{}');
+  } catch {
+    existingMetadata = {};
+  }
+  const callerUserAddress = String(
+    existingMetadata.userAddress ||
+    existingMetadata.walletAddress ||
+    existingMetadata.userEvmAddress ||
+    ''
+  ).trim();
 
   // Import config
   const {
@@ -2516,6 +2546,11 @@ async function executePerpEthereum(
     usdEstimate: estimateIntentUsd(parsed),
     usdEstimateIsEstimate: true,
   };
+  let fundingMeta: Record<string, any> = {
+    mode: 'relayed',
+    reasonCode: 'RELAYER_OK',
+  };
+  let selectedFundingMode: 'relayed' | 'relayed_after_topup' | 'user_paid_required' | 'blocked_needs_gas' = 'relayed';
 
   try {
     // Import viem for transaction
@@ -2523,13 +2558,9 @@ async function executePerpEthereum(
     const { privateKeyToAccount } = await import('viem/accounts');
     const { sepolia } = await import('viem/chains');
     const { withRelayerNonceLock } = await import('../executors/relayer');
+    const { executionFundingPolicy } = await import('../services/executionFundingPolicy');
 
     const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-
-    const account = privateKeyToAccount(RELAYER_PRIVATE_KEY as `0x${string}`);
-
-    // Update fromAddress now that we have the account
-    executionData.fromAddress = account.address;
 
     // Use a single deterministic RPC endpoint for perp execution on serverless.
     // Failover wallet transports can trigger incompatible RPC methods on some providers.
@@ -2537,11 +2568,10 @@ async function executePerpEthereum(
       chain: sepolia,
       transport: http(ETH_TESTNET_RPC_URL),
     });
-    const walletClient = createWalletClient({
-      account,
-      chain: sepolia,
-      transport: http(ETH_TESTNET_RPC_URL),
-    });
+    const account = privateKeyToAccount(RELAYER_PRIVATE_KEY as `0x${string}`);
+
+    // Update fromAddress now that we have the account
+    executionData.fromAddress = account.address;
 
     // Map market string to enum value
     const marketMap: Record<string, number> = {
@@ -2566,28 +2596,187 @@ async function executePerpEthereum(
     const perpAdapterAbi = parseAbi([
       'function execute(bytes calldata innerData) external payable returns (bytes memory)',
     ]);
-
-    // ExecutionRouter ABI
-    const routerAbi = parseAbi([
-      'function execute(address adapter, bytes calldata adapterData) external payable returns (bytes memory)',
+    const erc20Abi = parseAbi([
+      'function approve(address spender, uint256 amount) external returns (bool)',
+      'function allowance(address owner, address spender) external view returns (uint256)',
+      'function balanceOf(address account) external view returns (uint256)',
     ]);
 
     // Encode inner data for DemoPerpAdapter
     // Format: (uint8 action, address user, uint8 market, uint8 side, uint256 margin, uint256 leverage)
     const ACTION_OPEN = 1;
-    const innerData = encodeFunctionData({
-      abi: parseAbi(['function encode(uint8,address,uint8,uint8,uint256,uint256)']),
-      functionName: 'encode',
-      args: [ACTION_OPEN, account.address, market, side, marginAmount, BigInt(leverage)],
-    }).slice(10); // Remove function selector, we just want the encoded params
-
-    // Actually, we need to encode the params directly without a function signature
-    // Use encodeAbiParameters instead
     const { encodeAbiParameters, parseAbiParameters } = await import('viem');
-    const encodedInnerData = encodeAbiParameters(
+    const encodePerpInnerData = (executor: `0x${string}`) => encodeAbiParameters(
       parseAbiParameters('uint8, address, uint8, uint8, uint256, uint256'),
-      [ACTION_OPEN, account.address as `0x${string}`, market, side, marginAmount, BigInt(leverage)]
+      [ACTION_OPEN, executor, market, side, marginAmount, BigInt(leverage)]
     );
+    const encodedInnerData = encodePerpInnerData(account.address as `0x${string}`);
+
+    const fundingDecision = await executionFundingPolicy({
+      chain: 'sepolia',
+      userAddress: callerUserAddress,
+      attemptTopupSync: true,
+      topupReason: 'execute_perp_ethereum',
+      topupTimeoutMs: Math.max(1_000, parseInt(process.env.RELAYER_TOPUP_SYNC_TIMEOUT_MS || '12000', 10)),
+    });
+    fundingMeta = fundingDecision.executionMetaFunding;
+    selectedFundingMode = fundingDecision.mode;
+
+    if (fundingDecision.mode === 'blocked_needs_gas') {
+      await updateIntentStatus(intentId, {
+        status: 'failed',
+        failureStage: 'execute',
+        errorCode: 'BLOCKED_NEEDS_GAS',
+        errorMessage: fundingDecision.userMessage,
+      });
+      return {
+        ok: false,
+        intentId,
+        status: 'failed',
+        mode: 'blocked_needs_gas',
+        errorCode: 'BLOCKED_NEEDS_GAS',
+        error: {
+          stage: 'execute',
+          code: 'BLOCKED_NEEDS_GAS',
+          message: fundingDecision.userMessage,
+        },
+        executionMeta: {
+          funding: fundingMeta,
+        },
+      };
+    }
+
+    if (fundingDecision.mode === 'user_paid_required') {
+      const normalizedUser = /^0x[a-fA-F0-9]{40}$/.test(callerUserAddress)
+        ? (callerUserAddress as `0x${string}`)
+        : null;
+      if (!normalizedUser) {
+        await updateIntentStatus(intentId, {
+          status: 'failed',
+          failureStage: 'execute',
+          errorCode: 'MISSING_USER_ADDRESS',
+          errorMessage: 'Missing user EVM address for wallet-funded execution.',
+        });
+        return {
+          ok: false,
+          intentId,
+          status: 'failed',
+          mode: 'blocked_needs_gas',
+          errorCode: 'MISSING_USER_ADDRESS',
+          error: {
+            stage: 'execute',
+            code: 'MISSING_USER_ADDRESS',
+            message: 'Connect an EVM wallet to continue with wallet-paid gas.',
+          },
+          executionMeta: {
+            funding: fundingMeta,
+          },
+        };
+      }
+
+      const userStableBalance = await publicClient.readContract({
+        address: DEMO_REDACTED_ADDRESS as `0x${string}`,
+        abi: erc20Abi,
+        functionName: 'balanceOf',
+        args: [normalizedUser],
+      });
+      if (userStableBalance < marginAmount) {
+        await updateIntentStatus(intentId, {
+          status: 'failed',
+          failureStage: 'execute',
+          errorCode: 'INSUFFICIENT_COLLATERAL',
+          errorMessage: `Insufficient bUSDC collateral for wallet execution. Need ${marginAmount.toString()}.`,
+        });
+        return {
+          ok: false,
+          intentId,
+          status: 'failed',
+          mode: 'blocked_needs_gas',
+          errorCode: 'INSUFFICIENT_COLLATERAL',
+          error: {
+            stage: 'execute',
+            code: 'INSUFFICIENT_COLLATERAL',
+            message: 'Insufficient bUSDC collateral for wallet execution.',
+          },
+          executionMeta: {
+            funding: fundingMeta,
+          },
+        };
+      }
+
+      const allowance = await publicClient.readContract({
+        address: DEMO_REDACTED_ADDRESS as `0x${string}`,
+        abi: erc20Abi,
+        functionName: 'allowance',
+        args: [normalizedUser, DEMO_PERP_ADAPTER_ADDRESS as `0x${string}`],
+      });
+      const MAX_UINT256 = (1n << 256n) - 1n;
+      const approvalNeeded = allowance < marginAmount;
+      const userPerpCalldata = encodeFunctionData({
+        abi: perpAdapterAbi,
+        functionName: 'execute',
+        args: [encodePerpInnerData(normalizedUser)],
+      });
+      const approvalCalldata = approvalNeeded
+        ? encodeFunctionData({
+            abi: erc20Abi,
+            functionName: 'approve',
+            args: [DEMO_PERP_ADAPTER_ADDRESS as `0x${string}`, MAX_UINT256],
+          })
+        : undefined;
+
+      await updateIntentStatus(intentId, {
+        status: 'failed',
+        failureStage: 'execute',
+        errorCode: 'USER_PAID_REQUIRED',
+        errorMessage: 'Relayer underfunded; wallet-funded execution required.',
+      });
+
+      return {
+        ok: false,
+        intentId,
+        status: 'failed',
+        mode: 'user_paid_required',
+        errorCode: 'USER_PAID_REQUIRED',
+        error: {
+          stage: 'execute',
+          code: 'USER_PAID_REQUIRED',
+          message: 'Execution requires wallet gas (testnet ETH). Continue with wallet.',
+        },
+        execution: {
+          chain: 'sepolia',
+          tx: {
+            to: DEMO_PERP_ADAPTER_ADDRESS,
+            data: userPerpCalldata,
+            value: '0x0',
+          },
+          ...(approvalCalldata
+            ? {
+                approvalTx: {
+                  to: DEMO_REDACTED_ADDRESS,
+                  data: approvalCalldata,
+                  value: '0x0',
+                },
+              }
+            : {}),
+        },
+        executionMeta: {
+          funding: fundingMeta,
+          route: {
+            didRoute: false,
+            fromChain: 'sepolia',
+            toChain: 'sepolia',
+            reason: 'Wallet-funded fallback selected for execution continuity.',
+          },
+        },
+      };
+    }
+
+    const walletClient = createWalletClient({
+      account,
+      chain: sepolia,
+      transport: http(ETH_TESTNET_RPC_URL),
+    });
 
     // Before executing perp, we need DEMO_REDACTED balance
     // For testnet demo, we'll mint DEMO_REDACTED to the relayer first (if it's mintable)
@@ -2600,12 +2789,7 @@ async function executePerpEthereum(
       args: [DEMO_PERP_ADAPTER_ADDRESS as `0x${string}`, encodedInnerData as `0x${string}`],
     });
 
-    // First, approve DEMO_REDACTED to ExecutionRouter (if not already approved)
-    const erc20Abi = parseAbi([
-      'function approve(address spender, uint256 amount) external returns (bool)',
-      'function allowance(address owner, address spender) external view returns (uint256)',
-      'function balanceOf(address account) external view returns (uint256)',
-    ]);
+    // First, approve DEMO_REDACTED to DemoPerpAdapter (if not already approved)
 
     // Prevent nonce contention across serverless instances by serializing relayer sends.
     let txHash: `0x${string}` | undefined;
@@ -2856,9 +3040,13 @@ async function executePerpEthereum(
         ok: true,
         intentId,
         status: 'confirmed',
+        mode: selectedFundingMode,
         executionId: result.executionId,
         txHash,
         explorerUrl,
+        executionMeta: {
+          funding: fundingMeta,
+        },
         metadata: {
           executedKind: 'real',
           perpDetails: {
@@ -2892,9 +3080,13 @@ async function executePerpEthereum(
         ok: false,
         intentId,
         status: 'failed',
+        mode: selectedFundingMode,
         executionId: result.executionId,
         txHash,
         explorerUrl,
+        executionMeta: {
+          funding: fundingMeta,
+        },
         error: {
           stage: 'confirm',
           code: 'TX_REVERTED',
@@ -2974,9 +3166,13 @@ async function executePerpEthereum(
         ok: true, // TX was submitted successfully
         intentId,
         status: 'pending',
+        mode: selectedFundingMode,
         executionId: result.executionId,
         txHash,
         explorerUrl,
+        executionMeta: {
+          funding: fundingMeta,
+        },
         metadata: {
           executedKind: 'real',
           receiptPending: true,
@@ -3010,7 +3206,11 @@ async function executePerpEthereum(
       ok: false,
       intentId,
       status: 'failed',
+      mode: selectedFundingMode,
       executionId: result.executionId,
+      executionMeta: {
+        funding: fundingMeta,
+      },
       error: {
         stage: 'execute',
         code: 'PERP_EXECUTION_ERROR',

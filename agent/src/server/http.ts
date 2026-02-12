@@ -4333,7 +4333,15 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
       toChain: 'sepolia',
       reason: 'Execution funded directly on Ethereum Sepolia.',
     };
-    let executionFundingMode: 'relayed' | 'user_pays_gas' | 'sponsor_gas_drip' = 'relayed';
+    let executionFundingMode: 'relayed' | 'relayed_after_topup' | 'user_paid_required' | 'blocked_needs_gas' = 'relayed';
+    let executionFundingMeta: any = {
+      mode: 'relayed',
+      reasonCode: 'RELAYER_OK',
+      relayerBalanceEth: 0,
+      minEth: 0,
+      didTopup: false,
+      minUserGasEth: parseFloat(process.env.MIN_USER_GAS_ETH || '0.003'),
+    };
     const {
       buildRelayedQueueKey,
       getRelayedExecutionQueueResponse,
@@ -5338,57 +5346,71 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
     }
 
     // Send relayed transaction
-    const {
-      getRelayerStatus,
-      maybeTopUpRelayer: maybeTopUpRelayerBeforeSend,
-      maybeDripUserGas,
-      noteFundingRecoveryMode,
-      recordGasCreditAccrual,
-    } = await import('../services/relayerTopUp');
-    const { decideExecutionFundingMode } = await import('../services/executionFundingPolicy');
+    const { maybeDripUserGas, noteFundingRecoveryMode, recordGasCreditAccrual } = await import('../services/relayerTopUp');
+    const { executionFundingPolicy } = await import('../services/executionFundingPolicy');
 
-    const relayerStatus = await getRelayerStatus('sepolia');
-    if (!relayerStatus.relayer.okToExecute) {
-      const topupTimeoutMs = Math.max(1_000, parseInt(process.env.RELAYER_TOPUP_SYNC_TIMEOUT_MS || '12000', 10));
-      let topupTimedOut = false;
-      let topupResult: Awaited<ReturnType<typeof maybeTopUpRelayerBeforeSend>> | null = null;
+    const fundingPolicy = await executionFundingPolicy({
+      chain: 'sepolia',
+      userAddress,
+      attemptTopupSync: true,
+      topupReason: 'relayed_low_balance_sync',
+      topupTimeoutMs: Math.max(1_000, parseInt(process.env.RELAYER_TOPUP_SYNC_TIMEOUT_MS || '12000', 10)),
+    });
+    executionFundingMode = fundingPolicy.mode;
+    executionFundingMeta = fundingPolicy.executionMetaFunding;
 
-      try {
-        topupResult = await Promise.race([
-          maybeTopUpRelayerBeforeSend('sepolia', {
-            reason: 'relayed_low_balance_sync',
-            fireAndForget: false,
-          }),
-          new Promise<never>((_, reject) => {
-            setTimeout(() => {
-              topupTimedOut = true;
-              reject(new Error('RELAYER_TOPUP_TIMEOUT'));
-            }, topupTimeoutMs);
-          }),
-        ]);
-      } catch (topupError: any) {
-        // Keep running deterministic fallback below.
-      }
-
-      const relayerStatusAfterTopup = await getRelayerStatus('sepolia');
-      if (!relayerStatusAfterTopup.relayer.okToExecute) {
-        const fundingDecision = await decideExecutionFundingMode({
+    if (fundingPolicy.mode === 'user_paid_required') {
+      noteFundingRecoveryMode('user_pays_gas');
+      return res.status(409).json({
+        ok: false,
+        success: false,
+        queued: false,
+        mode: 'wallet_fallback',
+        fundingMode: 'user_paid_required',
+        errorCode: 'USER_PAID_REQUIRED',
+        error: fundingPolicy.userMessage,
+        needs_wallet_signature: true,
+        execution: {
+          mode: 'wallet_fallback',
           chain: 'sepolia',
-          userAddress,
-        });
+          tx: {
+            to: EXECUTION_ROUTER_ADDRESS!,
+            data,
+            value: req.body.value || '0x0',
+          },
+        },
+        machine: {
+          queued: false,
+          reason: fundingPolicy.reasonCode,
+        },
+        executionMeta: {
+          route: executionRouteMeta,
+          funding: fundingPolicy.executionMetaFunding,
+          fundingMode: 'user_paid_required',
+          chain: 'sepolia',
+        },
+        correlationId,
+      });
+    }
 
-        if (fundingDecision.ok && fundingDecision.mode === 'user_pays_gas') {
-          executionFundingMode = 'user_pays_gas';
-          noteFundingRecoveryMode('user_pays_gas');
-          return res.status(409).json({
+    if (fundingPolicy.mode === 'blocked_needs_gas') {
+      if (fundingPolicy.sponsorEligible && userAddress) {
+        const dripAttempt = await maybeDripUserGas('sepolia', userAddress, {
+          reason: 'execute_relayer_low_balance',
+          fireAndForget: false,
+        });
+        if (dripAttempt.ok) {
+          return res.status(402).json({
             ok: false,
             success: false,
             queued: false,
-            mode: 'wallet_fallback',
-            fundingMode: 'user_pays_gas',
-            errorCode: 'USER_PAYS_GAS_REQUIRED',
-            error: 'Relayer is underfunded. Sign once in your wallet and proceed with user-paid gas.',
+            errorCode: 'BLOCKED_NEEDS_GAS',
+            error: 'Execution requires wallet gas (testnet ETH). Top-up sent. Continue with wallet.',
             needs_wallet_signature: true,
+            gasDrip: {
+              txHash: dripAttempt.txHash,
+              amountEth: dripAttempt.amountEth,
+            },
             execution: {
               mode: 'wallet_fallback',
               chain: 'sepolia',
@@ -5400,118 +5422,40 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
             },
             machine: {
               queued: false,
-              reason: 'relayer_low_balance_user_pays_gas',
-            },
-            relayer: {
-              balanceEth: relayerStatusAfterTopup.relayer.balanceEth,
-              minEth: relayerStatusAfterTopup.relayer.minEth,
-              okToExecute: relayerStatusAfterTopup.relayer.okToExecute,
+              reason: 'SPONSOR_DRIP_AVAILABLE',
             },
             executionMeta: {
               route: executionRouteMeta,
-              fundingMode: 'user_pays_gas',
+              funding: {
+                ...fundingPolicy.executionMetaFunding,
+                sponsorReason: dripAttempt.reason || fundingPolicy.executionMetaFunding.sponsorReason,
+              },
+              fundingMode: 'blocked_needs_gas',
               chain: 'sepolia',
             },
             correlationId,
           });
         }
-
-        if (fundingDecision.ok && fundingDecision.mode === 'sponsor_gas_drip') {
-          const dripAttempt = await maybeDripUserGas('sepolia', userAddress, {
-            reason: 'execute_relayer_low_balance',
-            fireAndForget: false,
-          });
-          if (dripAttempt.ok) {
-            executionFundingMode = 'sponsor_gas_drip';
-            return res.status(409).json({
-              ok: false,
-              success: false,
-              queued: false,
-              mode: 'wallet_fallback',
-              fundingMode: 'sponsor_gas_drip',
-              errorCode: 'GAS_DRIP_COMPLETED_RETRY',
-              error: 'Gas top-up sent. Sign once in your wallet to continue execution.',
-              needs_wallet_signature: true,
-              gasDrip: {
-                txHash: dripAttempt.txHash,
-                amountEth: dripAttempt.amountEth,
-              },
-              execution: {
-                mode: 'wallet_fallback',
-                chain: 'sepolia',
-                tx: {
-                  to: EXECUTION_ROUTER_ADDRESS!,
-                  data,
-                  value: req.body.value || '0x0',
-                },
-              },
-              machine: {
-                queued: false,
-                reason: 'relayer_low_balance_gas_drip',
-              },
-              executionMeta: {
-                route: executionRouteMeta,
-                fundingMode: 'sponsor_gas_drip',
-                chain: 'sepolia',
-              },
-              correlationId,
-            });
-          }
-
-          return res.status(402).json({
-            ok: false,
-            success: false,
-            queued: false,
-            errorCode: 'FUNDING_WALLET_UNDERFUNDED',
-            error: "Insufficient gas to execute. Click 'Top up gas' or retry later.",
-            machine: {
-              queued: false,
-              reason: 'sponsor_gas_drip_failed',
-            },
-            relayer: {
-              balanceEth: relayerStatusAfterTopup.relayer.balanceEth,
-              minEth: relayerStatusAfterTopup.relayer.minEth,
-              okToExecute: relayerStatusAfterTopup.relayer.okToExecute,
-            },
-            gasDrip: {
-              attempted: dripAttempt.attempted,
-              reason: dripAttempt.reason,
-              error: dripAttempt.error,
-            },
-            executionMeta: {
-              route: executionRouteMeta,
-              fundingMode: 'sponsor_gas_drip',
-              chain: 'sepolia',
-            },
-            correlationId,
-          });
-        }
-
-        return res.status(402).json({
-          ok: false,
-          success: false,
-          queued: false,
-          errorCode: topupTimedOut
-            ? 'RELAYER_UNDERFUNDED'
-            : (fundingDecision.sponsorReason === 'funding_wallet_insufficient' ? 'FUNDING_WALLET_UNDERFUNDED' : 'RELAYER_UNDERFUNDED'),
-          error: fundingDecision.userMessage || "Insufficient gas to execute. Click 'Top up gas' or retry later.",
-          machine: {
-            queued: false,
-            reason: fundingDecision.reason || 'relayer_low_balance',
-          },
-          relayer: {
-            balanceEth: relayerStatusAfterTopup.relayer.balanceEth,
-            minEth: relayerStatusAfterTopup.relayer.minEth,
-            okToExecute: relayerStatusAfterTopup.relayer.okToExecute,
-          },
-          executionMeta: {
-            route: executionRouteMeta,
-            fundingMode: 'relayed',
-            chain: 'sepolia',
-          },
-          correlationId,
-        });
       }
+
+      return res.status(402).json({
+        ok: false,
+        success: false,
+        queued: false,
+        errorCode: 'BLOCKED_NEEDS_GAS',
+        error: fundingPolicy.userMessage,
+        machine: {
+          queued: false,
+          reason: fundingPolicy.reasonCode,
+        },
+        executionMeta: {
+          route: executionRouteMeta,
+          funding: fundingPolicy.executionMetaFunding,
+          fundingMode: 'blocked_needs_gas',
+          chain: 'sepolia',
+        },
+        correlationId,
+      });
     }
 
     noteFundingRecoveryMode('relayed');
@@ -5556,7 +5500,12 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
 
     // CRITICAL FIX: Record position to ledger when confirmed
     if (receiptStatus === 'confirmed' && txHash) {
-      recordGasCreditAccrual({ fundingMode: 'relayed' });
+      recordGasCreditAccrual({
+        fundingMode:
+          executionFundingMode === 'relayed' || executionFundingMode === 'relayed_after_topup'
+            ? 'relayed'
+            : 'user_pays_gas',
+      });
       try {
         const { createPosition, createExecution, updateExecution } = await import('../../execution-ledger/db');
 
@@ -5664,6 +5613,7 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
       error: receiptError,
       executionMeta: {
         route: executionRouteMeta,
+        funding: executionFundingMeta,
       },
       portfolioDelta: {
         accountValueDeltaUsd: portfolioAfter.accountValueUsd - portfolioBefore.accountValueUsd,
@@ -5718,6 +5668,7 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
       notes: ['execution_path:relayed'], // Task 4: Unambiguous evidence of execution path
       executionMeta: {
         route: executionRouteMeta,
+        funding: executionFundingMeta,
         fundingMode: executionFundingMode,
         chain: 'sepolia',
       },
@@ -5810,6 +5761,7 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
       correlationId, // Include correlationId in error response
       executionMeta: {
         route: executionRouteMeta,
+        funding: executionFundingMeta,
         fundingMode: executionFundingMode,
         chain: 'sepolia',
       },
@@ -10044,6 +9996,7 @@ app.post('/api/ledger/intents/execute', checkLedgerSecret, async (req, res) => {
     const { runIntent, executeIntentById, recordFailedIntent } = await import('../intent/intentRunner');
     const { ALLOW_PROOF_ONLY } = await import('../config');
     const { maybeTopUpRelayer } = await import('../services/relayerTopUp');
+    const { executionFundingPolicy } = await import('../services/executionFundingPolicy');
     const { isTier1RelayedExecutionSupported, isTier1RelayedMode } = await import('../intent/tier1SupportedVenues');
     const { ensureExecutionFunding } = await import('../services/crossChainCreditRouter');
     const callerMetadata = typeof metadata === 'object' && metadata !== null ? metadata : {};
@@ -10085,12 +10038,45 @@ app.post('/api/ledger/intents/execute', checkLedgerSecret, async (req, res) => {
     })();
     // Prefer explicit caller-provided amountUsd for deterministic test flows.
     const amountUsdHint = Number(callerMetadata.amountUsd || callerMetadata.amountUsdRequired || inferredAmountFromIntent || 0);
+    let fundingPolicySnapshot: any = null;
+    let fundingPolicyMode: string | undefined;
+
+    const attachFundingMeta = (payload: any) => {
+      const currentFunding =
+        payload?.executionMeta?.funding ||
+        payload?.metadata?.funding ||
+        fundingPolicySnapshot ||
+        {
+          mode: fundingPolicyMode || 'relayed',
+          reasonCode: fundingPolicyMode === 'relayed_after_topup' ? 'RELAYER_TOPUP_OK' : 'RELAYER_OK',
+          minUserGasEth: parseFloat(process.env.MIN_USER_GAS_ETH || '0.003'),
+          didTopup: fundingPolicyMode === 'relayed_after_topup',
+        };
+      return {
+        ...payload,
+        executionMeta: {
+          ...(payload?.executionMeta || {}),
+          ...(crossChainRouteMeta ? { route: crossChainRouteMeta } : {}),
+          funding: currentFunding,
+          fundingMode: String(currentFunding?.mode || payload?.mode || fundingPolicyMode || 'relayed'),
+        },
+      };
+    };
 
     if (!planOnly) {
       void maybeTopUpRelayer('sepolia', {
         reason: 'ledger_execute_preflight',
         fireAndForget: true,
       });
+      const fundingDecision = await executionFundingPolicy({
+        chain: 'sepolia',
+        userAddress: userEvmAddressRaw || undefined,
+        attemptTopupSync: true,
+        topupReason: 'ledger_execute_preflight_sync',
+        topupTimeoutMs: Math.max(1_000, parseInt(process.env.RELAYER_TOPUP_SYNC_TIMEOUT_MS || '12000', 10)),
+      });
+      fundingPolicySnapshot = fundingDecision.executionMetaFunding;
+      fundingPolicyMode = fundingDecision.mode;
 
       if (
         /^0x[a-fA-F0-9]{40}$/.test(userEvmAddressRaw) &&
@@ -10124,6 +10110,7 @@ app.post('/api/ledger/intents/execute', checkLedgerSecret, async (req, res) => {
             },
             executionMeta: {
               route: funding.route,
+              ...(fundingPolicySnapshot ? { funding: fundingPolicySnapshot } : {}),
             },
           });
         }
@@ -10158,6 +10145,9 @@ app.post('/api/ledger/intents/execute', checkLedgerSecret, async (req, res) => {
               code: 'UNSUPPORTED_VENUE',
               message: 'Tier1 relayed-required does not permit proof-only fallback for this route.',
             },
+            executionMeta: {
+              ...(fundingPolicySnapshot ? { funding: fundingPolicySnapshot } : {}),
+            },
           });
         }
         return res.status(409).json({
@@ -10169,18 +10159,12 @@ app.post('/api/ledger/intents/execute', checkLedgerSecret, async (req, res) => {
             code: 'PROOF_ONLY_BLOCKED',
             message: 'Proof-only execution is disabled. Configure venue support or set ALLOW_PROOF_ONLY=true.',
           },
-        });
-      }
-      if (crossChainRouteMeta) {
-        return res.json({
-          ...result,
           executionMeta: {
-            ...(result?.executionMeta || {}),
-            route: crossChainRouteMeta,
+            ...(fundingPolicySnapshot ? { funding: fundingPolicySnapshot } : {}),
           },
         });
       }
-      return res.json(result);
+      return res.json(attachFundingMeta(result));
     }
 
     // Build standard metadata with source tracking
@@ -10229,6 +10213,9 @@ app.post('/api/ledger/intents/execute', checkLedgerSecret, async (req, res) => {
             code: 'UNSUPPORTED_VENUE',
             message: 'Tier1 relayed-required does not permit proof-only fallback for this route.',
           },
+          executionMeta: {
+            ...(fundingPolicySnapshot ? { funding: fundingPolicySnapshot } : {}),
+          },
         });
       }
       return res.status(409).json({
@@ -10240,21 +10227,14 @@ app.post('/api/ledger/intents/execute', checkLedgerSecret, async (req, res) => {
           code: 'PROOF_ONLY_BLOCKED',
           message: 'Proof-only execution is disabled. Configure venue support or set ALLOW_PROOF_ONLY=true.',
         },
-      });
-    }
-
-    if (crossChainRouteMeta) {
-      return res.json({
-        ...result,
         executionMeta: {
-          ...(result?.executionMeta || {}),
-          route: crossChainRouteMeta,
+          ...(fundingPolicySnapshot ? { funding: fundingPolicySnapshot } : {}),
         },
       });
     }
 
-    // Return the result (already in the expected format)
-    res.json(result);
+    // Return the result with deterministic funding metadata
+    res.json(attachFundingMeta(result));
   } catch (error: any) {
     console.error('[ledger] Intent execution error:', error);
     res.status(500).json({

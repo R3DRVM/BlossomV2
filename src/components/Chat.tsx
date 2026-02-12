@@ -3820,6 +3820,10 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
     
     // Get executed strategy (used for both sim and eth_testnet paths)
     const executedStrategy = strategies.find(s => s.id === draftId);
+    const draftFundingErrorCode = String((executedStrategy as any)?.executionMeta?.errorCode || '').toUpperCase();
+    const forceManualFundingFallback =
+      draftFundingErrorCode === 'USER_PAID_REQUIRED' ||
+      draftFundingErrorCode === 'USER_PAYS_GAS_REQUIRED';
     
     // ETH testnet execution path (additive, doesn't change sim behavior)
     if (configExecutionMode === 'eth_testnet') {
@@ -3915,7 +3919,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
 
         // Session execution path: if user has enabled session mode and is not using manual signing
         // This should trigger regardless of the global executionAuthMode config
-        if (isSessionEnabled && !userHasManualSigning) {
+        if (isSessionEnabled && !userHasManualSigning && !forceManualFundingFallback) {
           console.log('[handleConfirmTrade] Using session execution path');
           const sessionIdKey = `blossom_oneclick_sessionid_${userAddress.toLowerCase()}`;
           const legacySessionIdKey = `blossom_session_${userAddress.toLowerCase()}`;
@@ -4006,13 +4010,19 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
               'SESSION_SETUP_PENDING',
             ]);
             const gasFallbackCodes = new Set([
+              'USER_PAID_REQUIRED',
               'USER_PAYS_GAS_REQUIRED',
               'GAS_DRIP_COMPLETED_RETRY',
             ]);
             const capacityPausedCodes = new Set([
+              'BLOCKED_NEEDS_GAS',
               'RELAYER_UNDERFUNDED',
               'FUNDING_WALLET_UNDERFUNDED',
               'INSUFFICIENT_GAS_CAPACITY',
+            ]);
+            const userPaidRequiredCodes = new Set([
+              'USER_PAID_REQUIRED',
+              'USER_PAYS_GAS_REQUIRED',
             ]);
             const shouldFallbackToManual =
               (result.errorCode ? sessionFallbackCodes.has(result.errorCode) : false) ||
@@ -4045,6 +4055,29 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
                 timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
               };
               appendMessageToChat(targetChatId, errorMessage);
+              return;
+            }
+
+            if (result.errorCode && userPaidRequiredCodes.has(result.errorCode)) {
+              updateStrategy(draftId, {
+                status: 'blocked',
+                executionNote: 'Execution requires wallet gas (testnet ETH).',
+                executionMeta: {
+                  ...(result.executionMeta || {}),
+                  funding: {
+                    ...(result.executionMeta?.funding || {}),
+                  },
+                  fundingMode: result.fundingMode || 'user_paid_required',
+                  errorCode: 'USER_PAID_REQUIRED',
+                  chain: 'sepolia',
+                },
+              } as any);
+              appendMessageToChat(targetChatId, {
+                id: `wallet-required-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                text: 'Execution requires wallet gas (testnet ETH). Click Continue with wallet on the plan card.',
+                isUser: false,
+                timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+              });
               return;
             }
 

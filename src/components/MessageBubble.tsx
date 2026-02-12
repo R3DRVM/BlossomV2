@@ -189,7 +189,11 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
   const routeMeta = currentStrategy?.executionMeta?.route;
   const executionMeta = (currentStrategy as any)?.executionMeta || {};
   const blockedErrorCode = String(executionMeta?.errorCode || '').toUpperCase();
+  const isUserPaidRequiredBlocked =
+    isBlocked &&
+    (blockedErrorCode === 'USER_PAID_REQUIRED' || blockedErrorCode === 'USER_PAYS_GAS_REQUIRED');
   const isCapacityBlocked = isBlocked && (
+    blockedErrorCode === 'BLOCKED_NEEDS_GAS' ||
     blockedErrorCode === 'RELAYER_UNDERFUNDED' ||
     blockedErrorCode === 'FUNDING_WALLET_UNDERFUNDED' ||
     blockedErrorCode === 'INSUFFICIENT_GAS_CAPACITY'
@@ -1068,11 +1072,31 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
             {isBlocked && (
               <div className="pt-1.5 border-t border-blossom-outline/50 space-y-2">
                 <div className="text-[11px] text-amber-700 mb-2 px-1">
-                  {isCapacityBlocked
+                  {isUserPaidRequiredBlocked
+                    ? 'Execution requires wallet gas (testnet ETH). Continue with wallet to submit.'
+                    : isCapacityBlocked
                     ? 'Execution temporarily unavailable due to network gas capacity.'
                     : ((currentStrategy as any)?.executionNote || 'Insufficient bUSDC collateral to open this position.')}
                 </div>
-                {isCapacityBlocked ? (
+                {isUserPaidRequiredBlocked ? (
+                  <button
+                    onClick={async (e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (isConfirmingDraft || !strategyId || !onConfirmDraft) return;
+                      setIsConfirmingDraft(true);
+                      try {
+                        await Promise.resolve(onConfirmDraft(strategyId));
+                      } finally {
+                        setIsConfirmingDraft(false);
+                      }
+                    }}
+                    disabled={isConfirmingDraft}
+                    className="w-full h-10 px-4 text-sm font-medium rounded-xl transition-all bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isConfirmingDraft ? 'Executing...' : 'Continue with wallet'}
+                  </button>
+                ) : isCapacityBlocked ? (
                   <div className="space-y-2">
                     <button
                       disabled

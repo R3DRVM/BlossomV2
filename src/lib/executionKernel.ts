@@ -48,7 +48,13 @@ export interface ExecutionResult {
   receiptStatus?: 'pending' | 'confirmed' | 'failed' | 'timeout';
   error?: string;
   errorCode?: string;
-  fundingMode?: 'relayed' | 'user_pays_gas' | 'sponsor_gas_drip';
+  fundingMode?:
+    | 'relayed'
+    | 'relayed_after_topup'
+    | 'user_pays_gas'
+    | 'user_paid_required'
+    | 'sponsor_gas_drip'
+    | 'blocked_needs_gas';
   walletFallbackTx?: {
     to: string;
     data: string;
@@ -360,9 +366,9 @@ export async function executePlan(
             ok: false,
             mode: 'wallet',
             error: errorMessage || 'Execution requires wallet signature.',
-            errorCode: checkCode || 'USER_PAYS_GAS_REQUIRED',
+            errorCode: checkCode || 'USER_PAID_REQUIRED',
             walletFallbackTx: data?.execution?.tx,
-            fundingMode: data?.fundingMode,
+            fundingMode: data?.fundingMode || data?.executionMeta?.funding?.mode,
             gasDripTxHash: data?.gasDrip?.txHash,
             executionMeta: data?.executionMeta,
             notes: data?.notes || ['Relayer is underfunded. Use wallet-paid gas for this execution.'],

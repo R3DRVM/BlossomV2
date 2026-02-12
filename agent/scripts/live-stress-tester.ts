@@ -97,7 +97,14 @@ type ActionResult = {
   routeTxHash?: string;
   creditReceiptConfirmed?: boolean;
   executionReceiptConfirmed?: boolean;
-  fundingMode?: 'relayed' | 'user_pays_gas' | 'sponsor_gas_drip' | 'unknown';
+  fundingMode?:
+    | 'relayed'
+    | 'relayed_after_topup'
+    | 'user_pays_gas'
+    | 'user_paid_required'
+    | 'sponsor_gas_drip'
+    | 'blocked_needs_gas'
+    | 'unknown';
 };
 
 type SessionResult = {
@@ -181,7 +188,6 @@ const hlLastSubmitAtByWallet = new Map<string, number>();
 const hlGlobalSubmitLockKey = '__hyperliquid_global_submit_lock__';
 const rotatedWalletPool: Array<{ walletAddress?: string; privateKey?: string }> = [];
 const sessionCacheByWallet = new Map<string, { sessionId: string; updatedAt: number }>();
-let globalExecuteDisabledReason: string | null = null;
 
 agents.forEach((agent, index) => {
   if (WALLET_KEYS[index]) {
@@ -461,6 +467,72 @@ async function maybeFundEvmWalletFromRelayer(
   }
 }
 
+function toWeiBigInt(value: string | number | bigint | undefined): bigint {
+  if (typeof value === 'bigint') return value;
+  if (typeof value === 'number' && Number.isFinite(value)) return BigInt(Math.max(0, Math.floor(value)));
+  const str = String(value || '0').trim();
+  if (!str) return 0n;
+  try {
+    return str.startsWith('0x') ? BigInt(str) : BigInt(str);
+  } catch {
+    return 0n;
+  }
+}
+
+async function executeUserPaidFallbackFromPayload(
+  agent: AgentState,
+  payload: any
+): Promise<{ ok: boolean; txHash?: string; error?: string }> {
+  const tx = payload?.execution?.tx || payload?.walletFallbackTx;
+  if (!tx?.to || !tx?.data) {
+    return { ok: false, error: 'missing_wallet_fallback_tx' };
+  }
+
+  const wallet = await getWalletClient(agent);
+  if (!wallet) {
+    return { ok: false, error: 'missing_wallet_private_key_or_eth_rpc' };
+  }
+
+  const approvalTx = payload?.execution?.approvalTx;
+  const sendRaw = async (rawTx: any) => {
+    return wallet.walletClient.sendTransaction({
+      account: wallet.account,
+      to: rawTx.to as `0x${string}`,
+      data: rawTx.data as `0x${string}`,
+      value: toWeiBigInt(rawTx.value),
+    });
+  };
+
+  try {
+    if (approvalTx?.to && approvalTx?.data) {
+      const approvalHash = await sendRaw(approvalTx);
+      const approvalReceipt = await wallet.publicClient.waitForTransactionReceipt({
+        hash: approvalHash,
+        timeout: 90_000,
+      });
+      if (approvalReceipt.status !== 'success') {
+        return { ok: false, error: `approval_failed:${approvalHash}` };
+      }
+    }
+  } catch (error: any) {
+    return { ok: false, error: `approval_send_failed:${error?.message || 'unknown'}` };
+  }
+
+  try {
+    const txHash = await sendRaw(tx);
+    const receipt = await wallet.publicClient.waitForTransactionReceipt({
+      hash: txHash,
+      timeout: 120_000,
+    });
+    if (receipt.status !== 'success') {
+      return { ok: false, error: `wallet_fallback_reverted:${txHash}` };
+    }
+    return { ok: true, txHash };
+  } catch (error: any) {
+    return { ok: false, error: error?.message || 'wallet_fallback_send_failed' };
+  }
+}
+
 async function confirmSepoliaReceipt(txHash: string): Promise<boolean> {
   if (!txHash || !ETH_RPC_URL) return false;
   try {
@@ -723,6 +795,7 @@ function classifyFailure(errorText: string | undefined, action: Pick<ActionResul
   if (lower.includes('unsupported_venue') || lower.includes('proof_only_blocked')) return 'venue_flake';
   if (lower.includes('guardrail') || lower.includes('route mismatch') || lower.includes('hallucination')) return 'guardrail_failure';
   if (isHyperliquidRateLimitError(lower) || lower.includes('too many requests') || lower.includes('gateway timeout') || lower.includes('timed out')) return 'rpc_rate_limit';
+  if (lower.includes('user_paid_required') || lower.includes('blocked_needs_gas') || lower.includes('relayer_underfunded')) return 'venue_flake';
   if (isHyperliquidGasOrProofCapacityError(lower)) return 'venue_flake';
   if (isNonceError(lower)) return 'nonce_collision';
   if (lower.includes('jupiter') || lower.includes('liquidity') || lower.includes('venue') || lower.includes('quote') || lower.includes('devnet')) return 'venue_flake';
@@ -1194,19 +1267,6 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
   const endpoint = '/api/ledger/intents/execute';
 
   const execute = async () => {
-    if (globalExecuteDisabledReason) {
-      return {
-        actionId: action.id,
-        category: action.category,
-        chain: action.chain,
-        endpoint,
-        status: 'skipped' as const,
-        latencyMs: Date.now() - started,
-        error: `global_execute_disabled: ${globalExecuteDisabledReason}`,
-        failureClass: 'venue_flake' as FailureClass,
-      };
-    }
-
     if (DRY_RUN) {
       return {
         actionId: action.id,
@@ -1305,6 +1365,7 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
         const routeFromChain = String(routeMeta?.fromChain || '');
         const routeToChain = String(routeMeta?.toChain || '');
         const fundingMode = String(
+          effectiveRes.json?.executionMeta?.funding?.mode ||
           effectiveRes.json?.fundingMode ||
           effectiveRes.json?.executionMeta?.fundingMode ||
           effectiveRes.json?.metadata?.fundingMode ||
@@ -1453,6 +1514,104 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
           effectiveRes.json?.code ||
           ''
       ).toUpperCase();
+      const failedRouteMeta = effectiveRes.json?.executionMeta?.route;
+      const failedRouteType = String(failedRouteMeta?.routeType || '');
+      const failedRouteDidRoute = failedRouteMeta?.didRoute === true;
+      const failedRouteFromChain = String(failedRouteMeta?.fromChain || '');
+      const failedRouteToChain = String(failedRouteMeta?.toChain || '');
+      const failedCreditTxHash = String(failedRouteMeta?.txHash || '');
+      const fallbackFundingMode = String(
+        effectiveRes.json?.executionMeta?.funding?.mode ||
+        effectiveRes.json?.executionMeta?.fundingMode ||
+        effectiveRes.json?.fundingMode ||
+        'unknown'
+      ).toLowerCase() as ActionResult['fundingMode'];
+
+      if (MODE === 'tier1_crosschain_resilient' && errorCode === 'USER_PAID_REQUIRED' && effectiveRes.json?.execution?.tx) {
+        const fallbackExecution = await executeUserPaidFallbackFromPayload(agent, effectiveRes.json);
+        if (fallbackExecution.ok && fallbackExecution.txHash) {
+          if (action.category === 'cross_chain_route') {
+            const creditReceiptConfirmed = failedCreditTxHash ? await confirmSepoliaReceipt(failedCreditTxHash) : false;
+            const executionReceiptConfirmed = await confirmSepoliaReceipt(fallbackExecution.txHash);
+            if (
+              failedRouteType.toLowerCase() !== 'testnet_credit' ||
+              failedRouteToChain.toLowerCase() !== 'sepolia' ||
+              !failedRouteDidRoute ||
+              !failedCreditTxHash ||
+              !creditReceiptConfirmed ||
+              !executionReceiptConfirmed
+            ) {
+              return {
+                actionId: action.id,
+                category: action.category,
+                chain: action.chain,
+                endpoint,
+                status: 'fail' as const,
+                latencyMs: Date.now() - started,
+                error: `cross_chain_route_assertion_failed_after_wallet_fallback: routeType=${failedRouteType || 'missing'} toChain=${failedRouteToChain || 'missing'} creditTx=${failedCreditTxHash ? 'present' : 'missing'} creditReceipt=${creditReceiptConfirmed ? 'confirmed' : 'missing'} execReceipt=${executionReceiptConfirmed ? 'confirmed' : 'missing'}`,
+                failureClass: 'cross_chain_route_failed',
+                routeType: failedRouteType,
+                routeDidRoute: failedRouteDidRoute,
+                routeFromChain: failedRouteFromChain,
+                routeToChain: failedRouteToChain,
+                routeTxHash: failedCreditTxHash || undefined,
+                txHash: fallbackExecution.txHash,
+                creditReceiptConfirmed,
+                executionReceiptConfirmed,
+                fundingMode: fallbackFundingMode || 'user_paid_required',
+              };
+            }
+            return {
+              actionId: action.id,
+              category: action.category,
+              chain: action.chain,
+              endpoint,
+              status: 'ok' as const,
+              latencyMs: Date.now() - started,
+              txHash: fallbackExecution.txHash,
+              routeType: failedRouteType,
+              routeDidRoute: failedRouteDidRoute,
+              routeFromChain: failedRouteFromChain,
+              routeToChain: failedRouteToChain,
+              routeTxHash: failedCreditTxHash || undefined,
+              creditReceiptConfirmed: true,
+              executionReceiptConfirmed: true,
+              fundingMode: fallbackFundingMode || 'user_paid_required',
+            };
+          }
+          return {
+            actionId: action.id,
+            category: action.category,
+            chain: action.chain,
+            endpoint,
+            status: 'ok' as const,
+            latencyMs: Date.now() - started,
+            txHash: fallbackExecution.txHash,
+            routeType: failedRouteType || undefined,
+            routeDidRoute: failedRouteDidRoute,
+            routeFromChain: failedRouteFromChain || undefined,
+            routeToChain: failedRouteToChain || undefined,
+            routeTxHash: failedCreditTxHash || undefined,
+            fundingMode: fallbackFundingMode || 'user_paid_required',
+          };
+        }
+        return {
+          actionId: action.id,
+          category: action.category,
+          chain: action.chain,
+          endpoint,
+          status: 'fail' as const,
+          latencyMs: Date.now() - started,
+          error: `wallet_fallback_failed: ${fallbackExecution.error || 'unknown'}`,
+          failureClass: action.category === 'cross_chain_route' ? 'cross_chain_route_failed' : 'venue_flake',
+          routeType: failedRouteType || undefined,
+          routeDidRoute: failedRouteDidRoute,
+          routeFromChain: failedRouteFromChain || undefined,
+          routeToChain: failedRouteToChain || undefined,
+          routeTxHash: failedCreditTxHash || undefined,
+          fundingMode: fallbackFundingMode || 'user_paid_required',
+        };
+      }
 
       // Cross-chain credit can legitimately take >1 block. In crosschain_required, wait for the credit receipt then retry.
       if (
@@ -1558,9 +1717,6 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
       }
 
       if (failureClass === 'venue_flake') {
-        if (lowerError.includes('insufficient funds for gas') || lowerError.includes('gas required exceeds allowance')) {
-          globalExecuteDisabledReason = 'relayer gas depleted';
-        }
         const skipAsFailForCrossChainRequired =
           (MODE === 'tier1_crosschain_required' || MODE === 'tier1_crosschain_resilient') &&
           action.category === 'cross_chain_route';
