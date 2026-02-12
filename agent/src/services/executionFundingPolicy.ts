@@ -90,11 +90,11 @@ function buildResult(
 }
 
 function getOperationalRelayerMinEth(): number {
-  const parsed = Number(process.env.MIN_RELAYER_OPERATIONAL_ETH || MIN_USER_GAS_ETH);
+  const parsed = Number(process.env.MIN_RELAYER_OPERATIONAL_ETH || '0.001');
   if (!Number.isFinite(parsed) || parsed <= 0) {
-    return 0.003;
+    return 0.001;
   }
-  return Math.max(0.0005, parsed);
+  return Math.max(0.0002, parsed);
 }
 
 export async function executionFundingPolicy(params: {
