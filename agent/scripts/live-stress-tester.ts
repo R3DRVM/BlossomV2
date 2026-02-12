@@ -2878,9 +2878,53 @@ async function main() {
   if (!STRESS_HYPERLIQUID_ADDRESS) log('   ⚠️  Missing STRESS_TEST_HYPERLIQUID_ADDRESS (mint to Hyperliquid may be skipped)');
     if ((MODE === 'tier1_crosschain_required' || MODE === 'tier1_crosschain_resilient') && !STRESS_SOLANA_ADDRESS) {
       throw new Error(`${MODE} requires STRESS_TEST_SOLANA_ADDRESS`);
-    }
+  }
 
   await runRelayedRequiredPreflight();
+
+  // Prove warmup: pre-approve stable allowance once to avoid spending an extra tx per session.
+  // This is best-effort; if it fails, sessions may still succeed if allowance was already set.
+  if (PROVE_MODE && (MODE === 'tier1_crosschain_resilient' || MODE === 'tier1_crosschain_required')) {
+    try {
+      const warmupAgent = agents.find(a => !!a.privateKey) || agents[0];
+      const wallet = await getWalletClient(warmupAgent);
+      const { DEMO_BUSDC_ADDRESS, DEMO_REDACTED_ADDRESS, DEMO_PERP_ADAPTER_ADDRESS } = await import('../src/config');
+      const token = (DEMO_BUSDC_ADDRESS || DEMO_REDACTED_ADDRESS) as string | undefined;
+      const spender = DEMO_PERP_ADAPTER_ADDRESS as string | undefined;
+      if (wallet && token && spender && /^0x[a-fA-F0-9]{40}$/.test(token) && /^0x[a-fA-F0-9]{40}$/.test(spender)) {
+        const { parseAbi } = await import('viem');
+        const erc20Abi = parseAbi([
+          'function allowance(address owner, address spender) view returns (uint256)',
+          'function approve(address spender, uint256 amount) returns (bool)',
+        ]);
+        const allowance = await wallet.publicClient.readContract({
+          address: token as `0x${string}`,
+          abi: erc20Abi,
+          functionName: 'allowance',
+          args: [wallet.account.address, spender as `0x${string}`],
+        });
+        const MAX_UINT256 = (1n << 256n) - 1n;
+        const isMaxish = allowance > (1n << 255n);
+        if (!isMaxish) {
+          log(`[prove:warmup] approving stable allowance to perp adapter (current=${allowance.toString()})`);
+          const approvalHash = await wallet.walletClient.writeContract({
+            address: token as `0x${string}`,
+            abi: erc20Abi,
+            functionName: 'approve',
+            args: [spender as `0x${string}`, MAX_UINT256],
+          });
+          await wallet.publicClient.waitForTransactionReceipt({ hash: approvalHash, timeout: 120_000 });
+          log(`[prove:warmup] approval confirmed: ${approvalHash}`);
+        } else {
+          log('[prove:warmup] stable allowance already max; skipping approve');
+        }
+      } else {
+        log('[prove:warmup] skipped: missing wallet key or token/spender addresses');
+      }
+    } catch (error: any) {
+      log(`[prove:warmup] failed: ${error?.message || String(error)}`);
+    }
+  }
 
   const results: SessionResult[] = [];
   let currentIndex = 0;
