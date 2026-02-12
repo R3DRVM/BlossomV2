@@ -22,6 +22,32 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function withPgAdvisoryLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  if (!process.env.DATABASE_URL) {
+    return fn();
+  }
+
+  try {
+    const { getPgPool } = await import('../../execution-ledger/db-pg-client');
+    const pool = getPgPool();
+    const client = await pool.connect();
+    try {
+      await client.query('SELECT pg_advisory_lock(hashtext($1)::bigint)', [key]);
+      return await fn();
+    } finally {
+      try {
+        await client.query('SELECT pg_advisory_unlock(hashtext($1)::bigint)', [key]);
+      } catch {
+        // best-effort unlock
+      }
+      client.release();
+    }
+  } catch {
+    // Fail open if Postgres isn't available, rely on in-process lock.
+    return fn();
+  }
+}
+
 function getMaxRelayerGasLimit(): bigint {
   const raw = String(process.env.RELAYER_MAX_GAS_LIMIT || '').trim();
   const parsed = raw ? Number(raw) : NaN;
@@ -46,6 +72,17 @@ function withRelayerSendLock<T>(fn: () => Promise<T>): Promise<T> {
     .finally(() => {
       release();
     });
+}
+
+export async function withRelayerNonceLock<T>(fn: (accountAddress: `0x${string}`) => Promise<T>): Promise<T> {
+  requireRelayerConfig();
+  if (!RELAYER_PRIVATE_KEY) {
+    throw new Error('RELAYER_PRIVATE_KEY is required for relayer nonce lock');
+  }
+  const account = privateKeyToAccount(RELAYER_PRIVATE_KEY as `0x${string}`);
+  const lockKey = `relayer:sepolia:${account.address.toLowerCase()}`;
+
+  return withRelayerSendLock(() => withPgAdvisoryLock(lockKey, () => fn(account.address)));
 }
 
 export function classifyRelayerErrorBucket(error: any): RelayerErrorBucket {
@@ -116,7 +153,7 @@ export async function sendRelayedTx({
   data: string;
   value?: string;
 }): Promise<string> {
-  return withRelayerSendLock(async () => {
+  return withRelayerNonceLock(async () => {
     requireRelayerConfig();
 
     if (!RELAYER_PRIVATE_KEY) {

@@ -2522,6 +2522,7 @@ async function executePerpEthereum(
     const { createPublicClient, createWalletClient, encodeFunctionData, http, parseAbi } = await import('viem');
     const { privateKeyToAccount } = await import('viem/accounts');
     const { sepolia } = await import('viem/chains');
+    const { withRelayerNonceLock } = await import('../executors/relayer');
 
     const account = privateKeyToAccount(RELAYER_PRIVATE_KEY as `0x${string}`);
 
@@ -2604,124 +2605,114 @@ async function executePerpEthereum(
       'function balanceOf(address account) external view returns (uint256)',
     ]);
 
-    // Check balance
-    let balance = await publicClient.readContract({
-      address: DEMO_REDACTED_ADDRESS as `0x${string}`,
-      abi: erc20Abi,
-      functionName: 'balanceOf',
-      args: [account.address],
-    });
-
-    // Auto-mint DEMO_REDACTED if balance is insufficient (testnet demo feature)
-    if (balance < marginAmount) {
-      console.log(`[executePerpEthereum] Relayer balance ${balance} < needed ${marginAmount}, auto-minting...`);
-
-      const mintAbi = parseAbi(['function mint(address to, uint256 amount) external']);
-      const mintAmount = marginAmount * BigInt(10); // Mint 10x to cover future trades
-
-      try {
-        const mintTxHash = await walletClient.writeContract({
-          address: DEMO_REDACTED_ADDRESS as `0x${string}`,
-          abi: mintAbi,
-          functionName: 'mint',
-          args: [account.address, mintAmount],
-        });
-
-        console.log(`[executePerpEthereum] Mint tx submitted: ${mintTxHash}`);
-
-        // Wait for mint confirmation with short timeout (1 confirmation, 10s max)
-        await publicClient.waitForTransactionReceipt({
-          hash: mintTxHash,
-          timeout: 3000,
-          confirmations: 1,
-        });
-
-        console.log(`[executePerpEthereum] Mint confirmed`);
-
-        // Re-check balance after mint
-        balance = await publicClient.readContract({
-          address: DEMO_REDACTED_ADDRESS as `0x${string}`,
-          abi: erc20Abi,
-          functionName: 'balanceOf',
-          args: [account.address],
-        });
-
-        console.log(`[executePerpEthereum] New balance: ${balance}`);
-      } catch (mintError: any) {
-        console.error(`[executePerpEthereum] Auto-mint failed:`, mintError.message);
-        // Continue with original insufficient balance error if mint fails
-      }
-    }
-
-    // Final balance check after potential auto-mint
-    if (balance < marginAmount) {
-      // Pre-flight check failed - create execution record showing why
-      const result = await finalizeExecutionTransactionAsync({
-        intentId,
-        execution: {
-          ...executionData,
-          status: 'failed',
-          errorCode: 'INSUFFICIENT_BALANCE',
-          errorMessage: `Insufficient DEMO_REDACTED balance: have ${balance}, need ${marginAmount}`,
-        },
-        intentStatus: {
-          status: 'failed',
-          failureStage: 'execute',
-          errorCode: 'INSUFFICIENT_BALANCE',
-          errorMessage: 'Insufficient DEMO_REDACTED balance for perp margin',
-        },
+    // Prevent nonce contention across serverless instances by serializing relayer sends.
+    let txHash: `0x${string}` | undefined;
+    await withRelayerNonceLock(async () => {
+      let nextNonce = await publicClient.getTransactionCount({
+        address: account.address,
+        blockTag: 'pending',
       });
 
-      return {
-        ok: false,
-        intentId,
-        status: 'failed',
-        executionId: result.executionId,
-        error: {
-          stage: 'execute',
-          code: 'INSUFFICIENT_BALANCE',
-          message: 'Insufficient DEMO_REDACTED balance for perp margin',
-        },
-      };
-    }
-
-    // Check and set allowance to DemoPerpAdapter (called directly)
-    const allowance = await publicClient.readContract({
-      address: DEMO_REDACTED_ADDRESS as `0x${string}`,
-      abi: erc20Abi,
-      functionName: 'allowance',
-      args: [account.address, DEMO_PERP_ADAPTER_ADDRESS as `0x${string}`],
-    });
-
-    if (allowance < marginAmount) {
-      // Approve DemoPerpAdapter to spend DEMO_REDACTED
-      const approveTxHash = await walletClient.writeContract({
+      // Check balance
+      let balance = await publicClient.readContract({
         address: DEMO_REDACTED_ADDRESS as `0x${string}`,
         abi: erc20Abi,
-        functionName: 'approve',
-        args: [DEMO_PERP_ADAPTER_ADDRESS as `0x${string}`, marginAmount * BigInt(10)], // Approve 10x to avoid future approvals
+        functionName: 'balanceOf',
+        args: [account.address],
       });
 
-      try {
-        await publicClient.waitForTransactionReceipt({
-          hash: approveTxHash,
-          timeout: 5000,
-        });
-      } catch (approveWaitError: any) {
-        console.log(
-          `[executePerpEthereum] Approval receipt wait timed out for ${approveTxHash}; continuing with best-effort execution`
-        );
-      }
-    }
+      // Auto-mint DEMO_REDACTED if balance is insufficient (testnet demo feature)
+      if (balance < marginAmount) {
+        console.log(`[executePerpEthereum] Relayer balance ${balance} < needed ${marginAmount}, auto-minting...`);
 
-    // Execute the perp position directly via adapter
-    // DemoPerpAdapter.execute pulls tokens from msg.sender
-    const txHash = await walletClient.writeContract({
-      address: DEMO_PERP_ADAPTER_ADDRESS as `0x${string}`,
-      abi: perpAdapterAbi,
-      functionName: 'execute',
-      args: [encodedInnerData as `0x${string}`],
+        const mintAbi = parseAbi(['function mint(address to, uint256 amount) external']);
+        const mintAmount = marginAmount * BigInt(10); // Mint 10x to cover future trades
+
+        try {
+          const mintTxHash = await walletClient.writeContract({
+            address: DEMO_REDACTED_ADDRESS as `0x${string}`,
+            abi: mintAbi,
+            functionName: 'mint',
+            args: [account.address, mintAmount],
+            nonce: nextNonce,
+          });
+          nextNonce += 1;
+
+          console.log(`[executePerpEthereum] Mint tx submitted: ${mintTxHash}`);
+
+          // Wait for mint confirmation with short timeout (1 confirmation, 10s max)
+          await publicClient.waitForTransactionReceipt({
+            hash: mintTxHash,
+            timeout: 3000,
+            confirmations: 1,
+          });
+
+          console.log(`[executePerpEthereum] Mint confirmed`);
+
+          // Re-check balance after mint
+          balance = await publicClient.readContract({
+            address: DEMO_REDACTED_ADDRESS as `0x${string}`,
+            abi: erc20Abi,
+            functionName: 'balanceOf',
+            args: [account.address],
+          });
+
+          console.log(`[executePerpEthereum] New balance: ${balance}`);
+        } catch (mintError: any) {
+          console.error(`[executePerpEthereum] Auto-mint failed:`, mintError.message);
+          // Continue with original insufficient balance error if mint fails
+        }
+      }
+
+      // Final balance check after potential auto-mint
+      if (balance < marginAmount) {
+        // Let the outer handler record failure consistently.
+        throw new Error(`Insufficient DEMO_REDACTED balance: have ${balance}, need ${marginAmount}`);
+      }
+
+      // Check and set allowance to DemoPerpAdapter (called directly)
+      const allowance = await publicClient.readContract({
+        address: DEMO_REDACTED_ADDRESS as `0x${string}`,
+        abi: erc20Abi,
+        functionName: 'allowance',
+        args: [account.address, DEMO_PERP_ADAPTER_ADDRESS as `0x${string}`],
+      });
+
+      if (allowance < marginAmount) {
+        const approveTxHash = await walletClient.writeContract({
+          address: DEMO_REDACTED_ADDRESS as `0x${string}`,
+          abi: erc20Abi,
+          functionName: 'approve',
+          args: [DEMO_PERP_ADAPTER_ADDRESS as `0x${string}`, marginAmount * BigInt(10)],
+          nonce: nextNonce,
+        });
+        nextNonce += 1;
+
+        try {
+          await publicClient.waitForTransactionReceipt({
+            hash: approveTxHash,
+            timeout: 5000,
+          });
+        } catch (approveWaitError: any) {
+          console.log(
+            `[executePerpEthereum] Approval receipt wait timed out for ${approveTxHash}; continuing with best-effort execution`
+          );
+        }
+      }
+
+      // Execute the perp position directly via adapter
+      txHash = await walletClient.writeContract({
+        address: DEMO_PERP_ADAPTER_ADDRESS as `0x${string}`,
+        abi: perpAdapterAbi,
+        functionName: 'execute',
+        args: [encodedInnerData as `0x${string}`],
+        nonce: nextNonce,
+      });
     });
+
+    if (!txHash) {
+      throw new Error('Failed to submit perp transaction');
+    }
 
     const explorerUrl = buildExplorerUrl('ethereum', 'sepolia', txHash);
     const latencyMs = Date.now() - startTime;
