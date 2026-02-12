@@ -45,6 +45,18 @@ export interface Strategy {
   blockNumber?: number; // Block number where transaction was mined
   explorerUrl?: string; // Explorer link (e.g., https://sepolia.etherscan.io/tx/0x...)
   strategyExecutionNonce?: number; // Nonce for idempotency (increments per execution)
+  executionMeta?: {
+    route?: {
+      didRoute: boolean;
+      routeType?: string;
+      fromChain?: string;
+      toChain?: string;
+      reason?: string;
+      receiptId?: string;
+      txHash?: string;
+      creditedAmountUsd?: number;
+    };
+  };
 }
 
 export interface AssetBalance {

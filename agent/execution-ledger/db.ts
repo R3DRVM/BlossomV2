@@ -228,6 +228,25 @@ export interface Wallet {
   created_at: number;
 }
 
+export type CrossChainCreditStatus = 'created' | 'credited' | 'failed';
+
+export interface CrossChainCredit {
+  id: string;
+  created_at: number;
+  updated_at: number;
+  user_id?: string;
+  session_id?: string;
+  from_chain: string;
+  to_chain: string;
+  amount_usd: number;
+  stable_symbol: string;
+  from_address?: string;
+  to_address?: string;
+  status: CrossChainCreditStatus;
+  error_code?: string;
+  meta_json?: string;
+}
+
 // ============================================
 // Execution Operations
 // ============================================
@@ -1883,6 +1902,102 @@ export function getWaitlistCount(): number {
 }
 
 // ============================================
+// Cross-Chain Credit Operations
+// ============================================
+
+export function createCrossChainCredit(params: {
+  userId?: string;
+  sessionId?: string;
+  fromChain: string;
+  toChain: string;
+  amountUsd: number;
+  stableSymbol: string;
+  fromAddress?: string;
+  toAddress?: string;
+  status?: CrossChainCreditStatus;
+  errorCode?: string;
+  metaJson?: string;
+}): CrossChainCredit {
+  const db = getDatabase();
+  const id = randomUUID();
+  const now = Math.floor(Date.now() / 1000);
+
+  db.prepare(`
+    INSERT INTO cross_chain_credits (
+      id, created_at, updated_at, user_id, session_id, from_chain, to_chain,
+      amount_usd, stable_symbol, from_address, to_address, status, error_code, meta_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    now,
+    now,
+    params.userId || null,
+    params.sessionId || null,
+    params.fromChain,
+    params.toChain,
+    params.amountUsd,
+    params.stableSymbol,
+    params.fromAddress || null,
+    params.toAddress || null,
+    params.status || 'created',
+    params.errorCode || null,
+    params.metaJson || null
+  );
+
+  return {
+    id,
+    created_at: now,
+    updated_at: now,
+    user_id: params.userId,
+    session_id: params.sessionId,
+    from_chain: params.fromChain,
+    to_chain: params.toChain,
+    amount_usd: params.amountUsd,
+    stable_symbol: params.stableSymbol,
+    from_address: params.fromAddress,
+    to_address: params.toAddress,
+    status: params.status || 'created',
+    error_code: params.errorCode,
+    meta_json: params.metaJson,
+  };
+}
+
+export function updateCrossChainCredit(
+  id: string,
+  updates: {
+    status?: CrossChainCreditStatus;
+    errorCode?: string;
+    metaJson?: string;
+  }
+): void {
+  const db = getDatabase();
+  const now = Math.floor(Date.now() / 1000);
+
+  const fields: string[] = ['updated_at = ?'];
+  const values: any[] = [now];
+
+  if (updates.status !== undefined) {
+    fields.push('status = ?');
+    values.push(updates.status);
+  }
+  if (updates.errorCode !== undefined) {
+    fields.push('error_code = ?');
+    values.push(updates.errorCode);
+  }
+  if (updates.metaJson !== undefined) {
+    fields.push('meta_json = ?');
+    values.push(updates.metaJson);
+  }
+
+  if (fields.length <= 1) {
+    return;
+  }
+
+  values.push(id);
+  db.prepare(`UPDATE cross_chain_credits SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+}
+
+// ============================================
 // Aliases for API compatibility
 // ============================================
 
@@ -2011,6 +2126,50 @@ export async function updateExecutionAsync(
 
   // SQLite: use synchronous version
   updateExecution(id, updates as any);
+  return Promise.resolve();
+}
+
+/**
+ * Async-capable cross-chain credit creation (uses Postgres if DATABASE_URL is set)
+ */
+export async function createCrossChainCreditAsync(params: {
+  userId?: string;
+  sessionId?: string;
+  fromChain: string;
+  toChain: string;
+  amountUsd: number;
+  stableSymbol: string;
+  fromAddress?: string;
+  toAddress?: string;
+  status?: CrossChainCreditStatus;
+  errorCode?: string;
+  metaJson?: string;
+}): Promise<CrossChainCredit> {
+  if (dbType === 'postgres') {
+    const pgDb = await import('./db-pg.js');
+    return pgDb.createCrossChainCredit(params as any) as Promise<CrossChainCredit>;
+  }
+
+  return Promise.resolve(createCrossChainCredit(params));
+}
+
+/**
+ * Async-capable cross-chain credit updates (uses Postgres if DATABASE_URL is set)
+ */
+export async function updateCrossChainCreditAsync(
+  id: string,
+  updates: {
+    status?: CrossChainCreditStatus;
+    errorCode?: string;
+    metaJson?: string;
+  }
+): Promise<void> {
+  if (dbType === 'postgres') {
+    const pgDb = await import('./db-pg.js');
+    return pgDb.updateCrossChainCredit(id, updates as any);
+  }
+
+  updateCrossChainCredit(id, updates);
   return Promise.resolve();
 }
 

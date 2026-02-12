@@ -19,6 +19,7 @@
     "stress:mixed:prod": "npx tsx agent/scripts/live-stress-tester.ts --baseUrl=https://api.blossom.onl --mode=mixed --count=20 --concurrency=4 --output=logs/stress-mixed-prod.json",
     "stress:tier1:deterministic": "npx tsx agent/scripts/live-stress-tester.ts --baseUrl=https://api.blossom.onl --mode=tier1 --allow_execute --count=40 --concurrency=2 --output=logs/stress-tier1-deterministic.json",
     "stress:tier1:relayed_required": "npx tsx agent/scripts/live-stress-tester.ts --baseUrl=https://api.blossom.onl --mode=tier1_relayed_required --allow_execute --count=40 --concurrency=2 --output=logs/stress-tier1-relayed-required.json",
+    "stress:tier1:crosschain_required": "npx tsx agent/scripts/live-stress-tester.ts --baseUrl=https://api.blossom.onl --mode=tier1_crosschain_required --allow_execute --count=10 --concurrency=2 --output=logs/stress-tier1-crosschain-required.json",
     "stress:tier2:realistic": "npx tsx agent/scripts/live-stress-tester.ts --baseUrl=https://api.blossom.onl --mode=tier2 --allow_execute --count=40 --concurrency=2 --output=logs/stress-tier2-realistic.json"
   },
   "dependencies": {

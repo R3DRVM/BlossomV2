@@ -81,6 +81,59 @@ interface UpdateExecutionParams {
   errorMessage?: string;
 }
 
+interface CreateCrossChainCreditParams {
+  userId?: string;
+  sessionId?: string;
+  fromChain: string;
+  toChain: string;
+  amountUsd: number;
+  stableSymbol: string;
+  fromAddress?: string;
+  toAddress?: string;
+  status?: 'created' | 'credited' | 'failed';
+  errorCode?: string;
+  metaJson?: string;
+}
+
+interface UpdateCrossChainCreditParams {
+  status?: 'created' | 'credited' | 'failed';
+  errorCode?: string;
+  metaJson?: string;
+}
+
+let crossChainCreditsTableReady = false;
+
+async function ensureCrossChainCreditsTable(): Promise<void> {
+  if (crossChainCreditsTableReady) {
+    return;
+  }
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS cross_chain_credits (
+      id TEXT PRIMARY KEY,
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL,
+      user_id TEXT,
+      session_id TEXT,
+      from_chain TEXT NOT NULL,
+      to_chain TEXT NOT NULL,
+      amount_usd DOUBLE PRECISION NOT NULL,
+      stable_symbol TEXT NOT NULL,
+      from_address TEXT,
+      to_address TEXT,
+      status TEXT NOT NULL DEFAULT 'created',
+      error_code TEXT,
+      meta_json TEXT
+    )
+  `);
+  await query('CREATE INDEX IF NOT EXISTS idx_cross_chain_credits_user ON cross_chain_credits(user_id)');
+  await query('CREATE INDEX IF NOT EXISTS idx_cross_chain_credits_session ON cross_chain_credits(session_id)');
+  await query('CREATE INDEX IF NOT EXISTS idx_cross_chain_credits_status ON cross_chain_credits(status)');
+  await query('CREATE INDEX IF NOT EXISTS idx_cross_chain_credits_created ON cross_chain_credits(created_at)');
+
+  crossChainCreditsTableReady = true;
+}
+
 /**
  * Create a new intent record
  */
@@ -305,6 +358,71 @@ export async function updateExecution(id: string, updates: UpdateExecutionParams
     console.error(`[Postgres] Failed to update execution ${id.slice(0,8)}:`, error.message);
     throw error;
   }
+}
+
+/**
+ * Create a cross-chain credit routing receipt row.
+ */
+export async function createCrossChainCredit(params: CreateCrossChainCreditParams) {
+  await ensureCrossChainCreditsTable();
+
+  const id = randomUUID();
+  const now = Math.floor(Date.now() / 1000);
+  const sql = convertPlaceholders(
+    `INSERT INTO cross_chain_credits (
+      id, created_at, updated_at, user_id, session_id, from_chain, to_chain,
+      amount_usd, stable_symbol, from_address, to_address, status, error_code, meta_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    RETURNING *`
+  );
+
+  return queryOne(sql, [
+    id,
+    now,
+    now,
+    params.userId || null,
+    params.sessionId || null,
+    params.fromChain,
+    params.toChain,
+    params.amountUsd,
+    params.stableSymbol,
+    params.fromAddress || null,
+    params.toAddress || null,
+    params.status || 'created',
+    params.errorCode || null,
+    params.metaJson || null,
+  ]);
+}
+
+/**
+ * Update a cross-chain credit routing receipt row.
+ */
+export async function updateCrossChainCredit(id: string, updates: UpdateCrossChainCreditParams): Promise<void> {
+  await ensureCrossChainCreditsTable();
+
+  const fields: string[] = ['updated_at = $1'];
+  const values: any[] = [Math.floor(Date.now() / 1000)];
+  let paramIndex = 2;
+
+  if (updates.status !== undefined) {
+    fields.push(`status = $${paramIndex++}`);
+    values.push(updates.status);
+  }
+  if (updates.errorCode !== undefined) {
+    fields.push(`error_code = $${paramIndex++}`);
+    values.push(updates.errorCode);
+  }
+  if (updates.metaJson !== undefined) {
+    fields.push(`meta_json = $${paramIndex++}`);
+    values.push(updates.metaJson);
+  }
+
+  if (fields.length <= 1) {
+    return;
+  }
+
+  values.push(id);
+  await query(`UPDATE cross_chain_credits SET ${fields.join(', ')} WHERE id = $${paramIndex}`, values);
 }
 
 /**

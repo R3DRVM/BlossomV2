@@ -28,11 +28,14 @@ export interface ExecutionStrategy {
 export interface ExecutionParams {
   draftId: string;
   userAddress: string;
+  userSolanaAddress?: string;
+  fromChain?: string;
   planType: string;
   executionRequest?: ExecutionRequest;
   executionIntent?: string;
   executionKind?: string;
   strategy?: ExecutionStrategy;
+  metadata?: Record<string, any>;
 }
 
 export interface ExecutionOptions {
@@ -63,6 +66,18 @@ export interface ExecutionResult {
   };
   blockNumber?: number;
   notes?: string[];
+  executionMeta?: {
+    route?: {
+      didRoute: boolean;
+      routeType?: string;
+      fromChain?: string;
+      toChain?: string;
+      reason?: string;
+      receiptId?: string;
+      txHash?: string;
+      creditedAmountUsd?: number;
+    };
+  };
 }
 
 // Cache preflight result to avoid repeated checks
@@ -285,6 +300,9 @@ export async function executePlan(
         body: JSON.stringify({
           draftId: params.draftId,
           userAddress: params.userAddress,
+          userSolanaAddress: params.userSolanaAddress,
+          fromChain: params.fromChain,
+          metadata: params.metadata,
           sessionId,
           plan,
           value: planValue,
@@ -417,6 +435,9 @@ export async function executePlan(
                   body: JSON.stringify({
                     draftId: params.draftId,
                     userAddress: params.userAddress,
+                    userSolanaAddress: params.userSolanaAddress,
+                    fromChain: params.fromChain,
+                    metadata: params.metadata,
                     sessionId: recreatedSessionId,
                     plan,
                   }),
@@ -432,6 +453,7 @@ export async function executePlan(
                     portfolio: retryData.portfolio,
                     blockNumber: retryData.blockNumber,
                     notes: retryData.notes,
+                    executionMeta: retryData.executionMeta,
                   };
                 }
               }
@@ -468,6 +490,7 @@ export async function executePlan(
         portfolio: data.portfolio,
         blockNumber: data.blockNumber,
         notes: data.notes,
+        executionMeta: data.executionMeta,
       };
     }
 

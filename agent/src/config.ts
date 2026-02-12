@@ -263,6 +263,11 @@ export const MAX_TOPUPS_PER_HOUR = Number.isFinite(parsedMaxTopupsPerHour) ? par
 export const MAX_TOPUP_ETH_PER_DAY = Number.isFinite(parsedMaxTopupEthPerDay) ? parsedMaxTopupEthPerDay : 0.2;
 export const WALLET_FALLBACK_ENABLED = process.env.WALLET_FALLBACK_ENABLED === 'true';
 export const ALLOW_PROOF_ONLY = process.env.ALLOW_PROOF_ONLY === 'true';
+export const CROSS_CHAIN_CREDIT_ROUTING_ENABLED = process.env.CROSS_CHAIN_CREDIT_ROUTING_ENABLED !== 'false';
+const parsedCrossChainCreditMaxUsdPerTx = parseFloat(process.env.CROSS_CHAIN_CREDIT_MAX_USD_PER_TX || '500');
+export const CROSS_CHAIN_CREDIT_MAX_USD_PER_TX = Number.isFinite(parsedCrossChainCreditMaxUsdPerTx)
+  ? parsedCrossChainCreditMaxUsdPerTx
+  : 500;
 
 // V1 Demo Mode: Session-only execution, block direct mode
 export const V1_DEMO = process.env.V1_DEMO === 'true';

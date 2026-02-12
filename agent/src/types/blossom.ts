@@ -158,5 +158,17 @@ export interface ExecutionResult {
   };
   error?: string;
   errorCode?: 'INSUFFICIENT_BALANCE' | 'SESSION_EXPIRED' | 'RELAYER_FAILED' | 'SLIPPAGE_FAILURE' | 'LLM_REFUSAL' | 'UNKNOWN_ERROR';
+  executionMeta?: {
+    route?: {
+      didRoute: boolean;
+      routeType?: string;
+      fromChain?: string;
+      toChain?: string;
+      reason?: string;
+      receiptId?: string;
+      txHash?: string;
+      creditedAmountUsd?: number;
+    };
+  };
   portfolio: BlossomPortfolioSnapshot; // Updated portfolio after execution
 }

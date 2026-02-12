@@ -4294,6 +4294,12 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
     }
 
     const { draftId, userAddress, plan, sessionId } = req.body;
+    let executionRouteMeta: any = {
+      didRoute: false,
+      fromChain: 'sepolia',
+      toChain: 'sepolia',
+      reason: 'Execution funded directly on Ethereum Sepolia.',
+    };
     const {
       buildRelayedQueueKey,
       getRelayedExecutionQueueResponse,
@@ -5033,6 +5039,60 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
       });
     }
 
+    const requestedFromChain = String(
+      req.body?.fromChain ||
+      req.body?.chain ||
+      req.body?.metadata?.fromChain ||
+      req.body?.metadata?.chain ||
+      ''
+    );
+    const userSolanaAddress = String(
+      req.body?.userSolanaAddress ||
+      req.body?.solanaAddress ||
+      req.body?.metadata?.userSolanaAddress ||
+      req.body?.metadata?.solanaAddress ||
+      ''
+    ).trim();
+    const amountUsdHint = Number(
+      req.body?.amountUsd ||
+      req.body?.metadata?.amountUsd ||
+      req.body?.plan?.metadata?.amountUsd ||
+      0
+    );
+
+    const { ensureExecutionFunding } = await import('../services/crossChainCreditRouter');
+    const fundingResult = await ensureExecutionFunding({
+      userId: req.body?.metadata?.userId || userAddress?.toLowerCase(),
+      sessionId,
+      userEvmAddress: userAddress,
+      userSolanaAddress: userSolanaAddress || undefined,
+      fromChain: requestedFromChain || undefined,
+      toChain: 'sepolia',
+      amountUsdRequired: Number.isFinite(amountUsdHint) && amountUsdHint > 0 ? amountUsdHint : undefined,
+      spendEstimateUnits: spendEstimate?.spendWei,
+      instrumentType,
+    });
+
+    if (!fundingResult.ok) {
+      return res.status(409).json({
+        ok: false,
+        success: false,
+        error: fundingResult.userMessage,
+        errorCode: fundingResult.code || 'CROSS_CHAIN_ROUTE_FAILED',
+        executionMeta: {
+          route: fundingResult.route || {
+            didRoute: false,
+            fromChain: requestedFromChain || 'unknown',
+            toChain: 'sepolia',
+            reason: 'Cross-chain route failed before execution.',
+          },
+        },
+        queued: false,
+        correlationId,
+      });
+    }
+    executionRouteMeta = fundingResult.route || executionRouteMeta;
+
     console.log('[api/execute/relayed] Policy passed, importing relayer...');
     const { sendRelayedTx } = await import('../executors/relayer');
     console.log('[api/execute/relayed] Relayer imported, importing viem...');
@@ -5432,6 +5492,9 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
       blockNumber,
       planHash, // V1: Include server-computed planHash
       error: receiptError,
+      executionMeta: {
+        route: executionRouteMeta,
+      },
       portfolioDelta: {
         accountValueDeltaUsd: portfolioAfter.accountValueUsd - portfolioBefore.accountValueUsd,
         balanceDeltas: portfolioAfter.balances.map(b => {
@@ -5483,6 +5546,9 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
       correlationId, // Include correlationId for client tracing
       userAddress: userAddress.toLowerCase(), // Include userAddress for wallet scoping
       notes: ['execution_path:relayed'], // Task 4: Unambiguous evidence of execution path
+      executionMeta: {
+        route: executionRouteMeta,
+      },
     });
   } catch (error: any) {
     if (process.env.DEBUG_DIAGNOSTICS === 'true') {
@@ -5563,6 +5629,9 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
       errorCode,
       ...(errorBucket ? { failureBucket: errorBucket } : {}),
       correlationId, // Include correlationId in error response
+      executionMeta: {
+        route: executionRouteMeta,
+      },
     });
   }
 });
@@ -9696,16 +9765,87 @@ app.post('/api/ledger/intents/execute', checkLedgerSecret, async (req, res) => {
     const { ALLOW_PROOF_ONLY } = await import('../config');
     const { maybeTopUpRelayer } = await import('../services/relayerTopUp');
     const { isTier1RelayedExecutionSupported, isTier1RelayedMode } = await import('../intent/tier1SupportedVenues');
+    const { ensureExecutionFunding } = await import('../services/crossChainCreditRouter');
     const callerMetadata = typeof metadata === 'object' && metadata !== null ? metadata : {};
     const requestedMode = String(callerMetadata.mode || '').toLowerCase();
     const tier1RelayedRequired = isTier1RelayedMode(requestedMode);
     const requestedCategory = typeof callerMetadata.category === 'string' ? callerMetadata.category : undefined;
+    let crossChainRouteMeta: any = null;
+
+    const userEvmAddressRaw = String(
+      callerMetadata.userAddress ||
+      callerMetadata.walletAddress ||
+      req.body?.userAddress ||
+      ''
+    ).trim();
+    const userSolanaAddressRaw = String(
+      callerMetadata.userSolanaAddress ||
+      callerMetadata.solanaAddress ||
+      req.body?.solanaAddress ||
+      ''
+    ).trim();
+    const requestedFromChain = String(
+      callerMetadata.fromChain ||
+      callerMetadata.sourceChain ||
+      req.body?.fromChain ||
+      ''
+    ).trim();
+
+    const inferredAmountFromIntent = (() => {
+      if (!intentText || typeof intentText !== 'string') {
+        return undefined;
+      }
+      const amountMatch = intentText.match(/(\d+(?:\.\d+)?)\s*(?:bUSDC|REDACTED|USDC|BUSDC)?/i);
+      if (!amountMatch) {
+        return undefined;
+      }
+      const parsedAmount = Number(amountMatch[1]);
+      return Number.isFinite(parsedAmount) && parsedAmount > 0 ? parsedAmount : undefined;
+    })();
+    const amountUsdHint = Number(callerMetadata.amountUsd || inferredAmountFromIntent || 0);
 
     if (!planOnly) {
       void maybeTopUpRelayer('sepolia', {
         reason: 'ledger_execute_preflight',
         fireAndForget: true,
       });
+
+      if (
+        /^0x[a-fA-F0-9]{40}$/.test(userEvmAddressRaw) &&
+        (userSolanaAddressRaw.length > 0 || requestedFromChain.toLowerCase().includes('sol'))
+      ) {
+        const funding = await ensureExecutionFunding({
+          userId: String(callerMetadata.userId || userEvmAddressRaw.toLowerCase()),
+          sessionId: String(callerMetadata.sessionId || ''),
+          userEvmAddress: userEvmAddressRaw,
+          userSolanaAddress: userSolanaAddressRaw || undefined,
+          fromChain: requestedFromChain || 'solana_devnet',
+          toChain: 'sepolia',
+          amountUsdRequired: Number.isFinite(amountUsdHint) && amountUsdHint > 0 ? amountUsdHint : undefined,
+          instrumentType:
+            requestedCategory === 'perp' || requestedCategory === 'event' || requestedCategory === 'deposit'
+              ? (requestedCategory === 'deposit' ? 'defi' : requestedCategory)
+              : undefined,
+        });
+
+        if (!funding.ok) {
+          return res.status(409).json({
+            ok: false,
+            intentId: intentId || '',
+            status: 'failed',
+            error: {
+              stage: 'execute',
+              code: 'CROSS_CHAIN_ROUTE_FAILED',
+              message: funding.userMessage,
+              detailCode: funding.code,
+            },
+            executionMeta: {
+              route: funding.route,
+            },
+          });
+        }
+        crossChainRouteMeta = funding.route;
+      }
     }
 
     if (tier1RelayedRequired && !isTier1RelayedExecutionSupported({ chain: String(chain), category: requestedCategory })) {
@@ -9745,6 +9885,15 @@ app.post('/api/ledger/intents/execute', checkLedgerSecret, async (req, res) => {
             stage: 'execute',
             code: 'PROOF_ONLY_BLOCKED',
             message: 'Proof-only execution is disabled. Configure venue support or set ALLOW_PROOF_ONLY=true.',
+          },
+        });
+      }
+      if (crossChainRouteMeta) {
+        return res.json({
+          ...result,
+          executionMeta: {
+            ...(result?.executionMeta || {}),
+            route: crossChainRouteMeta,
           },
         });
       }
@@ -9807,6 +9956,16 @@ app.post('/api/ledger/intents/execute', checkLedgerSecret, async (req, res) => {
           stage: 'execute',
           code: 'PROOF_ONLY_BLOCKED',
           message: 'Proof-only execution is disabled. Configure venue support or set ALLOW_PROOF_ONLY=true.',
+        },
+      });
+    }
+
+    if (crossChainRouteMeta) {
+      return res.json({
+        ...result,
+        executionMeta: {
+          ...(result?.executionMeta || {}),
+          route: crossChainRouteMeta,
         },
       });
     }

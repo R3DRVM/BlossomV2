@@ -3968,11 +3968,18 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
           const result = await executePlan({
             draftId,
             userAddress,
+            userSolanaAddress: walletStatus.solAddress || undefined,
+            fromChain: walletStatus.solConnected ? 'solana_devnet' : 'sepolia',
             planType,
             executionRequest: chatMessage?.executionRequest,
             executionIntent: chatMessage?.executionRequest ? undefined : ethTestnetIntent,
             strategy: executedStrategy,
             executionKind: demoSwapKind,
+            metadata: {
+              userAddress,
+              userSolanaAddress: walletStatus.solAddress || undefined,
+              fromChain: walletStatus.solConnected ? 'solana_devnet' : 'sepolia',
+            },
           }, { executionAuthMode: 'session' });
 
           // Handle execution result - TRUTHFUL UI: only mark executed if txHash exists
@@ -4172,6 +4179,11 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
             
             // TRUTHFUL UI: Only mark as executed if we have txHash and receipt is confirmed
             if (result.txHash && result.receiptStatus === 'confirmed') {
+              if (result.executionMeta?.route) {
+                updateStrategy(draftId, {
+                  executionMeta: result.executionMeta,
+                } as any);
+              }
               // Set state to executing, then mark as executed
               setChatMode({ mode: 'executing', draftId });
               updateStrategyStatus(draftId, 'queued');
@@ -4618,6 +4630,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
                   receiptStatus: statusData.status,
                   explorerUrl,
                   routing: prepareResult.routing,
+                  executionMeta: prepareResult.executionMeta,
                   blockNumber: statusData.blockNumber,
                 };
                 if (statusData.status === 'confirmed' || statusData.status === 'reverted' || statusData.status === 'failed') {
@@ -4709,6 +4722,11 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
           
           // TRUTHFUL UI: Only mark as executed if we have txHash and receipt is confirmed
           if (result.txHash && result.receiptStatus === 'confirmed') {
+            if (result.executionMeta?.route) {
+              updateStrategy(draftId, {
+                executionMeta: result.executionMeta,
+              } as any);
+            }
             // Set state to executing, then mark as executed
             setChatMode({ mode: 'executing', draftId });
             updateStrategyStatus(draftId, 'queued');

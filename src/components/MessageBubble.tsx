@@ -119,6 +119,14 @@ function getPortfolioBiasWarning(strategies: any[], newStrategy: ParsedStrategy)
   return null;
 }
 
+function formatRouteChainLabel(chain?: string): string {
+  const value = String(chain || '').toLowerCase();
+  if (!value) return 'unknown chain';
+  if (value.includes('sol')) return 'Solana devnet';
+  if (value.includes('sep') || value.includes('eth')) return 'Ethereum Sepolia';
+  return chain || 'unknown chain';
+}
+
 export default function MessageBubble({ text, isUser, timestamp, strategy, strategyId, selectedStrategyId, defiProposalId, executionMode, onInsertPrompt, onRegisterStrategyRef, onConfirmDraft, showRiskWarning, riskReasons, marketsList, defiProtocolsList, onSendMessage, intentExecution, onConfirmIntent, isConfirmingIntent }: MessageBubbleProps) {
   const { updateStrategyStatus, recomputeAccountFromStrategies, strategies, setActiveTab, setSelectedStrategyId, setOnboarding, closeStrategy, closeEventStrategy, defiPositions, latestDefiProposal, confirmDefiPlan, updateFromBackendPortfolio, account, riskProfile, venue } = useBlossomContext();
   const { addPendingPlan, removePendingPlan, setLastAction } = useExecution();
@@ -256,7 +264,22 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
     : undefined;
 
   const [isConfirmingDraft, setIsConfirmingDraft] = useState(false);
+  const [draftPendingPhase, setDraftPendingPhase] = useState<'idle' | 'routing' | 'executing'>('idle');
   const [confirmingDefiProposalId, setConfirmingDefiProposalId] = useState<string | null>(null);
+  const [defiPendingPhase, setDefiPendingPhase] = useState<'idle' | 'routing' | 'executing'>('idle');
+  const draftPendingTimerRef = useRef<number | null>(null);
+  const defiPendingTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (draftPendingTimerRef.current) {
+        window.clearTimeout(draftPendingTimerRef.current);
+      }
+      if (defiPendingTimerRef.current) {
+        window.clearTimeout(defiPendingTimerRef.current);
+      }
+    };
+  }, []);
 
   // Clear draft pending state once the draft is no longer a draft (queued/executing/executed) or strategy changes.
   useEffect(() => {
@@ -341,10 +364,21 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
   const handleConfirmDefiPlan = async (proposalId: string) => {
     if (confirmingDefiProposalId) return;
     setConfirmingDefiProposalId(proposalId);
+    setDefiPendingPhase('routing');
+    if (defiPendingTimerRef.current) {
+      window.clearTimeout(defiPendingTimerRef.current);
+    }
+    defiPendingTimerRef.current = window.setTimeout(() => {
+      setDefiPendingPhase('executing');
+    }, 900);
     try {
       await Promise.resolve(confirmDefiPlan(proposalId));
     } finally {
+      if (defiPendingTimerRef.current) {
+        window.clearTimeout(defiPendingTimerRef.current);
+      }
       setConfirmingDefiProposalId(null);
+      setDefiPendingPhase('idle');
     }
   };
   
@@ -801,14 +835,27 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                           e.stopPropagation();
                           if (isConfirmingDraft) return;
                           setIsConfirmingDraft(true);
+                          setDraftPendingPhase('routing');
+                          if (draftPendingTimerRef.current) {
+                            window.clearTimeout(draftPendingTimerRef.current);
+                          }
+                          draftPendingTimerRef.current = window.setTimeout(() => {
+                            setDraftPendingPhase('executing');
+                          }, 900);
                           if (onConfirmDraft) {
                             try {
                               await Promise.resolve(onConfirmDraft(strategyId));
                             } finally {
+                              if (draftPendingTimerRef.current) {
+                                window.clearTimeout(draftPendingTimerRef.current);
+                              }
                               setIsConfirmingDraft(false);
+                              setDraftPendingPhase('idle');
                             }
                           } else {
                             handleConfirmAndQueue();
+                            setIsConfirmingDraft(false);
+                            setDraftPendingPhase('idle');
                           }
                         }}
                         disabled={!!disableReason || isConfirmingDraft}
@@ -819,7 +866,9 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                         }`}
                         title={disableReason ?? (isVeryHighRisk ? 'Risk is elevated, proceed with caution' : undefined)}
                       >
-                        {isConfirmingDraft ? 'Executing...' : 'Confirm & Execute'}
+                        {isConfirmingDraft
+                          ? (draftPendingPhase === 'routing' ? 'Routing...' : 'Executing...')
+                          : 'Confirm & Execute'}
                       </button>
                     </div>
                   )}
@@ -1047,15 +1096,28 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                     if (isConfirmingDraft) return;
                     // Immediate pending state to prevent double clicks and give feedback.
                     setIsConfirmingDraft(true);
+                    setDraftPendingPhase('routing');
+                    if (draftPendingTimerRef.current) {
+                      window.clearTimeout(draftPendingTimerRef.current);
+                    }
+                    draftPendingTimerRef.current = window.setTimeout(() => {
+                      setDraftPendingPhase('executing');
+                    }, 900);
                     if (onConfirmDraft) {
                       try {
                         await Promise.resolve(onConfirmDraft(strategyId));
                       } finally {
+                        if (draftPendingTimerRef.current) {
+                          window.clearTimeout(draftPendingTimerRef.current);
+                        }
                         setIsConfirmingDraft(false);
+                        setDraftPendingPhase('idle');
                       }
                     } else {
                       // Fallback to existing handler
                       handleConfirmAndQueue();
+                      setIsConfirmingDraft(false);
+                      setDraftPendingPhase('idle');
                     }
                   }}
                   data-testid="confirm-trade"
@@ -1068,7 +1130,9 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                   }`}
                   title={disableReason ?? (isVeryHighRisk ? 'Risk is elevated, proceed with caution' : undefined)}
                 >
-                  {isConfirmingDraft ? 'Executing...' : 'Confirm & Execute'}
+                  {isConfirmingDraft
+                    ? (draftPendingPhase === 'routing' ? 'Routing...' : 'Executing...')
+                    : 'Confirm & Execute'}
                 </button>
               </div>
             )}
@@ -1184,6 +1248,11 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
           <div className="mt-1.5 rounded-lg border border-gray-100/80 bg-gray-50/60 px-2.5 py-1.5">
             <div className="text-[11px] font-medium text-gray-600 mb-1">Why this setup?</div>
             <ul className="list-disc pl-4 space-y-0.5 text-[11px] text-gray-600">
+              {currentStrategy?.executionMeta?.route?.didRoute && (
+                <li>
+                  {`Blossom routed your bUSDC from ${formatRouteChainLabel(currentStrategy.executionMeta.route.fromChain)} to ${formatRouteChainLabel(currentStrategy.executionMeta.route.toChain)} for better execution reliability.`}
+                </li>
+              )}
               {getStrategyReasoning(strategy, currentStrategy?.instrumentType).slice(0, 2).map((line, idx) => (
                 <li key={idx}>{line}</li>
               ))}
@@ -1329,7 +1398,9 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                   disabled={confirmingDefiProposalId === defiProposal.id}
                   className="w-full h-10 px-4 text-sm font-medium rounded-xl bg-blossom-pink text-white hover:bg-blossom-pink/90 hover:shadow-md transition-all shadow-sm"
                 >
-                  {confirmingDefiProposalId === defiProposal.id ? 'Executing...' : 'Confirm & Execute'}
+                  {confirmingDefiProposalId === defiProposal.id
+                    ? (defiPendingPhase === 'routing' ? 'Routing...' : 'Executing...')
+                    : 'Confirm & Execute'}
                 </button>
               </div>
             ) : (
@@ -1359,7 +1430,9 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                       : 'bg-blossom-pink text-white hover:bg-blossom-pink/90 shadow-sm'
                   }`}
                 >
-                  {confirmingDefiProposalId === defiProposal.id ? 'Executing...' : 'Confirm & Execute'}
+                  {confirmingDefiProposalId === defiProposal.id
+                    ? (defiPendingPhase === 'routing' ? 'Routing...' : 'Executing...')
+                    : 'Confirm & Execute'}
                 </button>
               </div>
             )}

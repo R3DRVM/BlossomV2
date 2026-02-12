@@ -222,6 +222,32 @@ CREATE INDEX IF NOT EXISTS idx_positions_market ON positions(market);
 CREATE INDEX IF NOT EXISTS idx_positions_venue ON positions(venue);
 
 -- ============================================
+-- cross_chain_credits table
+-- Tracks deterministic cross-chain credit routing receipts (testnet)
+-- ============================================
+CREATE TABLE IF NOT EXISTS cross_chain_credits (
+    id TEXT PRIMARY KEY,
+    created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+    updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+    user_id TEXT,
+    session_id TEXT,
+    from_chain TEXT NOT NULL,
+    to_chain TEXT NOT NULL,
+    amount_usd REAL NOT NULL,
+    stable_symbol TEXT NOT NULL,
+    from_address TEXT,
+    to_address TEXT,
+    status TEXT NOT NULL DEFAULT 'created', -- created | credited | failed
+    error_code TEXT,
+    meta_json TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_cross_chain_credits_user ON cross_chain_credits(user_id);
+CREATE INDEX IF NOT EXISTS idx_cross_chain_credits_session ON cross_chain_credits(session_id);
+CREATE INDEX IF NOT EXISTS idx_cross_chain_credits_status ON cross_chain_credits(status);
+CREATE INDEX IF NOT EXISTS idx_cross_chain_credits_created ON cross_chain_credits(created_at);
+
+-- ============================================
 -- indexer_state table
 -- Tracks indexer progress (last indexed block per chain/contract)
 -- ============================================
