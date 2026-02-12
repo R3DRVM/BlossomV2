@@ -24,6 +24,7 @@ export type ExecutionFundingPolicyResult = {
   chain: RelayerChain;
   reasonCode:
     | 'RELAYER_OK'
+    | 'RELAYER_OPERATIONAL'
     | 'RELAYER_TOPUP_OK'
     | 'RELAYER_TOPUP_UNAVAILABLE'
     | 'RELAYER_TOPUP_TIMEOUT'
@@ -88,6 +89,14 @@ function buildResult(
   };
 }
 
+function getOperationalRelayerMinEth(): number {
+  const parsed = Number(process.env.MIN_RELAYER_OPERATIONAL_ETH || MIN_USER_GAS_ETH);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return 0.003;
+  }
+  return Math.max(0.0005, parsed);
+}
+
 export async function executionFundingPolicy(params: {
   chain?: RelayerChain;
   userAddress?: string;
@@ -140,6 +149,25 @@ export async function executionFundingPolicy(params: {
       userMessage: didTopup
         ? 'Execution capacity restored and ready to proceed.'
         : 'Execution capacity is ready.',
+      recommendedAction: 'proceed_relayed',
+      relayerBalanceEth,
+      relayerMinEth,
+      minUserGasEth: MIN_USER_GAS_ETH,
+      didTopup,
+      ...(topupTxHash ? { topupTxHash } : {}),
+    });
+  }
+
+  const operationalRelayerMinEth = getOperationalRelayerMinEth();
+  if (relayerBalanceEth >= operationalRelayerMinEth) {
+    noteFundingRecoveryMode('relayed');
+    return buildResult({
+      mode: didTopup ? 'relayed_after_topup' : 'relayed',
+      chain,
+      reasonCode: didTopup ? 'RELAYER_TOPUP_OK' : 'RELAYER_OPERATIONAL',
+      userMessage: didTopup
+        ? 'Execution capacity restored in degraded relayer mode.'
+        : 'Execution running in degraded relayer mode.',
       recommendedAction: 'proceed_relayed',
       relayerBalanceEth,
       relayerMinEth,

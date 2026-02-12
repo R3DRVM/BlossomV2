@@ -502,15 +502,25 @@ async function runTopupAttempt(chain: RelayerChain, reason = 'manual'): Promise<
     });
 
     const gasBufferWei = parseEther('0.0003');
-    if (fundingBalanceWei < topupAmountWei + gasBufferWei) {
-      const error = 'Funding wallet has insufficient ETH for top-up + gas';
-      lastError = error;
-      return {
-        attempted: true,
-        toppedUp: false,
-        reason: 'funding_wallet_insufficient',
-        error,
-      };
+    let topupValueWei = topupAmountWei;
+    if (fundingBalanceWei < topupValueWei + gasBufferWei) {
+      const maxAffordableWei = fundingBalanceWei > gasBufferWei ? fundingBalanceWei - gasBufferWei : 0n;
+      const remainingEthCap = Math.max(0, MAX_TOPUP_ETH_PER_DAY - topupEthToday);
+      const remainingWeiCap = parseEther(remainingEthCap.toFixed(18));
+      const minPartialTopupEth = Math.max(0.0005, Number(process.env.MIN_RELAYER_PARTIAL_TOPUP_ETH || '0.003'));
+      const minPartialTopupWei = parseEther(minPartialTopupEth.toFixed(6));
+      const candidateWei = maxAffordableWei > remainingWeiCap ? remainingWeiCap : maxAffordableWei;
+      if (candidateWei <= 0n || candidateWei < minPartialTopupWei) {
+        const error = 'Funding wallet has insufficient ETH for top-up + gas';
+        lastError = error;
+        return {
+          attempted: true,
+          toppedUp: false,
+          reason: 'funding_wallet_insufficient',
+          error,
+        };
+      }
+      topupValueWei = candidateWei;
     }
 
     const walletClient = createWalletClient({
@@ -521,10 +531,10 @@ async function runTopupAttempt(chain: RelayerChain, reason = 'manual'): Promise<
 
     const txHash = await walletClient.sendTransaction({
       to: relayerAccount.address,
-      value: topupAmountWei,
+      value: topupValueWei,
     });
 
-    const amountEth = Number(formatEther(topupAmountWei));
+    const amountEth = Number(formatEther(topupValueWei));
     const now = Date.now();
     topupEvents.push({ at: now, ethAmount: amountEth });
     topupEthToday += amountEth;
