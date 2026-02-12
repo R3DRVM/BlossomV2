@@ -86,14 +86,24 @@ async function main() {
   fs.mkdirSync(logsDir, { recursive: true });
 
   const exitCode = await runStressSuite();
-  if (!fs.existsSync(rawOutputPath)) {
-    throw new Error(`Stress output was not written: ${rawOutputPath}`);
+  let parsed: StressOutput | null = null;
+  if (fs.existsSync(rawOutputPath)) {
+    parsed = JSON.parse(fs.readFileSync(rawOutputPath, 'utf8')) as StressOutput;
   }
 
-  const parsed = JSON.parse(fs.readFileSync(rawOutputPath, 'utf8')) as StressOutput;
-  const summary = parsed.summary;
-  const results = Array.isArray(parsed.results) ? parsed.results : [];
-  const proofs = (parsed.crossChainProofs || []).filter((proof) =>
+  const summary: StressSummary = parsed?.summary || {
+    mode: 'tier1_crosschain_required',
+    sessions: 0,
+    sessionsOk: 0,
+    sessionsFail: 0,
+    actionsOk: 0,
+    actionsFail: 0,
+    actionsSkipped: 0,
+    successPct: 0,
+    failureBreakdown: {},
+  };
+  const results = Array.isArray(parsed?.results) ? parsed!.results : [];
+  const proofs = ((parsed?.crossChainProofs || []) as CrossChainProof[]).filter((proof) =>
     proof.routeType === 'testnet_credit' &&
     String(proof.toChain || '').toLowerCase() === 'sepolia' &&
     assertHash(proof.creditTxHash) &&
@@ -134,6 +144,7 @@ async function main() {
     summary,
     proofCount: proofs.length,
     proofs,
+    processExitCode: exitCode,
     rawStressOutputPath: rawOutputPath,
   };
 
