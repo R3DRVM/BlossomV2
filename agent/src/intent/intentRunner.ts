@@ -2485,6 +2485,14 @@ async function executePerpEthereum(
     String(existingMetadata?.mode || '').toLowerCase().includes('crosschain') ||
     String(existingMetadata?.scenario || '').toLowerCase().includes('solana_origin_to_sepolia');
 
+  // Determine settlement chain from metadata
+  const routeToChain = existingMetadata?.route?.toChain || existingMetadata?.toChain || '';
+  const settlementChain = routeToChain.toLowerCase().includes('base') ? 'base_sepolia' : 'sepolia';
+
+  // Get chain-specific configuration
+  const { normalizeSettlementChain, getSettlementChainRuntimeConfig } = await import('../config/settlementChains');
+  const chainConfig = getSettlementChainRuntimeConfig(normalizeSettlementChain(settlementChain));
+
   // Import config
   const {
     RELAYER_PRIVATE_KEY,
@@ -2495,13 +2503,20 @@ async function executePerpEthereum(
     ERC20_PULL_ADAPTER_ADDRESS,
   } = await import('../config');
 
+  // Use chain-specific config or fallback to defaults
+  const rpcUrl = chainConfig.rpcUrl || ETH_TESTNET_RPC_URL;
+  const perpAdapterAddress = chainConfig.perpAdapterAddress || DEMO_PERP_ADAPTER_ADDRESS;
+  const stableTokenAddress = chainConfig.stableTokenAddress || DEMO_REDACTED_ADDRESS;
+  const executionRouterAddress = chainConfig.executionRouterAddress || EXECUTION_ROUTER_ADDRESS;
+  const relayerPrivateKey = chainConfig.relayerPrivateKey || RELAYER_PRIVATE_KEY;
+
   // Validate required config
-  if (!RELAYER_PRIVATE_KEY || !ETH_TESTNET_RPC_URL) {
+  if (!relayerPrivateKey || !rpcUrl) {
     await updateIntentStatus(intentId, {
       status: 'failed',
       failureStage: 'execute',
       errorCode: 'CONFIG_MISSING',
-      errorMessage: 'Relayer key or RPC not configured',
+      errorMessage: `Relayer key or RPC not configured for ${settlementChain}`,
     });
 
     return {
@@ -2511,12 +2526,12 @@ async function executePerpEthereum(
       error: {
         stage: 'execute',
         code: 'CONFIG_MISSING',
-        message: 'Relayer key or RPC not configured',
+        message: `Relayer key or RPC not configured for ${settlementChain}`,
       },
     };
   }
 
-  if (!DEMO_PERP_ADAPTER_ADDRESS || !DEMO_REDACTED_ADDRESS || !EXECUTION_ROUTER_ADDRESS) {
+  if (!perpAdapterAddress || !stableTokenAddress || !executionRouterAddress) {
     await updateIntentStatus(intentId, {
       status: 'failed',
       failureStage: 'execute',
@@ -2538,9 +2553,10 @@ async function executePerpEthereum(
 
   // Prepare execution data BEFORE try block so catch can access it
   // fromAddress will be updated once account is created
+  const networkName = settlementChain === 'base_sepolia' ? 'base_sepolia' : 'sepolia';
   const executionData = {
     chain: 'ethereum' as const,
-    network: 'sepolia' as const,
+    network: networkName as any,
     kind: 'perp' as const,
     venue: 'demo_perp' as any,
     intent: parsed.rawParams.original || 'Perp position',
@@ -2561,19 +2577,19 @@ async function executePerpEthereum(
     // Import viem for transaction
     const { createPublicClient, createWalletClient, encodeFunctionData, http, parseAbi } = await import('viem');
     const { privateKeyToAccount } = await import('viem/accounts');
-    const { sepolia } = await import('viem/chains');
+    const { sepolia, baseSepolia } = await import('viem/chains');
     const { withRelayerNonceLock } = await import('../executors/relayer');
     const { executionFundingPolicy } = await import('../services/executionFundingPolicy');
 
     const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-    // Use a single deterministic RPC endpoint for perp execution on serverless.
-    // Failover wallet transports can trigger incompatible RPC methods on some providers.
+    // Use chain-specific viem chain and RPC
+    const viemChain = settlementChain === 'base_sepolia' ? baseSepolia : sepolia;
     const publicClient = createPublicClient({
-      chain: sepolia,
-      transport: http(ETH_TESTNET_RPC_URL),
+      chain: viemChain,
+      transport: http(rpcUrl),
     });
-    const account = privateKeyToAccount(RELAYER_PRIVATE_KEY as `0x${string}`);
+    const account = privateKeyToAccount(relayerPrivateKey as `0x${string}`);
 
     // Update fromAddress now that we have the account
     executionData.fromAddress = account.address;
@@ -2687,7 +2703,7 @@ async function executePerpEthereum(
       }
 
       const userStableBalance = await publicClient.readContract({
-        address: DEMO_REDACTED_ADDRESS as `0x${string}`,
+        address: stableTokenAddress as `0x${string}`,
         abi: erc20Abi,
         functionName: 'balanceOf',
         args: [normalizedUser],
@@ -2717,10 +2733,10 @@ async function executePerpEthereum(
       }
 
       const allowance = await publicClient.readContract({
-        address: DEMO_REDACTED_ADDRESS as `0x${string}`,
+        address: stableTokenAddress as `0x${string}`,
         abi: erc20Abi,
         functionName: 'allowance',
-        args: [normalizedUser, DEMO_PERP_ADAPTER_ADDRESS as `0x${string}`],
+        args: [normalizedUser, perpAdapterAddress as `0x${string}`],
       });
       const MAX_UINT256 = (1n << 256n) - 1n;
       const approvalNeeded = allowance < marginAmount;
@@ -2733,7 +2749,7 @@ async function executePerpEthereum(
         ? encodeFunctionData({
             abi: erc20Abi,
             functionName: 'approve',
-            args: [DEMO_PERP_ADAPTER_ADDRESS as `0x${string}`, MAX_UINT256],
+            args: [perpAdapterAddress as `0x${string}`, MAX_UINT256],
           })
         : undefined;
 
@@ -2772,14 +2788,14 @@ async function executePerpEthereum(
         execution: {
           chain: 'sepolia',
           tx: {
-            to: DEMO_PERP_ADAPTER_ADDRESS,
+            to: perpAdapterAddress,
             data: userPerpCalldata,
             value: '0x0',
           },
           ...(creditMintCalldata
             ? {
                 approvalTx: {
-                  to: DEMO_REDACTED_ADDRESS,
+                  to: stableTokenAddress,
                   data: creditMintCalldata,
                   value: '0x0',
                 },
@@ -2787,7 +2803,7 @@ async function executePerpEthereum(
             : approvalCalldata
             ? {
                 approvalTx: {
-                  to: DEMO_REDACTED_ADDRESS,
+                  to: stableTokenAddress,
                   data: approvalCalldata,
                   value: '0x0',
                 },
@@ -2808,8 +2824,8 @@ async function executePerpEthereum(
 
     const walletClient = createWalletClient({
       account,
-      chain: sepolia,
-      transport: http(ETH_TESTNET_RPC_URL),
+      chain: viemChain,
+      transport: http(rpcUrl),
     });
 
     // Before executing perp, we need DEMO_REDACTED balance
@@ -2820,7 +2836,7 @@ async function executePerpEthereum(
     const routerCallData = encodeFunctionData({
       abi: routerAbi,
       functionName: 'execute',
-      args: [DEMO_PERP_ADAPTER_ADDRESS as `0x${string}`, encodedInnerData as `0x${string}`],
+      args: [perpAdapterAddress as `0x${string}`, encodedInnerData as `0x${string}`],
     });
 
     // First, approve DEMO_REDACTED to DemoPerpAdapter (if not already approved)
@@ -2835,7 +2851,7 @@ async function executePerpEthereum(
 
       // Check balance
       let balance = await publicClient.readContract({
-        address: DEMO_REDACTED_ADDRESS as `0x${string}`,
+        address: stableTokenAddress as `0x${string}`,
         abi: erc20Abi,
         functionName: 'balanceOf',
         args: [account.address],
@@ -2850,7 +2866,7 @@ async function executePerpEthereum(
 
         try {
           const mintTxHash = await walletClient.writeContract({
-            address: DEMO_REDACTED_ADDRESS as `0x${string}`,
+            address: stableTokenAddress as `0x${string}`,
             abi: mintAbi,
             functionName: 'mint',
             args: [account.address, mintAmount],
@@ -2871,7 +2887,7 @@ async function executePerpEthereum(
 
           // Re-check balance after mint
           balance = await publicClient.readContract({
-            address: DEMO_REDACTED_ADDRESS as `0x${string}`,
+            address: stableTokenAddress as `0x${string}`,
             abi: erc20Abi,
             functionName: 'balanceOf',
             args: [account.address],
@@ -2892,20 +2908,20 @@ async function executePerpEthereum(
 
       // Check and set allowance to DemoPerpAdapter (called directly)
       const allowance = await publicClient.readContract({
-        address: DEMO_REDACTED_ADDRESS as `0x${string}`,
+        address: stableTokenAddress as `0x${string}`,
         abi: erc20Abi,
         functionName: 'allowance',
-        args: [account.address, DEMO_PERP_ADAPTER_ADDRESS as `0x${string}`],
+        args: [account.address, perpAdapterAddress as `0x${string}`],
       });
 
       if (allowance < marginAmount) {
         const MAX_UINT256 = (1n << 256n) - 1n;
         const approveTxHash = await walletClient.writeContract({
-          address: DEMO_REDACTED_ADDRESS as `0x${string}`,
+          address: stableTokenAddress as `0x${string}`,
           abi: erc20Abi,
           functionName: 'approve',
           // Approve max once so we don't race allowances under serverless latency.
-          args: [DEMO_PERP_ADAPTER_ADDRESS as `0x${string}`, MAX_UINT256],
+          args: [perpAdapterAddress as `0x${string}`, MAX_UINT256],
           nonce: nextNonce,
         });
         nextNonce += 1;
@@ -2917,10 +2933,10 @@ async function executePerpEthereum(
         while (Date.now() < deadlineMs) {
           try {
             lastAllowance = await publicClient.readContract({
-              address: DEMO_REDACTED_ADDRESS as `0x${string}`,
+              address: stableTokenAddress as `0x${string}`,
               abi: erc20Abi,
               functionName: 'allowance',
-              args: [account.address, DEMO_PERP_ADAPTER_ADDRESS as `0x${string}`],
+              args: [account.address, perpAdapterAddress as `0x${string}`],
             });
             if (lastAllowance >= marginAmount) break;
           } catch {
@@ -2949,7 +2965,7 @@ async function executePerpEthereum(
 
       // Execute the perp position directly via adapter
       txHash = await walletClient.writeContract({
-        address: DEMO_PERP_ADAPTER_ADDRESS as `0x${string}`,
+        address: perpAdapterAddress as `0x${string}`,
         abi: perpAdapterAbi,
         functionName: 'execute',
         args: [encodedInnerData as `0x${string}`],
@@ -2961,7 +2977,7 @@ async function executePerpEthereum(
       throw new Error('Failed to submit perp transaction');
     }
 
-    const explorerUrl = buildExplorerUrl('ethereum', 'sepolia', txHash);
+    const explorerUrl = buildExplorerUrl('ethereum', networkName, txHash);
     const latencyMs = Date.now() - startTime;
 
     // Try to wait for confirmation, but don't fail if timeout occurs
@@ -3054,7 +3070,7 @@ async function executePerpEthereum(
       // Create position in ledger (indexer will also catch it, but this is faster)
       await createPositionAsync({
         chain: 'ethereum',
-        network: 'sepolia',
+        network: networkName,
         venue: 'demo_perp',
         market: marketName,
         side: positionSide,
@@ -3181,7 +3197,7 @@ async function executePerpEthereum(
       // Still create position record (will show as pending)
       await createPositionAsync({
         chain: 'ethereum',
-        network: 'sepolia',
+        network: networkName,
         venue: 'demo_perp',
         market: marketName,
         side: positionSide,
