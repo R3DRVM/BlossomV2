@@ -12,8 +12,46 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { fileURLToPath } from 'url';
+import { dirname, resolve } from 'path';
+import { config as loadDotenv } from 'dotenv';
 import { createPublicClient, http, type Address } from 'viem';
 import { baseSepolia } from 'viem/chains';
+
+// ================================================================
+// ENV LOADING - Multi-file fallback for local development
+// ================================================================
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const repoRoot = resolve(__dirname, '../..');
+
+// Attempt to load env files in priority order (first found wins per variable)
+const envFiles = [
+  resolve(repoRoot, '.env.local'),
+  resolve(repoRoot, '.env'),
+  resolve(repoRoot, 'agent', '.env.local'),
+  resolve(repoRoot, 'agent', '.env'),
+];
+
+const loadedFiles: string[] = [];
+for (const envFile of envFiles) {
+  if (fs.existsSync(envFile)) {
+    loadDotenv({ path: envFile, override: false }); // Don't override already-set vars
+    loadedFiles.push(envFile);
+  }
+}
+
+// Debug: Non-sensitive env loading status (only if DEBUG_ENV_LOADING=1)
+if (process.env.DEBUG_ENV_LOADING === '1') {
+  console.log('[base-smoke-prod] Env loading debug:');
+  console.log('  Attempted files:', envFiles.map(f => path.relative(repoRoot, f)));
+  console.log('  Loaded files:', loadedFiles.map(f => path.relative(repoRoot, f)));
+  console.log('  DEV_LEDGER_SECRET present:', !!process.env.DEV_LEDGER_SECRET);
+  console.log('  LEDGER_SECRET present:', !!process.env.LEDGER_SECRET);
+  console.log('  BASE_SEPOLIA_RPC_URL present:', !!process.env.BASE_SEPOLIA_RPC_URL);
+  console.log();
+}
 
 // ================================================================
 // CONSTANTS
@@ -23,8 +61,13 @@ const BASE_SEPOLIA_CHAIN_ID = 84532;
 const BASESCAN_BASE_URL = 'https://sepolia.basescan.org/tx/';
 
 const BASE_URL = process.env.BASE_URL ?? 'https://api.blossom.onl';
-const LEDGER_SECRET = process.env.DEV_LEDGER_SECRET;
-const BASE_SEPOLIA_RPC_URL = process.env.BASE_SEPOLIA_RPC_URL;
+// Compatibility shim: Accept LEDGER_SECRET as fallback for DEV_LEDGER_SECRET
+const LEDGER_SECRET = process.env.DEV_LEDGER_SECRET || process.env.LEDGER_SECRET;
+// Compatibility: Try multiple env var names, fallback to public RPC
+const BASE_SEPOLIA_RPC_URL =
+  process.env.BASE_SEPOLIA_RPC_URL ||
+  process.env.BASE_RPC_URL ||
+  'https://sepolia.base.org'; // Public Base Sepolia RPC (default fallback)
 
 // ================================================================
 // HELPER FUNCTIONS
@@ -468,13 +511,25 @@ async function main() {
   console.log('='.repeat(80));
   console.log();
 
-  // Prerequisites check
+  // Prerequisites check (after env loading attempt)
   if (!LEDGER_SECRET) {
-    console.error('[base-smoke-prod] ERROR: DEV_LEDGER_SECRET not set');
+    console.error('[base-smoke-prod] ERROR: DEV_LEDGER_SECRET (or LEDGER_SECRET) not set');
+    console.error('');
+    console.error('Env loading status:');
+    console.error('  Attempted files:', envFiles.map(f => path.relative(repoRoot, f)));
+    console.error('  Loaded files:', loadedFiles.length > 0 ? loadedFiles.map(f => path.relative(repoRoot, f)) : 'none');
+    console.error('  DEV_LEDGER_SECRET present:', !!process.env.DEV_LEDGER_SECRET);
+    console.error('  LEDGER_SECRET present:', !!process.env.LEDGER_SECRET);
+    console.error('');
+    console.error('To fix: Set DEV_LEDGER_SECRET in one of these files:');
+    console.error('  - .env.local (recommended)');
+    console.error('  - agent/.env.local');
+    console.error('  - Or export it: export DEV_LEDGER_SECRET="your-secret"');
     process.exit(1);
   }
+  // Note: BASE_SEPOLIA_RPC_URL now has a public fallback, so this check is mainly for debugging
   if (!BASE_SEPOLIA_RPC_URL) {
-    console.error('[base-smoke-prod] ERROR: BASE_SEPOLIA_RPC_URL not set');
+    console.error('[base-smoke-prod] ERROR: BASE_SEPOLIA_RPC_URL could not be determined (should not happen)');
     process.exit(1);
   }
 
