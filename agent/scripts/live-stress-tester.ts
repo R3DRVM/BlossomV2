@@ -687,9 +687,9 @@ function buildLeverageChangeAction(sessionIndex: number): Action {
 }
 
 function buildSolanaOriginToSepoliaPerpAction(sessionIndex: number): Action {
-  // Prove-mode uses tiny collateral to minimize testnet gas while still producing receipts.
-  // Non-prove mode keeps margin larger for broader stress coverage.
-  const collateral = PROVE_MODE ? pick([2, 3, 5]) : pick([300, 350, 400]);
+  // Prove-mode keeps collateral modest but above DemoPerpEngine's minimum margin threshold.
+  // (Gas cost is insensitive to margin size; receipt proofs are what matters.)
+  const collateral = PROVE_MODE ? pick([50, 75, 100]) : pick([300, 350, 400]);
   return {
     id: buildActionId('cross_chain_route', sessionIndex),
     category: 'cross_chain_route',
