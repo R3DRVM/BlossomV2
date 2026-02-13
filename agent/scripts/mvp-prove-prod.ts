@@ -74,12 +74,16 @@ const MIN_CROSSCHAIN_PROOFS = parseInt(
   process.env.STRESS_PROVE_MIN_CROSSCHAIN_PROOFS || (SETTLEMENT_CHAIN === 'base_sepolia' ? '10' : '2'),
   10
 );
+const GLOBAL_TIMEOUT_MS = Math.max(
+  60_000,
+  parseInt(process.env.STRESS_PROVE_GLOBAL_TIMEOUT_MS || '1200000', 10)
+);
 const logsDir = path.resolve(process.cwd(), 'logs');
 const runStamp = new Date().toISOString().replace(/[:.]/g, '-');
 const rawOutputPath = path.join(logsDir, `stress-${STRESS_MODE}-${runStamp}.json`);
 const reportPath = path.join(logsDir, 'mvp-prove-report.json');
 
-function runStressSuite(): Promise<number> {
+function runStressSuite(): Promise<{ exitCode: number; timedOut: boolean; durationMs: number; error?: string }> {
   const args = [
     'tsx',
     'agent/scripts/live-stress-tester.ts',
@@ -95,13 +99,33 @@ function runStressSuite(): Promise<number> {
   ];
 
   return new Promise((resolve, reject) => {
+    const startedAt = Date.now();
+    let timedOut = false;
     const proc = spawn('npx', args, {
       stdio: 'inherit',
       env: process.env,
       cwd: process.cwd(),
     });
+    const timer = setTimeout(() => {
+      timedOut = true;
+      proc.kill('SIGTERM');
+      setTimeout(() => {
+        if (!proc.killed) {
+          proc.kill('SIGKILL');
+        }
+      }, 2500).unref();
+    }, GLOBAL_TIMEOUT_MS);
+    timer.unref();
     proc.on('error', reject);
-    proc.on('exit', (code) => resolve(code ?? 1));
+    proc.on('exit', (code) => {
+      clearTimeout(timer);
+      resolve({
+        exitCode: code ?? 1,
+        timedOut,
+        durationMs: Date.now() - startedAt,
+        ...(timedOut ? { error: `stress_run_timeout_after_${GLOBAL_TIMEOUT_MS}ms` } : {}),
+      });
+    });
   });
 }
 
@@ -112,10 +136,27 @@ function assertHash(value: string | undefined): boolean {
 async function main() {
   fs.mkdirSync(logsDir, { recursive: true });
 
-  const exitCode = await runStressSuite();
+  let runResult: { exitCode: number; timedOut: boolean; durationMs: number; error?: string } = {
+    exitCode: 1,
+    timedOut: false,
+    durationMs: 0,
+  };
+  let runError: string | undefined;
+  try {
+    runResult = await runStressSuite();
+  } catch (error: any) {
+    runError = error?.message || String(error);
+  }
+
   let parsed: StressOutput | null = null;
   if (fs.existsSync(rawOutputPath)) {
-    parsed = JSON.parse(fs.readFileSync(rawOutputPath, 'utf8')) as StressOutput;
+    try {
+      parsed = JSON.parse(fs.readFileSync(rawOutputPath, 'utf8')) as StressOutput;
+    } catch (error: any) {
+      runError = runError || `failed_to_parse_stress_output:${error?.message || String(error)}`;
+    }
+  } else {
+    runError = runError || 'stress_output_missing';
   }
 
   const summary: StressSummary = parsed?.summary || {
@@ -161,16 +202,19 @@ async function main() {
   ).length;
 
   const checks = {
-    processExitZero: exitCode === 0,
+    processExitZero: runResult.exitCode === 0 && !runResult.timedOut && !runError,
     minimumProofs: proofs.length >= MIN_PROOFS,
     minimumCrossChainProofs: crossChainProofs.length >= MIN_CROSSCHAIN_PROOFS,
     noProofOnly: proofOnlyViolations === 0,
+    outputProduced: fs.existsSync(rawOutputPath),
   };
 
   const ok =
+    checks.processExitZero &&
     checks.minimumProofs &&
     checks.minimumCrossChainProofs &&
-    checks.noProofOnly;
+    checks.noProofOnly &&
+    checks.outputProduced;
   const report = {
     ok,
     generatedAt: new Date().toISOString(),
@@ -190,7 +234,11 @@ async function main() {
     crossChainProofCount: crossChainProofs.length,
     proofs,
     crossChainProofs,
-    processExitCode: exitCode,
+    processExitCode: runResult.exitCode,
+    timedOut: runResult.timedOut,
+    durationMs: runResult.durationMs,
+    ...(runResult.error ? { runError: runResult.error } : {}),
+    ...(runError ? { parseOrRunError: runError } : {}),
     rawStressOutputPath: rawOutputPath,
   };
 

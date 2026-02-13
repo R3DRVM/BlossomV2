@@ -196,6 +196,14 @@ const SESSION_PREPARE_RETRY_LIMIT = parseInt(process.env.STRESS_SESSION_PREPARE_
 const DESIRED_HL_WALLETS = parseInt(process.env.STRESS_DESIRED_HL_WALLETS || '4', 10);
 const EVM_RPC_RETRY_LIMIT = parseInt(process.env.STRESS_EVM_RPC_RETRIES || '3', 10);
 const SESSION_ACTIVE_MAX_POLLS = parseInt(process.env.STRESS_SESSION_ACTIVE_POLLS || '6', 10);
+const SESSION_TIMEOUT_MS = Math.max(
+  30_000,
+  parseInt(process.env.STRESS_SESSION_TIMEOUT_MS || (PROVE_MODE ? '240000' : '300000'), 10)
+);
+const GLOBAL_TIMEOUT_MS = Math.max(
+  0,
+  parseInt(process.env.STRESS_GLOBAL_TIMEOUT_MS || (PROVE_MODE ? '1200000' : '0'), 10)
+);
 
 const RUN_ID = `live_stress_${MODE}_${Date.now()}_${randomUUID().slice(0, 8)}`;
 
@@ -264,6 +272,20 @@ function logVerbose(msg: string) {
 
 function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label}: timed_out_after_${timeoutMs}ms`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 function randomBetween(min: number, max: number): number {
@@ -363,6 +385,31 @@ function pick<T>(items: T[]): T {
 
 function buildActionId(category: Category, sessionIndex: number) {
   return `${category}_${sessionIndex}_${randomUUID().slice(0, 6)}`;
+}
+
+function buildSessionTimeoutResult(sessionIndex: number, timeoutError: string): SessionResult {
+  const startedAt = Date.now();
+  const agent = agents[sessionIndex % agents.length] || agents[0];
+  return {
+    sessionId: `timeout_${sessionIndex}_${randomUUID().slice(0, 8)}`,
+    agentId: agent?.id || 'unknown',
+    agentType: agent?.type || 'human',
+    ok: false,
+    actions: [
+      {
+        actionId: buildActionId('session', sessionIndex),
+        category: 'session',
+        chain: 'ethereum',
+        endpoint: 'internal/session-timeout',
+        status: 'fail',
+        latencyMs: SESSION_TIMEOUT_MS,
+        error: timeoutError,
+        failureClass: 'invocation_timeout',
+      },
+    ],
+    startedAt,
+    finishedAt: Date.now(),
+  };
 }
 
 function percentile(values: number[], p: number): number {
@@ -2865,6 +2912,13 @@ async function runSessionByMode(sessionIndex: number): Promise<SessionResult> {
 }
 
 async function main() {
+  const results: SessionResult[] = [];
+  let currentIndex = 0;
+  let stopRequested = false;
+  let effectiveWorkerConcurrency = CONCURRENCY;
+  let runFailure: Error | null = null;
+  let lastProgress = 'init';
+
   await hydrateAgentsFromKeys();
   if (!WALLET_KEYS.length && process.env.TEST_WALLET_PRIVATE_KEY) {
     const rawFallbackKey = process.env.TEST_WALLET_PRIVATE_KEY.trim();
@@ -2886,7 +2940,7 @@ async function main() {
     MODE === 'tier1_crosschain_resilient' ||
     MODE === 'tier2' ||
     (MODE === 'mixed' && ALLOW_EXECUTE);
-  const effectiveWorkerConcurrency = executeModes
+  effectiveWorkerConcurrency = executeModes
     ? Math.max(1, Math.min(CONCURRENCY, rotatedWalletCount || 1))
     : CONCURRENCY;
   log('🌸 Blossom Live Stress Tester');
@@ -2963,27 +3017,45 @@ async function main() {
       log(`[prove:warmup] failed: ${error?.message || String(error)}`);
     }
   }
-
-  const results: SessionResult[] = [];
-  let currentIndex = 0;
-
   const workers = Array.from({ length: effectiveWorkerConcurrency }).map(async (_, workerId) => {
     while (true) {
+      if (stopRequested) break;
       const idx = currentIndex++;
       if (idx >= COUNT) break;
 
       log(`\n[worker ${workerId}] Starting session ${idx + 1}/${COUNT}`);
+      lastProgress = `session_${idx + 1}_start`;
       try {
-        const sessionResult = await runSessionByMode(idx);
+        const sessionResult = await withTimeout(
+          runSessionByMode(idx),
+          SESSION_TIMEOUT_MS,
+          `session_${idx + 1}`
+        );
         results.push(sessionResult);
+        lastProgress = `session_${idx + 1}_complete`;
         log(`[worker ${workerId}] Session ${idx + 1} complete: ${sessionResult.ok ? 'OK' : 'FAIL'}`);
       } catch (err: any) {
-        log(`[worker ${workerId}] Session ${idx + 1} crashed: ${err.message || err}`);
+        const message = err?.message || String(err);
+        const timeoutResult = buildSessionTimeoutResult(idx, message);
+        results.push(timeoutResult);
+        lastProgress = `session_${idx + 1}_error`;
+        log(`[worker ${workerId}] Session ${idx + 1} failed: ${message}`);
       }
     }
   });
 
-  await Promise.all(workers);
+  const workersPromise = Promise.all(workers);
+  if (GLOBAL_TIMEOUT_MS > 0) {
+    try {
+      await withTimeout(workersPromise, GLOBAL_TIMEOUT_MS, `${MODE}_global_timeout`);
+    } catch (error: any) {
+      stopRequested = true;
+      runFailure = error instanceof Error ? error : new Error(String(error));
+      log(`[global-timeout] ${runFailure.message}`);
+    }
+  } else {
+    await workersPromise;
+  }
 
   const summary = summarize(results);
   const crossChainProofs = isCrosschainStrictMode(MODE)
@@ -3011,8 +3083,27 @@ async function main() {
   }
 
   if (OUTPUT_FILE) {
-    fs.writeFileSync(OUTPUT_FILE, JSON.stringify({ runId: RUN_ID, summary, results, mode: MODE, crossChainProofs }, null, 2));
+    fs.writeFileSync(
+      OUTPUT_FILE,
+      JSON.stringify(
+        {
+          runId: RUN_ID,
+          summary,
+          results,
+          mode: MODE,
+          crossChainProofs,
+          timedOut: stopRequested,
+          ...(runFailure ? { failure: runFailure.message, lastProgress } : {}),
+        },
+        null,
+        2
+      )
+    );
     log(`\nResults saved to ${OUTPUT_FILE}`);
+  }
+
+  if (runFailure) {
+    throw runFailure;
   }
 
   if (isCrosschainStrictMode(MODE) && crossChainProofs.length < 3) {
