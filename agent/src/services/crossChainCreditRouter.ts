@@ -9,12 +9,14 @@ import { mintBusdc } from '../utils/demoTokenMinter';
 import { createCrossChainCreditAsync, getCrossChainCreditsByStatusAsync, updateCrossChainCreditAsync } from '../../execution-ledger/db';
 import {
   getSettlementChainRuntimeConfig,
+  isSettlementChainExecutionReady,
   normalizeSettlementChain as normalizeSettlementChainInput,
   resolveExecutionSettlementChain,
   type SettlementChain,
 } from '../config/settlementChains';
 
 type CrossChainRouteCode =
+  | 'BASE_LANE_NOT_CONFIGURED'
   | 'CROSS_CHAIN_ROUTE_DISABLED'
   | 'CROSS_CHAIN_ROUTE_MISSING_ADDRESS'
   | 'CROSS_CHAIN_ROUTE_UNSUPPORTED'
@@ -301,7 +303,17 @@ export async function routeStableCreditForExecution(
 
   const fromChain = normalizeChainLabel(params.fromChain);
   const requestedToChain = normalizeChainLabel(params.toChain || DEFAULT_SETTLEMENT_CHAIN);
-  const toChain = resolveExecutionSettlementChain(requestedToChain) as SettlementChain;
+  const explicitBaseRequest = requestedToChain === 'base_sepolia';
+  const toChain = explicitBaseRequest
+    ? (normalizeSettlementChainInput(requestedToChain) as SettlementChain)
+    : (resolveExecutionSettlementChain(requestedToChain) as SettlementChain);
+  if (explicitBaseRequest && !isSettlementChainExecutionReady('base_sepolia')) {
+    return {
+      ok: false,
+      code: 'BASE_LANE_NOT_CONFIGURED',
+      message: 'Base settlement lane is not configured yet. Set Base router/perp/bUSDC addresses.',
+    };
+  }
   const amountUsd = clampUsd(params.amountUsd);
   const userSolanaAddress = params.userSolanaAddress?.trim();
   const userEvmAddress = params.userEvmAddress?.trim().toLowerCase();
@@ -446,7 +458,23 @@ export async function ensureExecutionFunding(
   params: EnsureExecutionFundingParams
 ): Promise<EnsureExecutionFundingResult> {
   const requestedToChain = normalizeChainLabel(params.toChain || DEFAULT_SETTLEMENT_CHAIN);
-  const toChain = resolveExecutionSettlementChain(requestedToChain) as SettlementChain;
+  const explicitBaseRequest = requestedToChain === 'base_sepolia';
+  const toChain = explicitBaseRequest
+    ? (normalizeSettlementChainInput(requestedToChain) as SettlementChain)
+    : (resolveExecutionSettlementChain(requestedToChain) as SettlementChain);
+  if (explicitBaseRequest && !isSettlementChainExecutionReady('base_sepolia')) {
+    return {
+      ok: false,
+      code: 'BASE_LANE_NOT_CONFIGURED',
+      userMessage: 'Base settlement lane is not configured yet. Please try again after Base contracts are deployed.',
+      route: {
+        didRoute: false,
+        fromChain: normalizeChainLabel(params.fromChain) || 'solana_devnet',
+        toChain: 'base_sepolia',
+        reason: 'BASE_LANE_NOT_CONFIGURED',
+      },
+    };
+  }
   const toChainConfig = getSettlementChainRuntimeConfig(toChain);
   const fromChain = normalizeChainLabel(params.fromChain) || (params.userSolanaAddress ? 'solana_devnet' : toChain);
   const requiredUsd = deriveRequiredUsd(params);

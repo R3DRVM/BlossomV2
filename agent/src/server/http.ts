@@ -72,7 +72,12 @@ import * as perpsSim from '../plugins/perps-sim';
 import * as defiSim from '../plugins/defi-sim';
 import { verifyRequestAuth, getAuthMode } from '../auth';
 import { startCrossChainCreditFinalizer } from '../services/crossChainCreditRouter';
-import { getSettlementChainRuntimeConfig, normalizeSettlementChain, resolveExecutionSettlementChain } from '../config/settlementChains';
+import {
+  getSettlementChainRuntimeConfig,
+  isSettlementChainExecutionReady,
+  normalizeSettlementChain,
+  resolveExecutionSettlementChain,
+} from '../config/settlementChains';
 
 // Allowed CORS origins for MVP
 const ALLOWED_ORIGINS = [
@@ -4273,15 +4278,43 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
       });
     }
 
+    const requestedMode = String(req.body?.metadata?.mode || '').toLowerCase();
+    const requestedSettlementChain = String(
+      req.body?.metadata?.toChain ||
+      req.body?.toChain ||
+      process.env.DEFAULT_SETTLEMENT_CHAIN ||
+      'base_sepolia'
+    );
+    const requestedSettlementChainNormalized = normalizeSettlementChain(requestedSettlementChain);
+    const baseRequiredMode =
+      requestedSettlementChainNormalized === 'base_sepolia' &&
+      (
+        requestedMode === 'tier1_crosschain_required_base' ||
+        req.body?.metadata?.requireBaseSettlement === true ||
+        req.body?.metadata?.strictSettlementChain === true
+      );
+    const settlementChain = resolveExecutionSettlementChain(requestedSettlementChain, {
+      allowFallback: !baseRequiredMode,
+    });
+    if (baseRequiredMode && (!isSettlementChainExecutionReady('base_sepolia') || settlementChain !== 'base_sepolia')) {
+      return res.status(422).json({
+        ok: false,
+        success: false,
+        error: 'Base settlement lane is not configured for execution.',
+        errorCode: 'BASE_LANE_NOT_CONFIGURED',
+        notes: ['Set BUSDC/ExecutionRouter/Perp adapter Base Sepolia addresses before running base-required mode.'],
+      });
+    }
+
     // Check if session is actually enabled (server-side check)
     let sessionEnabled = false;
     if (EXECUTION_MODE === 'eth_testnet' && EXECUTION_AUTH_MODE === 'session') {
       try {
         // Quick check: verify relayer and router are configured
         const { RELAYER_PRIVATE_KEY } = await import('../config');
-        const requestedChain = resolveExecutionSettlementChain(
-          String(req.body?.metadata?.toChain || req.body?.toChain || process.env.DEFAULT_SETTLEMENT_CHAIN || 'base_sepolia')
-        );
+        const requestedChain = resolveExecutionSettlementChain(requestedSettlementChain, {
+          allowFallback: !baseRequiredMode,
+        });
         const chainRuntime = getSettlementChainRuntimeConfig(requestedChain);
         const routerAddress = chainRuntime.executionRouterAddress;
         const rpcUrl = chainRuntime.rpcUrl;
@@ -4333,13 +4366,6 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
     }
 
     const { draftId, userAddress, plan, sessionId } = req.body;
-    const requestedSettlementChain = String(
-      req.body?.metadata?.toChain ||
-      req.body?.toChain ||
-      process.env.DEFAULT_SETTLEMENT_CHAIN ||
-      'base_sepolia'
-    );
-    const settlementChain = resolveExecutionSettlementChain(requestedSettlementChain);
     const settlementConfig = getSettlementChainRuntimeConfig(settlementChain);
     const settlementRouterAddress = settlementConfig.executionRouterAddress;
     const settlementRpcUrl = settlementConfig.rpcUrl;
@@ -10059,7 +10085,29 @@ app.post('/api/ledger/intents/execute', checkLedgerSecret, async (req, res) => {
       process.env.DEFAULT_SETTLEMENT_CHAIN ||
       'base_sepolia'
     );
-    const settlementChain = resolveExecutionSettlementChain(requestedToChain);
+    const requestedToChainNormalized = normalizeSettlementChain(requestedToChain);
+    const baseRequiredMode =
+      requestedToChainNormalized === 'base_sepolia' &&
+      (
+        requestedMode === 'tier1_crosschain_required_base' ||
+        callerMetadata.requireBaseSettlement === true ||
+        callerMetadata.strictSettlementChain === true
+      );
+    const settlementChain = resolveExecutionSettlementChain(requestedToChain, {
+      allowFallback: !baseRequiredMode,
+    });
+    if (baseRequiredMode && (!isSettlementChainExecutionReady('base_sepolia') || settlementChain !== 'base_sepolia')) {
+      return res.status(422).json({
+        ok: false,
+        intentId: intentId || '',
+        status: 'unsupported',
+        error: {
+          stage: 'execute',
+          code: 'BASE_LANE_NOT_CONFIGURED',
+          message: 'Base settlement lane is not configured. Set Base bUSDC/router/perp addresses before running base-required mode.',
+        },
+      });
+    }
     let fundingPolicySnapshot: any = null;
     let fundingPolicyMode: string | undefined;
 

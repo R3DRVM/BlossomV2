@@ -126,9 +126,16 @@ export function isSettlementChainExecutionReady(input?: string): boolean {
   return !!(cfg.rpcUrl && cfg.stableTokenAddress && cfg.perpAdapterAddress && cfg.executionRouterAddress);
 }
 
-export function resolveExecutionSettlementChain(preferred?: string): SettlementChain {
+export function resolveExecutionSettlementChain(
+  preferred?: string,
+  options?: { allowFallback?: boolean }
+): SettlementChain {
   const preferredChain = normalizeSettlementChain(preferred);
+  const allowFallback = options?.allowFallback !== false;
   if (isSettlementChainExecutionReady(preferredChain)) {
+    return preferredChain;
+  }
+  if (!allowFallback) {
     return preferredChain;
   }
   if (preferredChain !== 'sepolia' && isSettlementChainExecutionReady('sepolia')) {

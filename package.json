@@ -23,6 +23,7 @@
     "stress:tier1:crosschain_required_base": "npx tsx agent/scripts/live-stress-tester.ts --baseUrl=https://api.blossom.onl --mode=tier1_crosschain_required_base --allow_execute --count=10 --concurrency=2 --output=logs/stress-tier1-crosschain-required-base.json",
     "stress:tier1:crosschain_resilient": "npx tsx agent/scripts/live-stress-tester.ts --baseUrl=https://api.blossom.onl --mode=tier1_crosschain_resilient --allow_execute --count=10 --concurrency=2 --output=logs/stress-tier1-crosschain-resilient.json",
     "mvp:prove:prod": "npx tsx agent/scripts/mvp-prove-prod.ts",
+    "deploy:settlement:base": "npx tsx agent/scripts/deploy-settlement-lane.ts --chain=base_sepolia",
     "stress:tier2:realistic": "npx tsx agent/scripts/live-stress-tester.ts --baseUrl=https://api.blossom.onl --mode=tier2 --allow_execute --count=40 --concurrency=2 --output=logs/stress-tier2-realistic.json"
   },
   "dependencies": {
