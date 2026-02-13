@@ -1,4 +1,5 @@
 import {
+  DEFAULT_SETTLEMENT_CHAIN,
   MIN_USER_GAS_ETH,
   USER_PAYS_GAS_FALLBACK_ENABLED,
   GAS_DRIP_ENABLED,
@@ -12,6 +13,7 @@ import {
   noteFundingRecoveryMode,
   type RelayerChain,
 } from './relayerTopUp';
+import { normalizeSettlementChain } from '../config/settlementChains';
 
 export type ExecutionFundingMode =
   | 'relayed'
@@ -105,7 +107,7 @@ export async function executionFundingPolicy(params: {
   topupTimeoutMs?: number;
   topupReason?: string;
 }): Promise<ExecutionFundingPolicyResult> {
-  const chain = (params.chain || 'sepolia') as RelayerChain;
+  const chain = normalizeSettlementChain(params.chain || DEFAULT_SETTLEMENT_CHAIN) as RelayerChain;
   const userAddress = String(params.userAddress || '').trim();
   const minUserGasEth =
     Number.isFinite(params.minUserGasEthOverride) && Number(params.minUserGasEthOverride) > 0

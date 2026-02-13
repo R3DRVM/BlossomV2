@@ -1,10 +1,6 @@
 import {
-  ETH_TESTNET_RPC_URL,
-  RELAYER_PRIVATE_KEY,
+  DEFAULT_SETTLEMENT_CHAIN,
   RELAYER_TOPUP_ENABLED,
-  FUNDING_WALLET_PRIVATE_KEY_SEPOLIA,
-  MIN_RELAYER_ETH_SEPOLIA,
-  TARGET_RELAYER_ETH_SEPOLIA,
   MAX_TOPUPS_PER_HOUR,
   MAX_TOPUP_ETH_PER_DAY,
   GAS_CREDITS_ENABLED,
@@ -21,9 +17,10 @@ import {
 } from '../config';
 import { createPublicClient, createWalletClient, formatEther, http, parseEther } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { sepolia } from 'viem/chains';
+import { getSettlementChainRuntimeConfig, type SettlementChain as RelayerChain } from '../config/settlementChains';
 
-export type RelayerChain = 'sepolia';
+export type { RelayerChain };
+
 
 type TopupEvent = {
   at: number;
@@ -56,7 +53,7 @@ type GasDripEvent = {
 
 type RelayerStatus = {
   ok: boolean;
-  chain: 'sepolia';
+  chain: RelayerChain;
   relayer: {
     address: string;
     balanceEth: string;
@@ -118,7 +115,7 @@ let lastFundingRecoveryMode: 'relayed' | 'user_pays_gas' | 'sponsor_gas_drip' | 
 let lastSwapQuoteEth: string | undefined;
 let lastSwapError: string | undefined;
 let lastError: string | undefined;
-let topupInFlight: Promise<TopupResult> | null = null;
+let topupInFlightByChain = new Map<RelayerChain, Promise<TopupResult>>();
 let gasDripInFlightByAddress = new Map<string, Promise<GasDripResult>>();
 let gasDripEvents: GasDripEvent[] = [];
 let gasDripsByAddressToday = new Map<string, number>();
@@ -155,20 +152,22 @@ function getStats(now = Date.now()) {
   };
 }
 
-function getFundingAccount() {
-  if (!FUNDING_WALLET_PRIVATE_KEY_SEPOLIA) {
-    throw new Error('FUNDING_WALLET_PRIVATE_KEY_SEPOLIA is required');
+function getFundingAccount(chain: RelayerChain) {
+  const chainConfig = getSettlementChainRuntimeConfig(chain);
+  if (!chainConfig.fundingPrivateKey) {
+    throw new Error(`Funding wallet private key is required for ${chainConfig.label}`);
   }
-  return privateKeyToAccount(parsePrivateKey(FUNDING_WALLET_PRIVATE_KEY_SEPOLIA));
+  return privateKeyToAccount(parsePrivateKey(chainConfig.fundingPrivateKey));
 }
 
-function getPublicClient() {
-  if (!ETH_TESTNET_RPC_URL) {
-    throw new Error('ETH_TESTNET_RPC_URL not configured');
+function getPublicClient(chain: RelayerChain) {
+  const chainConfig = getSettlementChainRuntimeConfig(chain);
+  if (!chainConfig.rpcUrl) {
+    throw new Error(`${chainConfig.label} RPC not configured`);
   }
   return createPublicClient({
-    chain: sepolia,
-    transport: http(ETH_TESTNET_RPC_URL),
+    chain: chainConfig.chain,
+    transport: http(chainConfig.rpcUrl),
   });
 }
 
@@ -187,9 +186,10 @@ function classifyTopupError(error: any): string {
   return 'relayer_topup_failed:unknown';
 }
 
-function clampTopupAmountWei(balanceWei: bigint): bigint {
-  const minWei = parseEther(String(MIN_RELAYER_ETH_SEPOLIA));
-  const targetWei = parseEther(String(TARGET_RELAYER_ETH_SEPOLIA));
+function clampTopupAmountWei(chain: RelayerChain, balanceWei: bigint): bigint {
+  const chainConfig = getSettlementChainRuntimeConfig(chain);
+  const minWei = parseEther(String(chainConfig.minRelayerEth));
+  const targetWei = parseEther(String(chainConfig.targetRelayerEth));
 
   // Keep the relayer topped up to target when possible.
   // minWei is for "okToExecute" gating, not for deciding whether to top up.
@@ -213,10 +213,7 @@ function getAddressDripCountToday(address: string): number {
 }
 
 export async function getUserEthBalance(chain: RelayerChain, address: string): Promise<{ balanceWei: bigint; balanceEth: number }> {
-  if (chain !== 'sepolia') {
-    throw new Error(`Unsupported chain for user balance: ${chain}`);
-  }
-  const publicClient = getPublicClient();
+  const publicClient = getPublicClient(chain);
   const normalizedAddress = address.toLowerCase() as `0x${string}`;
   const balanceWei = await publicClient.getBalance({ address: normalizedAddress });
   return {
@@ -237,13 +234,11 @@ export async function canSponsorGasDrip(
   remainingGlobalEthToday?: number;
   addressDripsToday?: number;
 }> {
-  if (chain !== 'sepolia') {
-    return { ok: false, reason: `unsupported_chain:${chain}`, amountEth };
-  }
   if (!GAS_DRIP_ENABLED) {
     return { ok: false, reason: 'gas_drip_disabled', amountEth };
   }
-  if (!FUNDING_WALLET_PRIVATE_KEY_SEPOLIA) {
+  const chainConfig = getSettlementChainRuntimeConfig(chain);
+  if (!chainConfig.fundingPrivateKey) {
     return { ok: false, reason: 'funding_wallet_missing', amountEth };
   }
 
@@ -268,8 +263,8 @@ export async function canSponsorGasDrip(
   }
 
   try {
-    const publicClient = getPublicClient();
-    const fundingAccount = getFundingAccount();
+    const publicClient = getPublicClient(chain);
+    const fundingAccount = getFundingAccount(chain);
     const fundingBalanceWei = await publicClient.getBalance({ address: fundingAccount.address });
     const fundingBalanceEth = Number(formatEther(fundingBalanceWei));
     const valueWei = parseEther(amountEth.toFixed(6));
@@ -306,12 +301,16 @@ async function runGasDripAttempt(
   }
 
   try {
-    const publicClient = getPublicClient();
-    const fundingAccount = getFundingAccount();
+    const chainConfig = getSettlementChainRuntimeConfig(chain);
+    if (!chainConfig.rpcUrl) {
+      throw new Error(`${chainConfig.label} RPC not configured`);
+    }
+    const publicClient = getPublicClient(chain);
+    const fundingAccount = getFundingAccount(chain);
     const walletClient = createWalletClient({
       account: fundingAccount,
-      chain: sepolia,
-      transport: http(ETH_TESTNET_RPC_URL!),
+      chain: chainConfig.chain,
+      transport: http(chainConfig.rpcUrl),
     });
     const normalizedAddress = userAddress.toLowerCase() as `0x${string}`;
     const valueWei = parseEther(amountEth.toFixed(6));
@@ -369,7 +368,7 @@ async function runGasDripAttempt(
 }
 
 export async function maybeDripUserGas(
-  chain: RelayerChain = 'sepolia',
+  chain: RelayerChain = DEFAULT_SETTLEMENT_CHAIN,
   userAddress: string,
   opts?: {
     reason?: string;
@@ -441,14 +440,6 @@ export function getGasCreditsSnapshot() {
 }
 
 async function runTopupAttempt(chain: RelayerChain, reason = 'manual'): Promise<TopupResult> {
-  if (chain !== 'sepolia') {
-    return {
-      attempted: false,
-      toppedUp: false,
-      reason: `unsupported_chain:${chain}`,
-    };
-  }
-
   if (!RELAYER_TOPUP_ENABLED) {
     return {
       attempted: false,
@@ -458,8 +449,24 @@ async function runTopupAttempt(chain: RelayerChain, reason = 'manual'): Promise<
   }
 
   try {
-    const publicClient = getPublicClient();
-    const relayerAccount = privateKeyToAccount(parsePrivateKey(RELAYER_PRIVATE_KEY));
+    const chainConfig = getSettlementChainRuntimeConfig(chain);
+    if (!chainConfig.rpcUrl) {
+      return {
+        attempted: false,
+        toppedUp: false,
+        reason: `missing_rpc:${chain}`,
+      };
+    }
+    if (!chainConfig.relayerPrivateKey) {
+      return {
+        attempted: false,
+        toppedUp: false,
+        reason: `missing_relayer_key:${chain}`,
+      };
+    }
+
+    const publicClient = getPublicClient(chain);
+    const relayerAccount = privateKeyToAccount(parsePrivateKey(chainConfig.relayerPrivateKey));
 
     const relayerBalanceWei = await publicClient.getBalance({
       address: relayerAccount.address,
@@ -475,28 +482,28 @@ async function runTopupAttempt(chain: RelayerChain, reason = 'manual'): Promise<
       };
     }
 
-    const topupAmountWei = clampTopupAmountWei(relayerBalanceWei);
+    const topupAmountWei = clampTopupAmountWei(chain, relayerBalanceWei);
     if (topupAmountWei <= 0n) {
       return {
         attempted: false,
         toppedUp: false,
-        reason: relayerBalanceWei >= parseEther(String(MIN_RELAYER_ETH_SEPOLIA))
+        reason: relayerBalanceWei >= parseEther(String(chainConfig.minRelayerEth))
           ? 'balance_above_min'
           : 'daily_cap_reached',
       };
     }
 
-    if (!FUNDING_WALLET_PRIVATE_KEY_SEPOLIA) {
+    if (!chainConfig.fundingPrivateKey) {
       lastError = 'Funding wallet key missing';
       return {
         attempted: true,
         toppedUp: false,
         reason: 'funding_wallet_missing',
-        error: 'FUNDING_WALLET_PRIVATE_KEY_SEPOLIA is required',
+        error: `Funding wallet private key is required for ${chainConfig.label}`,
       };
     }
 
-    const fundingAccount = privateKeyToAccount(parsePrivateKey(FUNDING_WALLET_PRIVATE_KEY_SEPOLIA));
+    const fundingAccount = privateKeyToAccount(parsePrivateKey(chainConfig.fundingPrivateKey));
     const fundingBalanceWei = await publicClient.getBalance({
       address: fundingAccount.address,
     });
@@ -525,8 +532,8 @@ async function runTopupAttempt(chain: RelayerChain, reason = 'manual'): Promise<
 
     const walletClient = createWalletClient({
       account: fundingAccount,
-      chain: sepolia,
-      transport: http(ETH_TESTNET_RPC_URL!),
+      chain: chainConfig.chain,
+      transport: http(chainConfig.rpcUrl),
     });
 
     const txHash = await walletClient.sendTransaction({
@@ -574,15 +581,17 @@ async function runTopupAttempt(chain: RelayerChain, reason = 'manual'): Promise<
 }
 
 export async function maybeTopUpRelayer(
-  chain: RelayerChain = 'sepolia',
+  chain: RelayerChain = DEFAULT_SETTLEMENT_CHAIN,
   opts?: { reason?: string; fireAndForget?: boolean }
 ): Promise<TopupResult> {
   const reason = opts?.reason || 'manual';
 
+  let topupInFlight = topupInFlightByChain.get(chain);
   if (!topupInFlight) {
     topupInFlight = runTopupAttempt(chain, reason).finally(() => {
-      topupInFlight = null;
+      topupInFlightByChain.delete(chain);
     });
+    topupInFlightByChain.set(chain, topupInFlight);
   }
 
   if (opts?.fireAndForget) {
@@ -597,10 +606,11 @@ export async function maybeTopUpRelayer(
   return topupInFlight;
 }
 
-export async function getRelayerStatus(chain: RelayerChain = 'sepolia'): Promise<RelayerStatus> {
+export async function getRelayerStatus(chain: RelayerChain = DEFAULT_SETTLEMENT_CHAIN): Promise<RelayerStatus> {
   const stats = getStats();
-  const minEth = MIN_RELAYER_ETH_SEPOLIA;
-  const targetEth = TARGET_RELAYER_ETH_SEPOLIA;
+  const chainConfig = getSettlementChainRuntimeConfig(chain);
+  const minEth = chainConfig.minRelayerEth;
+  const targetEth = chainConfig.targetRelayerEth;
 
   let relayerAddress = '';
   let relayerBalanceWei = 0n;
@@ -608,15 +618,18 @@ export async function getRelayerStatus(chain: RelayerChain = 'sepolia'): Promise
   let fundingBalanceEth: string | undefined;
 
   try {
-    const publicClient = getPublicClient();
-    const relayerAccount = privateKeyToAccount(parsePrivateKey(RELAYER_PRIVATE_KEY));
+    const publicClient = getPublicClient(chain);
+    if (!chainConfig.relayerPrivateKey) {
+      throw new Error(`Missing relayer key for ${chainConfig.label}`);
+    }
+    const relayerAccount = privateKeyToAccount(parsePrivateKey(chainConfig.relayerPrivateKey));
     relayerAddress = relayerAccount.address;
     relayerBalanceWei = await publicClient.getBalance({
       address: relayerAccount.address,
     });
 
-    if (FUNDING_WALLET_PRIVATE_KEY_SEPOLIA) {
-      const fundingAccount = privateKeyToAccount(parsePrivateKey(FUNDING_WALLET_PRIVATE_KEY_SEPOLIA));
+    if (chainConfig.fundingPrivateKey) {
+      const fundingAccount = privateKeyToAccount(parsePrivateKey(chainConfig.fundingPrivateKey));
       fundingAddress = fundingAccount.address;
       const fundingBalanceWei = await publicClient.getBalance({
         address: fundingAccount.address,
@@ -633,7 +646,7 @@ export async function getRelayerStatus(chain: RelayerChain = 'sepolia'): Promise
 
   const result: RelayerStatus = {
     ok: okToExecute,
-    chain: 'sepolia',
+    chain,
     relayer: {
       address: relayerAddress,
       balanceEth,
@@ -699,7 +712,7 @@ export function startRelayerTopUpService(): void {
   }
 
   const tick = () => {
-    void maybeTopUpRelayer('sepolia', {
+    void maybeTopUpRelayer(DEFAULT_SETTLEMENT_CHAIN, {
       reason: 'interval_check',
       fireAndForget: true,
     });

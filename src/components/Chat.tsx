@@ -27,6 +27,17 @@ import { BlossomLogo } from './BlossomLogo';
 import { DEMO_STABLE_ALT_SYMBOL, DEMO_STABLE_INTERNAL_SYMBOL, formatTokenSymbol } from '../lib/tokenBranding';
 // ExecutionPlanCard removed - execution details now live inside chat plan card
 
+const DEFAULT_SETTLEMENT_CHAIN = String(import.meta.env.VITE_DEFAULT_SETTLEMENT_CHAIN || 'base_sepolia')
+  .toLowerCase()
+  .includes('base')
+  ? 'base_sepolia'
+  : 'sepolia';
+const DEFAULT_SETTLEMENT_LABEL = DEFAULT_SETTLEMENT_CHAIN === 'base_sepolia' ? 'Base Sepolia' : 'Ethereum Sepolia';
+const settlementExplorerTxUrl = (txHash: string) =>
+  DEFAULT_SETTLEMENT_CHAIN === 'base_sepolia'
+    ? `https://sepolia.basescan.org/tx/${txHash}`
+    : `https://sepolia.etherscan.io/tx/${txHash}`;
+
 // =============================================================================
 // MESSAGE ROUTING CLASSIFIER
 // Routes messages to: CHAT (normal response) | PLAN (preview) | EXECUTE (action)
@@ -3628,7 +3639,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
         if (!statusResponse.ok) {
           if (attempts >= maxAttempts) {
             clearInterval(pollInterval);
-            const explorerUrl = `https://sepolia.etherscan.io/tx/${txHash}`;
+            const explorerUrl = settlementExplorerTxUrl(txHash);
             const timeoutMessage: ChatMessage = {
               id: statusMessageId,
               text: `Transaction still pending. [View on Sepolia Explorer](${explorerUrl})`,
@@ -3646,7 +3657,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
           // Keep waiting
           if (attempts >= maxAttempts) {
             clearInterval(pollInterval);
-            const explorerUrl = `https://sepolia.etherscan.io/tx/${txHash}`;
+            const explorerUrl = settlementExplorerTxUrl(txHash);
             const timeoutMessage: ChatMessage = {
               id: statusMessageId,
               text: `Transaction still pending. [View on Sepolia Explorer](${explorerUrl})`,
@@ -3661,7 +3672,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
         // Transaction is confirmed or reverted
         clearInterval(pollInterval);
 
-        const explorerUrl = `https://sepolia.etherscan.io/tx/${txHash}`;
+        const explorerUrl = settlementExplorerTxUrl(txHash);
         let statusText: string;
 
         if (statusData.status === 'confirmed') {
@@ -3973,7 +3984,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
             draftId,
             userAddress,
             userSolanaAddress: walletStatus.solAddress || undefined,
-            fromChain: walletStatus.solConnected ? 'solana_devnet' : 'sepolia',
+            fromChain: walletStatus.solConnected ? 'solana_devnet' : DEFAULT_SETTLEMENT_CHAIN,
             planType,
             executionRequest: chatMessage?.executionRequest,
             executionIntent: chatMessage?.executionRequest ? undefined : ethTestnetIntent,
@@ -3982,7 +3993,8 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
             metadata: {
               userAddress,
               userSolanaAddress: walletStatus.solAddress || undefined,
-              fromChain: walletStatus.solConnected ? 'solana_devnet' : 'sepolia',
+              fromChain: walletStatus.solConnected ? 'solana_devnet' : DEFAULT_SETTLEMENT_CHAIN,
+              toChain: DEFAULT_SETTLEMENT_CHAIN,
             },
           }, { executionAuthMode: 'session' });
 
@@ -4045,7 +4057,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
                   },
                   fundingMode: result.fundingMode || 'relayed',
                   errorCode: result.errorCode,
-                  chain: 'sepolia',
+                  chain: DEFAULT_SETTLEMENT_CHAIN,
                 },
               } as any);
               const errorMessage: ChatMessage = {
@@ -4069,7 +4081,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
                   },
                   fundingMode: result.fundingMode || 'user_paid_required',
                   errorCode: 'USER_PAID_REQUIRED',
-                  chain: 'sepolia',
+                  chain: DEFAULT_SETTLEMENT_CHAIN,
                 },
               } as any);
               appendMessageToChat(targetChatId, {
@@ -4167,7 +4179,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
             if (result.receiptStatus === 'failed') {
               const failedMessage: ChatMessage = {
                 id: `tx-failed-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-                text: `Transaction failed on-chain. Check: ${result.explorerUrl || `https://sepolia.etherscan.io/tx/${result.txHash}`}`,
+                text: `Transaction failed on-chain. Check: ${result.explorerUrl || settlementExplorerTxUrl(result.txHash)}`,
                 isUser: false,
                 timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
               };
@@ -4176,7 +4188,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
             } else if (result.receiptStatus === 'timeout') {
               const timeoutMessage: ChatMessage = {
                 id: `tx-timeout-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-                text: `Transaction pending confirmation. Check status: ${result.explorerUrl || `https://sepolia.etherscan.io/tx/${result.txHash}`}`,
+                text: `Transaction pending confirmation. Check status: ${result.explorerUrl || settlementExplorerTxUrl(result.txHash)}`,
                 isUser: false,
                 timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
               };
@@ -4193,7 +4205,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
           // TRUTHFUL UI: Only show "Executed" and Etherscan link if txHash exists
           if (result.txHash && result.routing) {
             const routing = result.routing;
-            const explorerUrl = result.explorerUrl || `https://sepolia.etherscan.io/tx/${result.txHash}`;
+            const explorerUrl = result.explorerUrl || settlementExplorerTxUrl(result.txHash);
             
             // Build message that distinguishes routing decision from execution
             let messageText = '';
@@ -4685,7 +4697,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
           }
 
           // Update status with tx link
-          const explorerUrl = `https://sepolia.etherscan.io/tx/${txHash}`;
+          const explorerUrl = settlementExplorerTxUrl(txHash);
           updateMessageInChat(targetChatId, sigStatusMsgId, {
             text: `⏳ Transaction submitted! Waiting for confirmation... [View on Etherscan](${explorerUrl})`,
           });
@@ -4870,7 +4882,7 @@ export default function Chat({ selectedStrategyId, executionMode = 'auto', onReg
     });
 
     try {
-      const response = await callAgent(`/api/gas/drip?chain=sepolia&address=${encodeURIComponent(userAddress)}`, {
+      const response = await callAgent(`/api/gas/drip?chain=${encodeURIComponent(DEFAULT_SETTLEMENT_CHAIN)}&address=${encodeURIComponent(userAddress)}`, {
         method: 'POST',
       });
       const payload = await response.json().catch(() => ({}));

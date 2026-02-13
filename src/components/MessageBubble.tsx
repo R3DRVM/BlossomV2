@@ -124,8 +124,15 @@ function formatRouteChainLabel(chain?: string): string {
   const value = String(chain || '').toLowerCase();
   if (!value) return 'unknown chain';
   if (value.includes('sol')) return 'Solana devnet';
+  if (value.includes('base')) return 'Base Sepolia';
   if (value.includes('sep') || value.includes('eth')) return 'Ethereum Sepolia';
   return chain || 'unknown chain';
+}
+
+function explorerBaseForChain(chain?: string): string {
+  const value = String(chain || '').toLowerCase();
+  if (value.includes('base')) return 'https://sepolia.basescan.org/tx/';
+  return 'https://sepolia.etherscan.io/tx/';
 }
 
 export default function MessageBubble({ text, isUser, timestamp, strategy, strategyId, selectedStrategyId, defiProposalId, executionMode, onInsertPrompt, onRegisterStrategyRef, onConfirmDraft, onTopUpGasDraft, showRiskWarning, riskReasons, marketsList, defiProtocolsList, onSendMessage, intentExecution, onConfirmIntent, isConfirmingIntent }: MessageBubbleProps) {
@@ -1378,7 +1385,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                       <div>
                         credit tx:{' '}
                         <a
-                          href={`https://sepolia.etherscan.io/tx/${routeMeta.txHash}`}
+                          href={`${explorerBaseForChain(routeMeta?.toChain)}${routeMeta.txHash}`}
                           target="_blank"
                           rel="noreferrer"
                           className="text-blue-600 underline"
@@ -1391,7 +1398,7 @@ export default function MessageBubble({ text, isUser, timestamp, strategy, strat
                       <div>
                         execution tx:{' '}
                         <a
-                          href={currentStrategy.explorerUrl || `https://sepolia.etherscan.io/tx/${currentStrategy.txHash}`}
+                          href={currentStrategy.explorerUrl || `${explorerBaseForChain(routeMeta?.toChain)}${currentStrategy.txHash}`}
                           target="_blank"
                           rel="noreferrer"
                           className="text-blue-600 underline"

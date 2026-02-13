@@ -9,7 +9,7 @@
 import { useEffect, useRef } from 'react';
 import { useAccount, useChainId } from 'wagmi';
 import { useWallet } from '@solana/wallet-adapter-react';
-import { sepolia } from 'wagmi/chains';
+import { baseSepolia, sepolia } from 'wagmi/chains';
 
 // Update the legacy walletAdapter's explicit connection state
 // This is a minimal bridge that keeps existing code working
@@ -79,10 +79,14 @@ export default function WalletStateBridge() {
       // Trigger portfolio sync
       window.dispatchEvent(new CustomEvent('blossom-wallet-connection-change'));
 
-      // Also trigger balance fetch if on correct network
-      if (evmChainId === sepolia.id) {
+      // Also trigger balance fetch if on supported testnet network
+      if (evmChainId === sepolia.id || evmChainId === baseSepolia.id) {
         window.dispatchEvent(new CustomEvent('blossom-wallet-connected', {
-          detail: { address: currentAddress, chain: 'ethereum', network: 'sepolia' },
+          detail: {
+            address: currentAddress,
+            chain: 'ethereum',
+            network: evmChainId === baseSepolia.id ? 'base_sepolia' : 'sepolia',
+          },
         }));
       }
     } else if (!evmConnected && wasConnected) {

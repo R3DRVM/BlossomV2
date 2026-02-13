@@ -57,9 +57,26 @@ type StressOutput = {
 const BASE_URL = process.env.STRESS_PROD_BASE_URL || 'https://api.blossom.onl';
 const COUNT = parseInt(process.env.STRESS_PROVE_COUNT || '10', 10);
 const CONCURRENCY = parseInt(process.env.STRESS_PROVE_CONCURRENCY || '2', 10);
+const SETTLEMENT_CHAIN = (() => {
+  const raw = String(process.env.SETTLEMENT_CHAIN_OVERRIDE || process.env.DEFAULT_SETTLEMENT_CHAIN || 'base_sepolia')
+    .trim()
+    .toLowerCase();
+  if (raw.includes('base')) return 'base_sepolia';
+  if (raw.includes('sep') || raw.includes('eth')) return 'sepolia';
+  return 'base_sepolia';
+})();
+const STRESS_MODE = process.env.STRESS_PROVE_MODE || (SETTLEMENT_CHAIN === 'base_sepolia' ? 'tier1_crosschain_required_base' : 'tier1_crosschain_required');
+const MIN_PROOFS = parseInt(
+  process.env.STRESS_PROVE_MIN_PROOFS || (SETTLEMENT_CHAIN === 'base_sepolia' ? '10' : '5'),
+  10
+);
+const MIN_CROSSCHAIN_PROOFS = parseInt(
+  process.env.STRESS_PROVE_MIN_CROSSCHAIN_PROOFS || (SETTLEMENT_CHAIN === 'base_sepolia' ? '10' : '2'),
+  10
+);
 const logsDir = path.resolve(process.cwd(), 'logs');
 const runStamp = new Date().toISOString().replace(/[:.]/g, '-');
-const rawOutputPath = path.join(logsDir, `stress-tier1-crosschain-resilient-${runStamp}.json`);
+const rawOutputPath = path.join(logsDir, `stress-${STRESS_MODE}-${runStamp}.json`);
 const reportPath = path.join(logsDir, 'mvp-prove-report.json');
 
 function runStressSuite(): Promise<number> {
@@ -67,7 +84,8 @@ function runStressSuite(): Promise<number> {
     'tsx',
     'agent/scripts/live-stress-tester.ts',
     `--baseUrl=${BASE_URL}`,
-    '--mode=tier1_crosschain_resilient',
+    `--mode=${STRESS_MODE}`,
+    `--settlement-chain=${SETTLEMENT_CHAIN}`,
     '--allow_execute',
     '--allow_wallet_fallback',
     '--prove',
@@ -101,7 +119,7 @@ async function main() {
   }
 
   const summary: StressSummary = parsed?.summary || {
-    mode: 'tier1_crosschain_resilient',
+    mode: STRESS_MODE,
     sessions: 0,
     sessionsOk: 0,
     sessionsFail: 0,
@@ -114,7 +132,7 @@ async function main() {
   const results = Array.isArray(parsed?.results) ? parsed!.results : [];
   const proofs = ((parsed?.crossChainProofs || []) as CrossChainProof[]).filter((proof) =>
     proof.routeType === 'testnet_credit' &&
-    String(proof.toChain || '').toLowerCase() === 'sepolia' &&
+    String(proof.toChain || '').toLowerCase() === SETTLEMENT_CHAIN &&
     (
       proof.fundingMode === 'relayed' ||
       proof.fundingMode === 'relayed_after_topup' ||
@@ -128,7 +146,7 @@ async function main() {
   );
   const crossChainProofs = ((parsed?.crossChainProofs || []) as CrossChainProof[]).filter((proof) =>
     proof.routeType === 'testnet_credit' &&
-    String(proof.toChain || '').toLowerCase() === 'sepolia' &&
+    String(proof.toChain || '').toLowerCase() === SETTLEMENT_CHAIN &&
     assertHash(proof.creditTxHash) &&
     assertHash(proof.executionTxHash) &&
     proof.creditReceiptConfirmed === true &&
@@ -144,8 +162,8 @@ async function main() {
 
   const checks = {
     processExitZero: exitCode === 0,
-    minimumProofs: proofs.length >= 5,
-    minimumCrossChainProofs: crossChainProofs.length >= 2,
+    minimumProofs: proofs.length >= MIN_PROOFS,
+    minimumCrossChainProofs: crossChainProofs.length >= MIN_CROSSCHAIN_PROOFS,
     noProofOnly: proofOnlyViolations === 0,
   };
 
@@ -157,11 +175,12 @@ async function main() {
     ok,
     generatedAt: new Date().toISOString(),
     baseUrl: BASE_URL,
-    mode: 'tier1_crosschain_resilient',
+    mode: STRESS_MODE,
+    settlementChain: SETTLEMENT_CHAIN,
     requirements: {
       sessions: COUNT,
-      minProofs: 5,
-      minCrossChainProofs: 2,
+      minProofs: MIN_PROOFS,
+      minCrossChainProofs: MIN_CROSSCHAIN_PROOFS,
       noProofOnly: true,
       allowedFundingModes: ['relayed', 'relayed_after_topup', 'user_pays_gas', 'user_paid_required'],
     },

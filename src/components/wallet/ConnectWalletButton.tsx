@@ -16,12 +16,19 @@ import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { useWalletModal } from '@solana/wallet-adapter-react-ui';
 import { LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { Wallet, ChevronDown, LogOut, AlertTriangle, RefreshCw } from 'lucide-react';
-import { sepolia } from 'wagmi/chains';
+import { baseSepolia, sepolia } from 'wagmi/chains';
 
 interface ConnectWalletButtonProps {
   className?: string;
   variant?: 'primary' | 'compact';
 }
+
+const DEFAULT_EVM_TESTNET = String(import.meta.env.VITE_DEFAULT_SETTLEMENT_CHAIN || 'base_sepolia')
+  .toLowerCase()
+  .includes('base')
+  ? baseSepolia
+  : sepolia;
+const SUPPORTED_EVM_CHAIN_IDS = new Set<number>([sepolia.id, baseSepolia.id]);
 
 // Shorten address for display
 function shortenAddress(address: string, chars = 4): string {
@@ -43,7 +50,7 @@ export default function ConnectWalletButton({ className = '', variant = 'primary
   // EVM Balance
   const { data: evmBalanceData, isLoading: evmBalanceLoading, refetch: refetchEvmBalance } = useBalance({
     address: evmAddress,
-    chainId: sepolia.id,
+    chainId: DEFAULT_EVM_TESTNET.id,
   });
 
   // Solana
@@ -72,8 +79,9 @@ export default function ConnectWalletButton({ className = '', variant = 'primary
   }, [solConnected, solPublicKey, connection]);
 
   // Chain status
-  const isOnSepolia = evmChainId === sepolia.id;
-  const showWrongNetwork = evmConnected && !isOnSepolia;
+  const isOnSupportedEvmTestnet = SUPPORTED_EVM_CHAIN_IDS.has(evmChainId);
+  const showWrongNetwork = evmConnected && !isOnSupportedEvmTestnet;
+  const connectedEvmLabel = evmChainId === baseSepolia.id ? 'Base Sepolia' : 'Sepolia';
 
   // Handle chain selection
   const handleSelectChain = useCallback((chain: 'ethereum' | 'solana') => {
@@ -228,7 +236,7 @@ export default function ConnectWalletButton({ className = '', variant = 'primary
               <span className="text-xs text-slate-500">Ethereum</span>
               {showWrongNetwork ? (
                 <button
-                  onClick={() => switchChain?.({ chainId: sepolia.id })}
+                  onClick={() => switchChain?.({ chainId: DEFAULT_EVM_TESTNET.id })}
                   className="flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] bg-amber-100 text-amber-700 rounded hover:bg-amber-200 transition-colors"
                 >
                   <AlertTriangle className="w-2.5 h-2.5" />
@@ -236,7 +244,7 @@ export default function ConnectWalletButton({ className = '', variant = 'primary
                 </button>
               ) : (
                 <span className="px-1.5 py-0.5 text-[10px] bg-blue-100 text-blue-700 rounded">
-                  Sepolia
+                  {connectedEvmLabel}
                 </span>
               )}
             </div>
@@ -344,7 +352,7 @@ export default function ConnectWalletButton({ className = '', variant = 'primary
                   </div>
                   <div className="flex-1 text-left">
                     <div className="text-slate-900 font-medium">Ethereum</div>
-                    <div className="text-xs text-slate-500">Sepolia Testnet</div>
+                    <div className="text-xs text-slate-500">{`${DEFAULT_EVM_TESTNET.id === baseSepolia.id ? 'Base Sepolia' : 'Sepolia'} Testnet`}</div>
                   </div>
                 </button>
               )}
@@ -392,6 +400,8 @@ export function useWalletStatus() {
   const { publicKey: solPublicKey, connected: solConnected } = useWallet();
 
   const isOnSepolia = evmChainId === sepolia.id;
+  const isOnBaseSepolia = evmChainId === baseSepolia.id;
+  const isOnSupportedEvmTestnet = SUPPORTED_EVM_CHAIN_IDS.has(evmChainId);
 
   return {
     // EVM
@@ -399,6 +409,8 @@ export function useWalletStatus() {
     evmConnected,
     evmChainId,
     isOnSepolia,
+    isOnBaseSepolia,
+    isOnSupportedEvmTestnet,
     // Solana
     solAddress: solPublicKey?.toBase58() ?? null,
     solConnected,

@@ -71,6 +71,30 @@ export const ETH_TESTNET_CHAIN_ID = parseInt(
 
 export const ETH_TESTNET_RPC_URL = process.env.ETH_TESTNET_RPC_URL;
 
+export type SettlementChain = 'sepolia' | 'base_sepolia';
+
+function normalizeSettlementChain(raw: string | undefined): SettlementChain {
+  const value = String(raw || '').trim().toLowerCase();
+  if (!value) return 'base_sepolia';
+  if (value === 'base' || value === 'base-sepolia' || value === 'base_sepolia') return 'base_sepolia';
+  if (value === 'ethereum_sepolia' || value === 'sepolia' || value === 'eth_sepolia') return 'sepolia';
+  return 'base_sepolia';
+}
+
+export const DEFAULT_SETTLEMENT_CHAIN: SettlementChain = normalizeSettlementChain(
+  process.env.DEFAULT_SETTLEMENT_CHAIN
+);
+export const BASE_SEPOLIA_CHAIN_ID = parseInt(process.env.BASE_SEPOLIA_CHAIN_ID || '84532', 10);
+export const ETH_SEPOLIA_RPC_URL = process.env.ETH_SEPOLIA_RPC_URL || ETH_TESTNET_RPC_URL;
+export const BASE_SEPOLIA_RPC_URL = process.env.BASE_SEPOLIA_RPC_URL || process.env.BASE_RPC_URL;
+export const BASE_RPC_FALLBACK_URLS = (process.env.BASE_RPC_FALLBACK_URLS || '')
+  .split(',')
+  .map((entry) => entry.trim())
+  .filter(Boolean);
+if (!BASE_RPC_FALLBACK_URLS.length) {
+  BASE_RPC_FALLBACK_URLS.push('https://sepolia.base.org');
+}
+
 // RPC Failover Configuration
 // Primary: ETH_TESTNET_RPC_URL (recommend Alchemy for reliability)
 // Fallbacks: ETH_RPC_FALLBACK_URLS (comma-separated) OR individual vars
@@ -163,6 +187,21 @@ export const DEMO_WETH_ADDRESS =
   process.env.DEMO_WETH_ADDRESS ||
   (ETH_TESTNET_CHAIN_ID === 11155111 ? DEFAULT_DEMO_TOKENS.sepolia.weth : undefined);
 
+export const BUSDC_ADDRESS_BASE_SEPOLIA =
+  process.env.BUSDC_ADDRESS_BASE_SEPOLIA ||
+  process.env.DEMO_BUSDC_ADDRESS_BASE_SEPOLIA ||
+  process.env.DEMO_REDACTED_ADDRESS_BASE_SEPOLIA;
+
+export const DEMO_WETH_ADDRESS_BASE_SEPOLIA = process.env.DEMO_WETH_ADDRESS_BASE_SEPOLIA;
+
+export const EXECUTION_ROUTER_ADDRESS_BASE_SEPOLIA = process.env.EXECUTION_ROUTER_ADDRESS_BASE_SEPOLIA;
+export const DEMO_PERP_ADAPTER_ADDRESS_BASE_SEPOLIA =
+  process.env.PERP_ADAPTER_ADDRESS_BASE_SEPOLIA ||
+  process.env.DEMO_PERP_ADAPTER_ADDRESS_BASE_SEPOLIA;
+export const DEMO_SWAP_ROUTER_ADDRESS_BASE_SEPOLIA =
+  process.env.ROUTER_ADDRESS_BASE_SEPOLIA ||
+  process.env.DEMO_SWAP_ROUTER_ADDRESS_BASE_SEPOLIA;
+
 export const DEMO_SWAP_ROUTER_ADDRESS = process.env.DEMO_SWAP_ROUTER_ADDRESS;
 
 // Demo lending venue (deterministic for investor demos)
@@ -249,18 +288,32 @@ export const EXECUTION_AUTH_MODE = process.env.EXECUTION_AUTH_MODE ||
   (EXECUTION_MODE === 'eth_testnet' ? 'session' : 'direct');
 
 export const RELAYER_PRIVATE_KEY = process.env.RELAYER_PRIVATE_KEY;
+export const RELAYER_PRIVATE_KEY_BASE_SEPOLIA = process.env.RELAYER_PRIVATE_KEY_BASE_SEPOLIA;
 
 // Relayer continuity + funding (testnet-safe defaults)
 export const RELAYER_TOPUP_ENABLED = process.env.RELAYER_TOPUP_ENABLED === 'true';
 export const FUNDING_WALLET_PRIVATE_KEY_SEPOLIA = process.env.FUNDING_WALLET_PRIVATE_KEY_SEPOLIA;
+export const FUNDING_WALLET_PRIVATE_KEY_BASE_SEPOLIA = process.env.FUNDING_WALLET_PRIVATE_KEY_BASE_SEPOLIA;
 const parsedMinRelayerEth = parseFloat(process.env.MIN_RELAYER_ETH_SEPOLIA || '0.02');
 const parsedTargetRelayerEth = parseFloat(process.env.TARGET_RELAYER_ETH_SEPOLIA || '0.12');
 const parsedFundingFloorEth = parseFloat(process.env.FUNDING_WALLET_FLOOR_ETH_SEPOLIA || '0.03');
+const parsedMinRelayerEthBase = parseFloat(
+  process.env.MIN_RELAYER_ETH_BASE_SEPOLIA || process.env.MIN_RELAYER_ETH_SEPOLIA || '0.02'
+);
+const parsedTargetRelayerEthBase = parseFloat(
+  process.env.TARGET_RELAYER_ETH_BASE_SEPOLIA || process.env.TARGET_RELAYER_ETH_SEPOLIA || '0.12'
+);
+const parsedFundingFloorEthBase = parseFloat(
+  process.env.FUNDING_WALLET_FLOOR_ETH_BASE_SEPOLIA || process.env.FUNDING_WALLET_FLOOR_ETH_SEPOLIA || '0.03'
+);
 const parsedMaxTopupsPerHour = parseInt(process.env.MAX_TOPUPS_PER_HOUR || '2', 10);
 const parsedMaxTopupEthPerDay = parseFloat(process.env.MAX_TOPUP_ETH_PER_DAY || '0.2');
 export const MIN_RELAYER_ETH_SEPOLIA = Number.isFinite(parsedMinRelayerEth) ? parsedMinRelayerEth : 0.02;
 export const TARGET_RELAYER_ETH_SEPOLIA = Number.isFinite(parsedTargetRelayerEth) ? parsedTargetRelayerEth : 0.12;
 export const FUNDING_WALLET_FLOOR_ETH_SEPOLIA = Number.isFinite(parsedFundingFloorEth) ? parsedFundingFloorEth : 0.03;
+export const MIN_RELAYER_ETH_BASE_SEPOLIA = Number.isFinite(parsedMinRelayerEthBase) ? parsedMinRelayerEthBase : 0.02;
+export const TARGET_RELAYER_ETH_BASE_SEPOLIA = Number.isFinite(parsedTargetRelayerEthBase) ? parsedTargetRelayerEthBase : 0.12;
+export const FUNDING_WALLET_FLOOR_ETH_BASE_SEPOLIA = Number.isFinite(parsedFundingFloorEthBase) ? parsedFundingFloorEthBase : 0.03;
 export const MAX_TOPUPS_PER_HOUR = Number.isFinite(parsedMaxTopupsPerHour) ? parsedMaxTopupsPerHour : 2;
 export const MAX_TOPUP_ETH_PER_DAY = Number.isFinite(parsedMaxTopupEthPerDay) ? parsedMaxTopupEthPerDay : 0.2;
 export const ALERT_WEBHOOK_URL = process.env.ALERT_WEBHOOK_URL;

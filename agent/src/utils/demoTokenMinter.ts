@@ -1,39 +1,34 @@
 import { createWalletClient, http, publicActions } from 'viem';
-import { sepolia } from 'viem/chains';
 import { privateKeyToAccount } from 'viem/accounts';
+import { getSettlementChainRuntimeConfig, resolveExecutionSettlementChain } from '../config/settlementChains';
 
 /**
  * Mints demo tokens (bUSDC and WETH) to a recipient address
  * Used for testnet faucet functionality
  */
 export async function mintDemoTokens(recipientAddress: string) {
-  const {
-    ETH_TESTNET_RPC_URL,
-    DEMO_BUSDC_ADDRESS,
-    DEMO_REDACTED_ADDRESS,
-    DEMO_WETH_ADDRESS,
-    RELAYER_PRIVATE_KEY
-  } = await import('../config');
+  const settlementChain = resolveExecutionSettlementChain(process.env.DEMO_FAUCET_CHAIN || 'sepolia');
+  const chainConfig = getSettlementChainRuntimeConfig(settlementChain);
 
-  if (!RELAYER_PRIVATE_KEY) {
+  if (!chainConfig.relayerPrivateKey) {
     throw new Error('RELAYER_PRIVATE_KEY not configured');
   }
 
-  const busdcAddress = DEMO_BUSDC_ADDRESS || DEMO_REDACTED_ADDRESS;
-  if (!busdcAddress || !DEMO_WETH_ADDRESS) {
+  const busdcAddress = chainConfig.stableTokenAddress;
+  if (!busdcAddress || !chainConfig.wethTokenAddress) {
     throw new Error('Demo token addresses not configured');
   }
 
-  if (!ETH_TESTNET_RPC_URL) {
-    throw new Error('ETH_TESTNET_RPC_URL not configured');
+  if (!chainConfig.rpcUrl) {
+    throw new Error(`${chainConfig.label} RPC not configured`);
   }
 
-  const account = privateKeyToAccount(RELAYER_PRIVATE_KEY as `0x${string}`);
+  const account = privateKeyToAccount(chainConfig.relayerPrivateKey as `0x${string}`);
 
   const client = createWalletClient({
     account,
-    chain: sepolia,
-    transport: http(ETH_TESTNET_RPC_URL)
+    chain: chainConfig.chain,
+    transport: http(chainConfig.rpcUrl)
   }).extend(publicActions);
 
   // ERC20 mint function ABI
@@ -53,7 +48,7 @@ export async function mintDemoTokens(recipientAddress: string) {
   // Mint bUSDC (10,000 with 6 decimals)
   const usdcAmount = BigInt(10000 * 10**6);
   const usdcTxHash = await writeContractWithNonceRetry(client, {
-    address: busdcAddress as `0x${string}`,
+    address: busdcAddress,
     abi: mintAbi,
     functionName: 'mint',
     args: [recipientAddress as `0x${string}`, usdcAmount]
@@ -65,7 +60,7 @@ export async function mintDemoTokens(recipientAddress: string) {
   // Mint WETH (5 with 18 decimals)
   const wethAmount = BigInt(5 * 10**18);
   const wethTxHash = await writeContractWithNonceRetry(client, {
-    address: DEMO_WETH_ADDRESS as `0x${string}`,
+    address: chainConfig.wethTokenAddress,
     abi: mintAbi,
     functionName: 'mint',
     args: [recipientAddress as `0x${string}`, wethAmount]
@@ -93,32 +88,27 @@ export async function mintDemoTokens(recipientAddress: string) {
 export async function mintBusdc(
   recipientAddress: string,
   amount: number,
-  options?: { waitForReceipt?: boolean; receiptTimeoutMs?: number }
+  options?: { waitForReceipt?: boolean; receiptTimeoutMs?: number; chain?: string }
 ) {
-  const {
-    ETH_TESTNET_RPC_URL,
-    DEMO_BUSDC_ADDRESS,
-    DEMO_REDACTED_ADDRESS,
-    RELAYER_PRIVATE_KEY
-  } = await import('../config');
+  const settlementChain = resolveExecutionSettlementChain(options?.chain);
+  const chainConfig = getSettlementChainRuntimeConfig(settlementChain);
+  const busdcAddress = chainConfig.stableTokenAddress;
 
-  const busdcAddress = DEMO_BUSDC_ADDRESS || DEMO_REDACTED_ADDRESS;
-
-  if (!RELAYER_PRIVATE_KEY) {
+  if (!chainConfig.relayerPrivateKey) {
     throw new Error('RELAYER_PRIVATE_KEY not configured');
   }
   if (!busdcAddress) {
-    throw new Error('bUSDC address not configured');
+    throw new Error(`bUSDC address not configured for ${chainConfig.label}`);
   }
-  if (!ETH_TESTNET_RPC_URL) {
-    throw new Error('ETH_TESTNET_RPC_URL not configured');
+  if (!chainConfig.rpcUrl) {
+    throw new Error(`${chainConfig.label} RPC not configured`);
   }
 
-  const account = privateKeyToAccount(RELAYER_PRIVATE_KEY as `0x${string}`);
+  const account = privateKeyToAccount(chainConfig.relayerPrivateKey as `0x${string}`);
   const client = createWalletClient({
     account,
-    chain: sepolia,
-    transport: http(ETH_TESTNET_RPC_URL)
+    chain: chainConfig.chain,
+    transport: http(chainConfig.rpcUrl)
   }).extend(publicActions);
 
   const mintAbi = [
@@ -136,7 +126,7 @@ export async function mintBusdc(
 
   const amountUnits = BigInt(Math.floor(amount * 10**6));
   const txHash = await writeContractWithNonceRetry(client, {
-    address: busdcAddress as `0x${string}`,
+    address: busdcAddress,
     abi: mintAbi,
     functionName: 'mint',
     args: [recipientAddress as `0x${string}`, amountUnits]

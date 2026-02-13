@@ -14,7 +14,7 @@ import OneClickExecution from './OneClickExecution';
 import ConnectWalletButton, { useWalletStatus } from './wallet/ConnectWalletButton';
 import { useAccount, useChainId as useWagmiChainId, useSwitchChain } from 'wagmi';
 import { useWallet } from '@solana/wallet-adapter-react';
-import { sepolia } from 'wagmi/chains';
+import { baseSepolia, sepolia } from 'wagmi/chains';
 import MintBUSDC from './MintBUSDC';
 
 interface RightPanelProps {
@@ -31,6 +31,12 @@ const STABLE_SYMBOLS = new Set([
   'USDC',
   'BUSDC',
 ]);
+const DEFAULT_EVM_TESTNET = String(import.meta.env.VITE_DEFAULT_SETTLEMENT_CHAIN || 'base_sepolia')
+  .toLowerCase()
+  .includes('base')
+  ? baseSepolia
+  : sepolia;
+const SUPPORTED_EVM_CHAIN_IDS = new Set<number>([sepolia.id, baseSepolia.id]);
 
 export default function RightPanel(_props: RightPanelProps) {
   const {
@@ -138,7 +144,7 @@ export default function RightPanel(_props: RightPanelProps) {
       setWalletAddress(wagmiAddress);
       setChainId(wagmiChainId);
 
-      if (wagmiChainId !== sepolia.id) {
+      if (!SUPPORTED_EVM_CHAIN_IDS.has(wagmiChainId)) {
         setWalletState('WRONG_NETWORK');
         setLastStateTransition('wagmi: Wrong network');
       } else if (!isBackendHealthy()) {
@@ -767,9 +773,14 @@ export default function RightPanel(_props: RightPanelProps) {
   };
 
   const handleFund = () => {
-    // In eth_testnet mode, open Sepolia faucet
+    // In eth_testnet mode, open faucet for the default settlement chain
     if (isEthTestnetMode) {
-      window.open('https://sepoliafaucet.com/', '_blank');
+      window.open(
+        DEFAULT_EVM_TESTNET.id === baseSepolia.id
+          ? 'https://www.coinbase.com/faucets/base-ethereum-sepolia-faucet'
+          : 'https://sepoliafaucet.com/',
+        '_blank'
+      );
       return;
     }
     console.log('Fund clicked');
@@ -848,11 +859,11 @@ export default function RightPanel(_props: RightPanelProps) {
                 <div className="flex items-center justify-between px-2 py-1.5 rounded bg-amber-50 border border-amber-200">
                   <span className="text-[10px] text-amber-800">Wrong network</span>
                   <button
-                    onClick={() => switchChain?.({ chainId: sepolia.id })}
+                    onClick={() => switchChain?.({ chainId: DEFAULT_EVM_TESTNET.id })}
                     disabled={isSwitching}
                     className="px-2 py-0.5 bg-amber-500 text-white rounded text-[10px] font-medium hover:bg-amber-600 disabled:opacity-50"
                   >
-                    {isSwitching ? '...' : 'Switch to Sepolia'}
+                    {isSwitching ? '...' : `Switch to ${DEFAULT_EVM_TESTNET.id === baseSepolia.id ? 'Base Sepolia' : 'Sepolia'}`}
                   </button>
                 </div>
               )}

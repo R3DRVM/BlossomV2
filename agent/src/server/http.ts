@@ -72,6 +72,7 @@ import * as perpsSim from '../plugins/perps-sim';
 import * as defiSim from '../plugins/defi-sim';
 import { verifyRequestAuth, getAuthMode } from '../auth';
 import { startCrossChainCreditFinalizer } from '../services/crossChainCreditRouter';
+import { getSettlementChainRuntimeConfig, normalizeSettlementChain, resolveExecutionSettlementChain } from '../config/settlementChains';
 
 // Allowed CORS origins for MVP
 const ALLOWED_ORIGINS = [
@@ -1900,7 +1901,7 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
               actions: [],
               executionRequest: {
                 kind: 'event',
-                chain: 'sepolia',
+                chain: resolveExecutionSettlementChain(process.env.DEFAULT_SETTLEMENT_CHAIN || 'base_sepolia'),
                 marketId: matchedMarket.id,
                 outcome,
                 stakeUsd,
@@ -3951,9 +3952,8 @@ app.post('/api/session/prepare', async (req, res) => {
     if (process.env.NODE_ENV !== 'production') {
       try {
         const { createPublicClient, http } = await import('viem');
-        const { sepolia } = await import('viem/chains');
         const publicClient = createPublicClient({
-          chain: sepolia,
+          chain: settlementConfig.chain,
           transport: http(ETH_TESTNET_RPC_URL),
         });
         
@@ -4278,19 +4278,25 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
     if (EXECUTION_MODE === 'eth_testnet' && EXECUTION_AUTH_MODE === 'session') {
       try {
         // Quick check: verify relayer and router are configured
-        const { RELAYER_PRIVATE_KEY, EXECUTION_ROUTER_ADDRESS, ETH_TESTNET_RPC_URL } = await import('../config');
-        if (RELAYER_PRIVATE_KEY && EXECUTION_ROUTER_ADDRESS && ETH_TESTNET_RPC_URL) {
+        const { RELAYER_PRIVATE_KEY } = await import('../config');
+        const requestedChain = resolveExecutionSettlementChain(
+          String(req.body?.metadata?.toChain || req.body?.toChain || process.env.DEFAULT_SETTLEMENT_CHAIN || 'base_sepolia')
+        );
+        const chainRuntime = getSettlementChainRuntimeConfig(requestedChain);
+        const routerAddress = chainRuntime.executionRouterAddress;
+        const rpcUrl = chainRuntime.rpcUrl;
+        if ((chainRuntime.relayerPrivateKey || RELAYER_PRIVATE_KEY) && routerAddress && rpcUrl) {
           // Optionally verify router has code (quick check with timeout)
           try {
             const codeResponse = await Promise.race([
-              fetch(ETH_TESTNET_RPC_URL, {
+              fetch(rpcUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                   jsonrpc: '2.0',
                   id: 1,
                   method: 'eth_getCode',
-                  params: [EXECUTION_ROUTER_ADDRESS, 'latest'],
+                  params: [routerAddress, 'latest'],
                 }),
               }),
               new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 1000)),
@@ -4327,11 +4333,21 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
     }
 
     const { draftId, userAddress, plan, sessionId } = req.body;
+    const requestedSettlementChain = String(
+      req.body?.metadata?.toChain ||
+      req.body?.toChain ||
+      process.env.DEFAULT_SETTLEMENT_CHAIN ||
+      'base_sepolia'
+    );
+    const settlementChain = resolveExecutionSettlementChain(requestedSettlementChain);
+    const settlementConfig = getSettlementChainRuntimeConfig(settlementChain);
+    const settlementRouterAddress = settlementConfig.executionRouterAddress;
+    const settlementRpcUrl = settlementConfig.rpcUrl;
     let executionRouteMeta: any = {
       didRoute: false,
-      fromChain: 'sepolia',
-      toChain: 'sepolia',
-      reason: 'Execution funded directly on Ethereum Sepolia.',
+      fromChain: settlementChain,
+      toChain: settlementChain,
+      reason: `Execution funded directly on ${settlementConfig.label}.`,
     };
     let executionFundingMode: 'relayed' | 'relayed_after_topup' | 'user_paid_required' | 'blocked_needs_gas' = 'relayed';
     let executionFundingMeta: any = {
@@ -4376,7 +4392,7 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
     }
 
     const { maybeTopUpRelayer } = await import('../services/relayerTopUp');
-    void maybeTopUpRelayer('sepolia', {
+    void maybeTopUpRelayer(settlementChain, {
       reason: 'relayed_execute_preflight',
       fireAndForget: true,
     });
@@ -4563,8 +4579,8 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
 
     // STRICT SERVER-SIDE GUARDS
     // Note: DEMO_REDACTED_ADDRESS, REDACTED_ADDRESS_SEPOLIA, WETH_ADDRESS_SEPOLIA already imported above
-    const EXECUTION_ROUTER_ADDRESS = configModule.EXECUTION_ROUTER_ADDRESS;
-    const ETH_TESTNET_RPC_URL = configModule.ETH_TESTNET_RPC_URL;
+    const EXECUTION_ROUTER_ADDRESS = settlementRouterAddress || configModule.EXECUTION_ROUTER_ADDRESS;
+    const ETH_TESTNET_RPC_URL = settlementRpcUrl || configModule.ETH_TESTNET_RPC_URL;
     const UNISWAP_V3_ADAPTER_ADDRESS = configModule.UNISWAP_V3_ADAPTER_ADDRESS;
     const WETH_WRAP_ADAPTER_ADDRESS = configModule.WETH_WRAP_ADAPTER_ADDRESS;
     const MOCK_SWAP_ADAPTER_ADDRESS = configModule.MOCK_SWAP_ADAPTER_ADDRESS;
@@ -5114,7 +5130,7 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
           userEvmAddress: userAddress,
           userSolanaAddress: userSolanaAddress || undefined,
           fromChain: requestedFromChain || undefined,
-          toChain: 'sepolia',
+          toChain: settlementChain,
           amountUsdRequired: Number.isFinite(amountUsdHint) && amountUsdHint > 0 ? amountUsdHint : undefined,
           spendEstimateUnits: spendEstimate?.spendWei,
           instrumentType,
@@ -5133,7 +5149,7 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
           route: {
             didRoute: false,
             fromChain: requestedFromChain || 'unknown',
-            toChain: 'sepolia',
+            toChain: settlementChain,
             reason: 'Cross-chain funding stage timed out before execution.',
           },
         },
@@ -5152,7 +5168,7 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
           route: fundingResult.route || {
             didRoute: false,
             fromChain: requestedFromChain || 'unknown',
-            toChain: 'sepolia',
+            toChain: settlementChain,
             reason: 'Cross-chain route failed before execution.',
           },
         },
@@ -5350,7 +5366,7 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
     const { executionFundingPolicy } = await import('../services/executionFundingPolicy');
 
     const fundingPolicy = await executionFundingPolicy({
-      chain: 'sepolia',
+      chain: settlementChain,
       userAddress,
       attemptTopupSync: true,
       topupReason: 'relayed_low_balance_sync',
@@ -5372,7 +5388,7 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
         needs_wallet_signature: true,
         execution: {
           mode: 'wallet_fallback',
-          chain: 'sepolia',
+          chain: settlementChain,
           tx: {
             to: EXECUTION_ROUTER_ADDRESS!,
             data,
@@ -5387,7 +5403,7 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
           route: executionRouteMeta,
           funding: fundingPolicy.executionMetaFunding,
           fundingMode: 'user_paid_required',
-          chain: 'sepolia',
+          chain: settlementChain,
         },
         correlationId,
       });
@@ -5395,7 +5411,7 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
 
     if (fundingPolicy.mode === 'blocked_needs_gas') {
       if (fundingPolicy.sponsorEligible && userAddress) {
-        const dripAttempt = await maybeDripUserGas('sepolia', userAddress, {
+        const dripAttempt = await maybeDripUserGas(settlementChain, userAddress, {
           reason: 'execute_relayer_low_balance',
           fireAndForget: false,
         });
@@ -5413,7 +5429,7 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
             },
             execution: {
               mode: 'wallet_fallback',
-              chain: 'sepolia',
+              chain: settlementChain,
               tx: {
                 to: EXECUTION_ROUTER_ADDRESS!,
                 data,
@@ -5431,7 +5447,7 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
                 sponsorReason: dripAttempt.reason || fundingPolicy.executionMetaFunding.sponsorReason,
               },
               fundingMode: 'blocked_needs_gas',
-              chain: 'sepolia',
+              chain: settlementChain,
             },
             correlationId,
           });
@@ -5452,7 +5468,7 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
           route: executionRouteMeta,
           funding: fundingPolicy.executionMetaFunding,
           fundingMode: 'blocked_needs_gas',
-          chain: 'sepolia',
+          chain: settlementChain,
         },
         correlationId,
       });
@@ -5463,6 +5479,7 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
       to: EXECUTION_ROUTER_ADDRESS!,
       data,
       value: req.body.value || '0x0',
+      chain: settlementChain,
     });
 
     // Log successful attempt (before receipt confirmation)
@@ -5661,8 +5678,8 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
     // Task 4: Add execution path proof
     res.json({
       ...result,
-      chainId: 11155111, // Sepolia
-      explorerUrl: `https://sepolia.etherscan.io/tx/${txHash}`,
+      chainId: settlementConfig.chain.id,
+      explorerUrl: `${settlementConfig.explorerTxBaseUrl}${txHash}`,
       correlationId, // Include correlationId for client tracing
       userAddress: userAddress.toLowerCase(), // Include userAddress for wallet scoping
       notes: ['execution_path:relayed'], // Task 4: Unambiguous evidence of execution path
@@ -5670,7 +5687,7 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
         route: executionRouteMeta,
         funding: executionFundingMeta,
         fundingMode: executionFundingMode,
-        chain: 'sepolia',
+        chain: settlementChain,
       },
     });
   } catch (error: any) {
@@ -5763,28 +5780,22 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
         route: executionRouteMeta,
         funding: executionFundingMeta,
         fundingMode: executionFundingMode,
-        chain: 'sepolia',
+        chain: settlementChain,
       },
     });
   }
 });
 
 /**
- * GET /api/relayer/status?chain=sepolia
+ * GET /api/relayer/status?chain=base_sepolia|sepolia
  * Returns relayer balance and funding capacity details.
  */
 app.get('/api/relayer/status', async (req, res) => {
   try {
-    const chain = String(req.query.chain || 'sepolia').toLowerCase();
-    if (chain !== 'sepolia') {
-      return res.status(400).json({
-        ok: false,
-        error: 'Unsupported chain. Use chain=sepolia',
-      });
-    }
+    const chain = normalizeSettlementChain(String(req.query.chain || process.env.DEFAULT_SETTLEMENT_CHAIN || 'base_sepolia'));
 
     const { getRelayerStatus } = await import('../services/relayerTopUp');
-    const status = await getRelayerStatus('sepolia');
+    const status = await getRelayerStatus(chain);
     const providedSecret = (req.headers['x-ledger-secret'] as string | undefined) || '';
     const isAuthorized = !!DEV_LEDGER_SECRET && providedSecret === DEV_LEDGER_SECRET;
 
@@ -5800,23 +5811,21 @@ app.get('/api/relayer/status', async (req, res) => {
   } catch (error: any) {
     return res.status(500).json({
       ok: false,
-      chain: 'sepolia',
+      chain: normalizeSettlementChain(String(req.query.chain || process.env.DEFAULT_SETTLEMENT_CHAIN || 'base_sepolia')),
       error: error?.message || 'Failed to fetch relayer status',
     });
   }
 });
 
 /**
- * POST /api/gas/drip?chain=sepolia&address=0x...
+ * POST /api/gas/drip?chain=base_sepolia|sepolia&address=0x...
  * Sends a capped ETH drip from funding wallet to a user wallet for beta continuity.
  */
 app.post('/api/gas/drip', requireAuth, maybeCheckAccess, async (req, res) => {
   try {
-    const chain = String(req.query.chain || req.body?.chain || 'sepolia').toLowerCase();
+    const chain = normalizeSettlementChain(String(req.query.chain || req.body?.chain || process.env.DEFAULT_SETTLEMENT_CHAIN || 'base_sepolia'));
+    const chainRuntime = getSettlementChainRuntimeConfig(chain);
     const address = String(req.query.address || req.body?.address || '').trim();
-    if (chain !== 'sepolia') {
-      return res.status(400).json({ ok: false, errorCode: 'INVALID_CHAIN', error: 'Unsupported chain. Use chain=sepolia.' });
-    }
     if (!/^0x[a-fA-F0-9]{40}$/.test(address)) {
       return res.status(400).json({ ok: false, errorCode: 'INVALID_ADDRESS', error: 'A valid EVM address is required.' });
     }
@@ -5834,7 +5843,7 @@ app.post('/api/gas/drip', requireAuth, maybeCheckAccess, async (req, res) => {
     }
 
     const { canSponsorGasDrip, maybeDripUserGas, getRelayerStatus } = await import('../services/relayerTopUp');
-    const eligibility = await canSponsorGasDrip('sepolia', address);
+    const eligibility = await canSponsorGasDrip(chain, address);
     if (!eligibility.ok) {
       const insufficientFunding = String(eligibility.reason || '').includes('funding_wallet_insufficient');
       return res.status(insufficientFunding ? 402 : 429).json({
@@ -5846,7 +5855,7 @@ app.post('/api/gas/drip', requireAuth, maybeCheckAccess, async (req, res) => {
       });
     }
 
-    const drip = await maybeDripUserGas('sepolia', address, {
+    const drip = await maybeDripUserGas(chain, address, {
       reason: 'api_gas_drip',
       fireAndForget: false,
     });
@@ -5861,10 +5870,10 @@ app.post('/api/gas/drip', requireAuth, maybeCheckAccess, async (req, res) => {
 
     try {
       const { createExecutionAsync, updateExecutionAsync } = await import('../../execution-ledger/db');
-      const relayerStatus = await getRelayerStatus('sepolia');
+      const relayerStatus = await getRelayerStatus(chain);
       const execution = await createExecutionAsync({
         chain: 'ethereum',
-        network: 'sepolia',
+        network: chain,
         kind: 'transfer',
         venue: 'native',
         intent: 'gas_drip',
@@ -5876,12 +5885,12 @@ app.post('/api/gas/drip', requireAuth, maybeCheckAccess, async (req, res) => {
         amountUnits: Number(drip.amountEth || 0).toFixed(6),
         txHash: drip.txHash,
         status: 'submitted',
-        explorerUrl: `https://sepolia.etherscan.io/tx/${drip.txHash}`,
+        explorerUrl: `${chainRuntime.explorerTxBaseUrl}${drip.txHash}`,
       });
       await updateExecutionAsync(execution.id, {
         status: 'confirmed',
         txHash: drip.txHash,
-        explorerUrl: `https://sepolia.etherscan.io/tx/${drip.txHash}`,
+        explorerUrl: `${chainRuntime.explorerTxBaseUrl}${drip.txHash}`,
       });
     } catch (auditError: any) {
       console.warn('[api/gas/drip] Audit log failed:', auditError?.message || String(auditError));
@@ -5889,11 +5898,11 @@ app.post('/api/gas/drip', requireAuth, maybeCheckAccess, async (req, res) => {
 
     return res.json({
       ok: true,
-      chain: 'sepolia',
+      chain,
       address: address.toLowerCase(),
       txHash: drip.txHash,
       amountEth: drip.amountEth,
-      explorerUrl: `https://sepolia.etherscan.io/tx/${drip.txHash}`,
+      explorerUrl: `${chainRuntime.explorerTxBaseUrl}${drip.txHash}`,
       message: 'Gas drip sent successfully.',
     });
   } catch (error: any) {
@@ -7745,6 +7754,9 @@ app.post('/api/mint-busdc', mintRateLimit, maybeCheckAccess, async (req, res) =>
 
     const { userAddress, amount, chain, recipientAddress, solanaAddress } = req.body || {};
     const targetChain = normalizeMintChain(chain);
+    const settlementChain = resolveExecutionSettlementChain(
+      String(req.body?.toChain || req.body?.settlementChain || process.env.DEFAULT_SETTLEMENT_CHAIN || 'base_sepolia')
+    );
     const targetAddress =
       targetChain === 'solana'
         ? (solanaAddress || recipientAddress || userAddress)
@@ -7801,7 +7813,7 @@ app.post('/api/mint-busdc', mintRateLimit, maybeCheckAccess, async (req, res) =>
       txHash = result.txHash;
     } else {
       const { mintBusdc } = await import('../utils/demoTokenMinter');
-      const result = await mintBusdc(targetAddress, amountNum);
+      const result = await mintBusdc(targetAddress, amountNum, { chain: settlementChain });
       txHash = result.txHash;
     }
 
@@ -7810,7 +7822,7 @@ app.post('/api/mint-busdc', mintRateLimit, maybeCheckAccess, async (req, res) =>
     res.json({
       ok: true,
       success: true,
-      chain: targetChain,
+      chain: targetChain === 'ethereum' ? settlementChain : targetChain,
       txHash,
       signature,
       explorerUrl,
@@ -7845,6 +7857,9 @@ app.post('/api/mint', mintRateLimit, maybeCheckAccess, async (req, res) => {
 
     const { userAddress, amount, chain, recipientAddress, solanaAddress } = req.body || {};
     const targetChain = normalizeMintChain(chain);
+    const settlementChain = resolveExecutionSettlementChain(
+      String(req.body?.toChain || req.body?.settlementChain || process.env.DEFAULT_SETTLEMENT_CHAIN || 'base_sepolia')
+    );
     const targetAddress =
       targetChain === 'solana'
         ? (solanaAddress || recipientAddress || userAddress)
@@ -7900,14 +7915,14 @@ app.post('/api/mint', mintRateLimit, maybeCheckAccess, async (req, res) => {
       txHash = result.txHash;
     } else {
       const { mintBusdc } = await import('../utils/demoTokenMinter');
-      const result = await mintBusdc(targetAddress, amountNum);
+      const result = await mintBusdc(targetAddress, amountNum, { chain: settlementChain });
       txHash = result.txHash;
     }
 
     res.json({
       ok: true,
       success: true,
-      chain: targetChain,
+      chain: targetChain === 'ethereum' ? settlementChain : targetChain,
       txHash,
       signature,
       explorerUrl,
@@ -10038,6 +10053,13 @@ app.post('/api/ledger/intents/execute', checkLedgerSecret, async (req, res) => {
     })();
     // Prefer explicit caller-provided amountUsd for deterministic test flows.
     const amountUsdHint = Number(callerMetadata.amountUsd || callerMetadata.amountUsdRequired || inferredAmountFromIntent || 0);
+    const requestedToChain = String(
+      callerMetadata.toChain ||
+      req.body?.toChain ||
+      process.env.DEFAULT_SETTLEMENT_CHAIN ||
+      'base_sepolia'
+    );
+    const settlementChain = resolveExecutionSettlementChain(requestedToChain);
     let fundingPolicySnapshot: any = null;
     let fundingPolicyMode: string | undefined;
 
@@ -10064,12 +10086,12 @@ app.post('/api/ledger/intents/execute', checkLedgerSecret, async (req, res) => {
     };
 
     if (!planOnly) {
-      void maybeTopUpRelayer('sepolia', {
+      void maybeTopUpRelayer(settlementChain, {
         reason: 'ledger_execute_preflight',
         fireAndForget: true,
       });
       const fundingDecision = await executionFundingPolicy({
-        chain: 'sepolia',
+        chain: settlementChain,
         userAddress: userEvmAddressRaw || undefined,
         // In deterministic prove/stress modes we accept smaller wallet gas balances.
         // Actual transaction submission will still fail if the wallet is truly underfunded.
@@ -10091,19 +10113,24 @@ app.post('/api/ledger/intents/execute', checkLedgerSecret, async (req, res) => {
         const shouldUseUserPaidCreditMint =
           requestedMode === 'tier1_crosschain_resilient' &&
           fundingDecision.mode === 'user_paid_required' &&
-          (forceCrossChainRoute || String(callerMetadata.scenario || '').toLowerCase().includes('solana_origin_to_sepolia'));
+          (
+            forceCrossChainRoute ||
+            String(callerMetadata.scenario || '').toLowerCase().includes('solana_origin_to_sepolia') ||
+            String(callerMetadata.scenario || '').toLowerCase().includes('solana_origin_to_base')
+          );
 
         if (shouldUseUserPaidCreditMint) {
           crossChainRouteMeta = {
             didRoute: true,
             routeType: 'testnet_credit',
             fromChain: requestedFromChain || 'solana_devnet',
-            toChain: 'sepolia',
+            toChain: settlementChain,
             reason: 'Wallet-funded cross-chain credit mint required for deterministic execution.',
             creditedAmountUsd: Number.isFinite(amountUsdHint) && amountUsdHint > 0 ? amountUsdHint : undefined,
           };
           // Tell downstream executor to allow a pre-mint collateral gap (mint is submitted first by wallet fallback).
           (callerMetadata as any).assumeSepoliaStableAfterUserCreditMint = true;
+          (callerMetadata as any).assumeSettlementStableAfterUserCreditMint = true;
           (callerMetadata as any).creditMintAmountUsd = Number.isFinite(amountUsdHint) && amountUsdHint > 0 ? amountUsdHint : undefined;
         } else {
           const funding = await ensureExecutionFunding({
@@ -10112,7 +10139,7 @@ app.post('/api/ledger/intents/execute', checkLedgerSecret, async (req, res) => {
             userEvmAddress: userEvmAddressRaw,
             userSolanaAddress: userSolanaAddressRaw || undefined,
             fromChain: requestedFromChain || 'solana_devnet',
-            toChain: 'sepolia',
+            toChain: settlementChain,
             amountUsdRequired: Number.isFinite(amountUsdHint) && amountUsdHint > 0 ? amountUsdHint : undefined,
             instrumentType:
               requestedCategory === 'perp' || requestedCategory === 'event' || requestedCategory === 'deposit'

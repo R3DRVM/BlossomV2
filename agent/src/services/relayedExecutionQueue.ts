@@ -1,5 +1,6 @@
-import { WALLET_FALLBACK_ENABLED } from '../config';
+import { DEFAULT_SETTLEMENT_CHAIN, WALLET_FALLBACK_ENABLED } from '../config';
 import { getRelayerStatus, maybeTopUpRelayer } from './relayerTopUp';
+import { normalizeSettlementChain, type SettlementChain } from '../config/settlementChains';
 
 export type QueueState = 'queued' | 'executing' | 'completed' | 'expired' | 'failed';
 
@@ -26,6 +27,7 @@ type QueueItem = {
   lastError?: string;
   result?: Record<string, any>;
   walletFallbackTx?: WalletFallbackTx;
+  chain: SettlementChain;
   run: () => Promise<Record<string, any>>;
 };
 
@@ -86,7 +88,7 @@ function buildExpiredBody(item: QueueItem): Record<string, any> {
       message: 'Relayer capacity unavailable. Sign once in wallet to execute now.',
       execution: {
         mode: 'wallet_fallback',
-        chain: 'sepolia',
+        chain: item.chain,
         tx: item.walletFallbackTx,
       },
       errorCode: 'NEEDS_WALLET_SIGNATURE',
@@ -158,9 +160,9 @@ async function processQueueOnce(): Promise<void> {
         continue;
       }
 
-      const relayerStatus = await getRelayerStatus('sepolia');
+      const relayerStatus = await getRelayerStatus(item.chain);
       if (!relayerStatus.relayer.okToExecute) {
-        void maybeTopUpRelayer('sepolia', {
+        void maybeTopUpRelayer(item.chain, {
           reason: 'queued_execution_waiting_for_relayer',
           fireAndForget: true,
         });
@@ -188,7 +190,7 @@ async function processQueueOnce(): Promise<void> {
         if (isRetryableRelayerError(message)) {
           item.state = 'queued';
           if (message.toLowerCase().includes('relayer') || message.toLowerCase().includes('insufficient')) {
-            void maybeTopUpRelayer('sepolia', {
+            void maybeTopUpRelayer(item.chain, {
               reason: 'queued_retry_after_failure',
               fireAndForget: true,
             });
@@ -280,6 +282,7 @@ export function enqueueRelayedExecution(params: {
   run: () => Promise<Record<string, any>>;
   walletFallbackTx?: WalletFallbackTx;
   maxQueueMs?: number;
+  chain?: string;
 }): QueueItem {
   const existing = queueByKey.get(params.key);
   if (existing && (existing.state === 'queued' || existing.state === 'executing')) {
@@ -295,6 +298,7 @@ export function enqueueRelayedExecution(params: {
     expiresAt: createdAt + (params.maxQueueMs || DEFAULT_MAX_QUEUE_MS),
     state: 'queued',
     attempts: 0,
+    chain: normalizeSettlementChain(params.chain || DEFAULT_SETTLEMENT_CHAIN),
     run: params.run,
     walletFallbackTx: params.walletFallbackTx,
   };

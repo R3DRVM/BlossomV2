@@ -7,8 +7,9 @@
  * - full: existing multi-step execution stress test
  * - tier1: deterministic suite (Ethereum-heavy, execution enabled)
  * - tier1_relayed_required: deterministic suite requiring relayed execution (no proof-only fallback)
- * - tier1_crosschain_required: deterministic suite requiring Solana->Sepolia credit routing + execution
- * - tier1_crosschain_resilient: deterministic Solana->Sepolia suite allowing relayed OR user-paid gas
+ * - tier1_crosschain_required: deterministic suite requiring Solana->settlement chain credit routing + execution
+ * - tier1_crosschain_required_base: alias for tier1_crosschain_required with Base Sepolia target
+ * - tier1_crosschain_resilient: deterministic Solana->settlement chain suite allowing relayed OR user-paid gas
  * - tier2: realistic suite (cross-chain, venue flakes classified separately)
  * - chat_only: no execution, route=chat assertions only
  * - mixed: research + planning (+ optional explicit execute)
@@ -18,7 +19,7 @@
  *   npx tsx agent/scripts/live-stress-tester.ts --mode=chat_only --count=20 --concurrency=4
  *   npx tsx agent/scripts/live-stress-tester.ts --mode=mixed --count=20 --concurrency=4
  *   npx tsx agent/scripts/live-stress-tester.ts --mode=tier1 --allow_execute --count=40 --concurrency=2
- *   npx tsx agent/scripts/live-stress-tester.ts --mode=tier1_crosschain_required --allow_execute --count=10 --concurrency=2
+ *   npx tsx agent/scripts/live-stress-tester.ts --mode=tier1_crosschain_required_base --allow_execute --count=10 --concurrency=2
  *   npx tsx agent/scripts/live-stress-tester.ts --mode=tier1_crosschain_resilient --allow_execute --count=10 --concurrency=2
  */
 
@@ -29,7 +30,16 @@ import { isTier1RelayedExecutionSupported, TIER1_SUPPORTED_CHAINS, TIER1_SUPPORT
 
 type AgentType = 'human' | 'erc8004';
 type Chain = 'ethereum' | 'solana' | 'hyperliquid' | 'both';
-type Mode = 'full' | 'tier1' | 'tier1_relayed_required' | 'tier1_crosschain_required' | 'tier1_crosschain_resilient' | 'tier2' | 'chat_only' | 'mixed';
+type Mode =
+  | 'full'
+  | 'tier1'
+  | 'tier1_relayed_required'
+  | 'tier1_crosschain_required'
+  | 'tier1_crosschain_required_base'
+  | 'tier1_crosschain_resilient'
+  | 'tier2'
+  | 'chat_only'
+  | 'mixed';
 type ExpectedRoute = 'chat' | 'planner';
 type FailureClass =
   | 'blossom_logic'
@@ -162,6 +172,18 @@ const WALLET_LIST = WALLET_LIST_RAW.split(',').map(s => s.trim()).filter(Boolean
 const WALLET_KEYS_RAW = arg('wallet-keys') || process.env.STRESS_TEST_WALLET_PRIVATE_KEYS || '';
 const WALLET_KEYS = WALLET_KEYS_RAW.split(',').map(s => s.trim()).filter(Boolean);
 const ETH_RPC_URL = arg('eth-rpc') || process.env.STRESS_TEST_ETH_RPC_URL || process.env.ETH_TESTNET_RPC_URL || '';
+const BASE_RPC_URL = arg('base-rpc') || process.env.STRESS_TEST_BASE_RPC_URL || process.env.BASE_SEPOLIA_RPC_URL || '';
+const SETTLEMENT_CHAIN = (() => {
+  if (MODE === 'tier1_crosschain_required_base') return 'base_sepolia';
+  const raw = String(arg('settlement-chain') || process.env.SETTLEMENT_CHAIN_OVERRIDE || process.env.DEFAULT_SETTLEMENT_CHAIN || 'base_sepolia')
+    .trim()
+    .toLowerCase();
+  if (raw.includes('base')) return 'base_sepolia';
+  if (raw.includes('sep') || raw.includes('eth')) return 'sepolia';
+  return 'base_sepolia';
+})();
+const SETTLEMENT_RPC_URL = SETTLEMENT_CHAIN === 'base_sepolia' ? (BASE_RPC_URL || ETH_RPC_URL) : ETH_RPC_URL;
+const SETTLEMENT_LABEL = SETTLEMENT_CHAIN === 'base_sepolia' ? 'Base Sepolia' : 'Ethereum Sepolia';
 
 const STRESS_EVM_ADDRESS = process.env.STRESS_TEST_EVM_ADDRESS || process.env.TEST_WALLET_ADDRESS || process.env.RELAYER_PUBLIC_ADDRESS || '';
 const STRESS_SOLANA_ADDRESS = process.env.STRESS_TEST_SOLANA_ADDRESS || '';
@@ -223,6 +245,7 @@ const modeRequiresLedger =
   MODE === 'tier1' ||
   MODE === 'tier1_relayed_required' ||
   MODE === 'tier1_crosschain_required' ||
+  MODE === 'tier1_crosschain_required_base' ||
   MODE === 'tier1_crosschain_resilient' ||
   MODE === 'tier2' ||
   (MODE === 'mixed' && ALLOW_EXECUTE);
@@ -245,6 +268,14 @@ function sleep(ms: number) {
 
 function randomBetween(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function isCrosschainRequiredMode(mode: Mode): boolean {
+  return mode === 'tier1_crosschain_required' || mode === 'tier1_crosschain_required_base';
+}
+
+function isCrosschainStrictMode(mode: Mode): boolean {
+  return isCrosschainRequiredMode(mode) || mode === 'tier1_crosschain_resilient';
 }
 
 function lowerErrorText(input: string | undefined): string {
@@ -352,6 +383,11 @@ function isEvmActionChain(chain: Chain): boolean {
   return chain === 'ethereum' || chain === 'hyperliquid' || chain === 'both';
 }
 
+async function getSettlementViemChain() {
+  const chains = await import('viem/chains');
+  return SETTLEMENT_CHAIN === 'base_sepolia' ? chains.baseSepolia : chains.sepolia;
+}
+
 function getLockKey(agent: AgentState, chain: Chain): string {
   if (chain === 'hyperliquid') {
     return (agent.walletAddress || STRESS_HYPERLIQUID_ADDRESS || STRESS_EVM_ADDRESS || 'wallet:shared').toLowerCase();
@@ -396,14 +432,14 @@ async function withHyperliquidSubmissionGate<T>(agent: AgentState, fn: () => Pro
 
 async function getWalletClient(agent: AgentState) {
   if (!agent.privateKey) return null;
-  if (!ETH_RPC_URL) return null;
+  if (!SETTLEMENT_RPC_URL) return null;
   try {
     const { createWalletClient, createPublicClient, http } = await import('viem');
-    const { sepolia } = await import('viem/chains');
     const { privateKeyToAccount } = await import('viem/accounts');
+    const chain = await getSettlementViemChain();
     const account = privateKeyToAccount(agent.privateKey as `0x${string}`);
-    const publicClient = createPublicClient({ chain: sepolia, transport: http(ETH_RPC_URL) });
-    const walletClient = createWalletClient({ account, chain: sepolia, transport: http(ETH_RPC_URL) });
+    const publicClient = createPublicClient({ chain, transport: http(SETTLEMENT_RPC_URL) });
+    const walletClient = createWalletClient({ account, chain, transport: http(SETTLEMENT_RPC_URL) });
     return { publicClient, walletClient, account };
   } catch {
     return null;
@@ -425,7 +461,7 @@ async function maybeFundEvmWalletFromRelayer(
   options?: { minEth?: number; targetEth?: number }
 ): Promise<{ ok: boolean; funded: boolean; txHash?: string; error?: string }> {
   const relayerPkRaw = String(process.env.RELAYER_PRIVATE_KEY || '').trim();
-  if (!ETH_RPC_URL) return { ok: false, funded: false, error: 'missing_eth_rpc_url' };
+  if (!SETTLEMENT_RPC_URL) return { ok: false, funded: false, error: 'missing_settlement_rpc_url' };
   if (!relayerPkRaw) return { ok: false, funded: false, error: 'missing_relayer_private_key' };
   if (!/^0x[a-fA-F0-9]{40}$/.test(String(toAddress || '').trim())) {
     return { ok: false, funded: false, error: 'invalid_to_address' };
@@ -435,13 +471,13 @@ async function maybeFundEvmWalletFromRelayer(
   const targetEth = Number.isFinite(options?.targetEth) ? Number(options?.targetEth) : 0.02;
   try {
     const { createWalletClient, createPublicClient, http, parseEther, formatEther } = await import('viem');
-    const { sepolia } = await import('viem/chains');
     const { privateKeyToAccount } = await import('viem/accounts');
+    const chain = await getSettlementViemChain();
 
     const relayerPk = relayerPkRaw.startsWith('0x') ? relayerPkRaw : `0x${relayerPkRaw}`;
     const account = privateKeyToAccount(relayerPk as `0x${string}`);
-    const publicClient = createPublicClient({ chain: sepolia, transport: http(ETH_RPC_URL) });
-    const walletClient = createWalletClient({ account, chain: sepolia, transport: http(ETH_RPC_URL) });
+    const publicClient = createPublicClient({ chain, transport: http(SETTLEMENT_RPC_URL) });
+    const walletClient = createWalletClient({ account, chain, transport: http(SETTLEMENT_RPC_URL) });
 
     const currentWei = await publicClient.getBalance({ address: toAddress as `0x${string}` });
     const currentEth = Number(formatEther(currentWei));
@@ -535,12 +571,12 @@ async function executeUserPaidFallbackFromPayload(
   }
 }
 
-async function confirmSepoliaReceipt(txHash: string): Promise<boolean> {
-  if (!txHash || !ETH_RPC_URL) return false;
+async function confirmSettlementReceipt(txHash: string): Promise<boolean> {
+  if (!txHash || !SETTLEMENT_RPC_URL) return false;
   try {
     const { createPublicClient, http } = await import('viem');
-    const { sepolia } = await import('viem/chains');
-    const publicClient = createPublicClient({ chain: sepolia, transport: http(ETH_RPC_URL) });
+    const chain = await getSettlementViemChain();
+    const publicClient = createPublicClient({ chain, transport: http(SETTLEMENT_RPC_URL) });
 
     for (let attempt = 0; attempt < 4; attempt += 1) {
       try {
@@ -563,12 +599,12 @@ async function confirmSepoliaReceipt(txHash: string): Promise<boolean> {
   return false;
 }
 
-async function confirmSepoliaReceiptWithTimeout(txHash: string, timeoutMs: number): Promise<boolean> {
-  if (!txHash || !ETH_RPC_URL) return false;
+async function confirmSettlementReceiptWithTimeout(txHash: string, timeoutMs: number): Promise<boolean> {
+  if (!txHash || !SETTLEMENT_RPC_URL) return false;
   try {
     const { createPublicClient, http } = await import('viem');
-    const { sepolia } = await import('viem/chains');
-    const publicClient = createPublicClient({ chain: sepolia, transport: http(ETH_RPC_URL) });
+    const chain = await getSettlementViemChain();
+    const publicClient = createPublicClient({ chain, transport: http(SETTLEMENT_RPC_URL) });
     const receipt = await publicClient.waitForTransactionReceipt({
       hash: txHash as `0x${string}`,
       timeout: Math.max(5000, timeoutMs || 60000),
@@ -686,7 +722,7 @@ function buildLeverageChangeAction(sessionIndex: number): Action {
   };
 }
 
-function buildSolanaOriginToSepoliaPerpAction(sessionIndex: number): Action {
+function buildSolanaOriginToSettlementPerpAction(sessionIndex: number): Action {
   // Prove-mode keeps collateral modest but above DemoPerpEngine's minimum margin threshold.
   // (Gas cost is insensitive to margin size; receipt proofs are what matters.)
   const collateral = PROVE_MODE ? pick([50, 75, 100]) : pick([300, 350, 400]);
@@ -694,11 +730,11 @@ function buildSolanaOriginToSepoliaPerpAction(sessionIndex: number): Action {
     id: buildActionId('cross_chain_route', sessionIndex),
     category: 'cross_chain_route',
     chain: 'ethereum',
-    intentText: `Open a BTC long perp on Sepolia with ${collateral} bUSDC collateral and 3x leverage. Source funds from Solana devnet.`,
+    intentText: `Open a BTC long perp on ${SETTLEMENT_LABEL} with ${collateral} bUSDC collateral and 3x leverage. Source funds from Solana devnet.`,
     metadata: {
-      scenario: 'solana_origin_to_sepolia_perp',
+      scenario: `solana_origin_to_${SETTLEMENT_CHAIN === 'base_sepolia' ? 'base' : 'sepolia'}_perp`,
       fromChain: 'solana_devnet',
-      toChain: 'sepolia',
+      toChain: SETTLEMENT_CHAIN,
       amountUsd: collateral,
       amountUsdRequired: collateral,
       expectedRouteType: 'testnet_credit',
@@ -709,7 +745,7 @@ function buildSolanaOriginToSepoliaPerpAction(sessionIndex: number): Action {
 }
 
 function buildSessionActions(sessionIndex: number, mode: Mode): Action[] {
-  if (mode === 'tier1' || mode === 'tier1_relayed_required' || mode === 'tier1_crosschain_required' || mode === 'tier1_crosschain_resilient') {
+  if (mode === 'tier1' || mode === 'tier1_relayed_required' || isCrosschainStrictMode(mode)) {
     const tier1Actions: Action[] = [
       buildSwapAction(sessionIndex, 'ethereum'),
       buildDepositAction(sessionIndex, 'ethereum'),
@@ -719,16 +755,16 @@ function buildSessionActions(sessionIndex: number, mode: Mode): Action[] {
       buildEventCloseAction(sessionIndex),
     ];
 
-    if (mode === 'tier1_crosschain_required' || mode === 'tier1_crosschain_resilient') {
+    if (isCrosschainStrictMode(mode)) {
       if (PROVE_MODE) {
         // Deterministic MVP prove gate: only run the cross-chain proof scenario.
-        return [buildSolanaOriginToSepoliaPerpAction(sessionIndex)];
+        return [buildSolanaOriginToSettlementPerpAction(sessionIndex)];
       }
       const crossChainTier1Actions = tier1Actions.filter(action =>
         ['swap', 'deposit', 'perp', 'perp_close'].includes(action.category)
       );
       return [
-        buildSolanaOriginToSepoliaPerpAction(sessionIndex),
+        buildSolanaOriginToSettlementPerpAction(sessionIndex),
         ...crossChainTier1Actions.filter(action =>
           isTier1RelayedExecutionSupported({ chain: action.chain, category: action.category })
         ),
@@ -1308,7 +1344,7 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
       userAddress: agent.walletAddress || STRESS_EVM_ADDRESS || undefined,
       userSolanaAddress: actionSolanaAddress,
       fromChain: actionFromChain || (action.chain === 'solana' ? 'solana_devnet' : undefined),
-      toChain: actionToChain || (action.chain === 'ethereum' ? 'sepolia' : undefined),
+      toChain: actionToChain || (action.chain === 'ethereum' ? SETTLEMENT_CHAIN : undefined),
     };
 
     const body: Record<string, any> = {
@@ -1348,7 +1384,7 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
         !effectiveRes.ok &&
         endpoint === '/api/ledger/intents/execute' &&
         isVercelInvocationFailure(effectiveRes.text) &&
-        (MODE === 'tier1' || MODE === 'tier1_relayed_required' || MODE === 'tier1_crosschain_required' || MODE === 'tier1_crosschain_resilient') &&
+        (MODE === 'tier1' || MODE === 'tier1_relayed_required' || isCrosschainStrictMode(MODE)) &&
         functionFailureRetries < 1
       ) {
         functionFailureRetries += 1;
@@ -1382,7 +1418,7 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
         const creditTxHash = routeMeta?.txHash;
         const txHash = executionTxHash || creditTxHash;
 
-        if (MODE === 'tier1_relayed_required' || MODE === 'tier1_crosschain_required' || MODE === 'tier1_crosschain_resilient') {
+        if (MODE === 'tier1_relayed_required' || isCrosschainStrictMode(MODE)) {
           if (isProofOnly) {
             return {
               actionId: action.id,
@@ -1414,7 +1450,7 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
               routeTxHash: txHash,
             };
           }
-          const strictNoWalletFallback = MODE === 'tier1_relayed_required' || MODE === 'tier1_crosschain_required';
+          const strictNoWalletFallback = MODE === 'tier1_relayed_required' || isCrosschainRequiredMode(MODE);
           if (isWalletFallback && strictNoWalletFallback && !ALLOW_RELAYED_WALLET_FALLBACK) {
             return {
               actionId: action.id,
@@ -1433,17 +1469,17 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
               routeTxHash: txHash,
             };
           }
-          if ((MODE === 'tier1_crosschain_required' || MODE === 'tier1_crosschain_resilient') && action.category === 'cross_chain_route') {
+          if (isCrosschainStrictMode(MODE) && action.category === 'cross_chain_route') {
             const normalizedRouteType = routeType.toLowerCase();
             const didRoute = routeDidRoute;
             const hasCreditTx = !!creditTxHash;
             const hasExecutionTx = !!executionTxHash;
-            const creditReceiptConfirmed = hasCreditTx ? await confirmSepoliaReceipt(creditTxHash) : false;
-            const executionReceiptConfirmed = hasExecutionTx ? await confirmSepoliaReceipt(executionTxHash) : false;
+            const creditReceiptConfirmed = hasCreditTx ? await confirmSettlementReceipt(creditTxHash) : false;
+            const executionReceiptConfirmed = hasExecutionTx ? await confirmSettlementReceipt(executionTxHash) : false;
             if (
               !didRoute ||
               normalizedRouteType !== 'testnet_credit' ||
-              routeToChain.toLowerCase() !== 'sepolia' ||
+              routeToChain.toLowerCase() !== SETTLEMENT_CHAIN ||
               !hasCreditTx ||
               !hasExecutionTx ||
               !creditReceiptConfirmed ||
@@ -1539,11 +1575,11 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
         if (fallbackExecution.ok && fallbackExecution.txHash) {
           if (action.category === 'cross_chain_route') {
             const creditTxFromFallback = fallbackExecution.approvalTxHash || failedCreditTxHash;
-            const creditReceiptConfirmed = creditTxFromFallback ? await confirmSepoliaReceipt(creditTxFromFallback) : false;
-            const executionReceiptConfirmed = await confirmSepoliaReceipt(fallbackExecution.txHash);
+            const creditReceiptConfirmed = creditTxFromFallback ? await confirmSettlementReceipt(creditTxFromFallback) : false;
+            const executionReceiptConfirmed = await confirmSettlementReceipt(fallbackExecution.txHash);
             if (
               failedRouteType.toLowerCase() !== 'testnet_credit' ||
-              failedRouteToChain.toLowerCase() !== 'sepolia' ||
+              failedRouteToChain.toLowerCase() !== SETTLEMENT_CHAIN ||
               !failedRouteDidRoute ||
               !creditTxFromFallback ||
               !creditReceiptConfirmed ||
@@ -1623,24 +1659,24 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
 
       // Cross-chain credit can legitimately take >1 block. In crosschain_required, wait for the credit receipt then retry.
       if (
-        (MODE === 'tier1_crosschain_required' || MODE === 'tier1_crosschain_resilient') &&
+        isCrosschainStrictMode(MODE) &&
         action.category === 'cross_chain_route' &&
         errorCode === 'CROSS_CHAIN_ROUTE_PENDING' &&
         attempt < 10
       ) {
         const pendingCreditTx = String(effectiveRes.json?.executionMeta?.route?.txHash || '');
         if (pendingCreditTx) {
-          // Sepolia can be spiky; give the credit mint longer than the default receipt wait before retrying execute.
-          await confirmSepoliaReceiptWithTimeout(pendingCreditTx, 90_000);
+          // Settlement chain can be spiky; give the credit mint longer than default before retrying execute.
+          await confirmSettlementReceiptWithTimeout(pendingCreditTx, 90_000);
         }
         attempt += 1;
         await sleep(retryBackoffMs(attempt, 1200, 9000));
         continue;
       }
 
-      if ((MODE === 'tier1_relayed_required' || MODE === 'tier1_crosschain_required' || MODE === 'tier1_crosschain_resilient') && errorCode === 'UNSUPPORTED_VENUE') {
+      if ((MODE === 'tier1_relayed_required' || isCrosschainStrictMode(MODE)) && errorCode === 'UNSUPPORTED_VENUE') {
         const skipAsFailForCrossChainRequired =
-          (MODE === 'tier1_crosschain_required' || MODE === 'tier1_crosschain_resilient') &&
+          isCrosschainStrictMode(MODE) &&
           action.category === 'cross_chain_route';
         return {
           actionId: action.id,
@@ -1710,7 +1746,7 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
 
       if (isFunctionInvocationFailed(error)) {
         const skipAsFailForCrossChainRequired =
-          (MODE === 'tier1_crosschain_required' || MODE === 'tier1_crosschain_resilient') &&
+          isCrosschainStrictMode(MODE) &&
           action.category === 'cross_chain_route';
         return {
           actionId: action.id,
@@ -1726,7 +1762,7 @@ async function executeIntent(agent: AgentState, sessionId: string, action: Actio
 
       if (failureClass === 'venue_flake') {
         const skipAsFailForCrossChainRequired =
-          (MODE === 'tier1_crosschain_required' || MODE === 'tier1_crosschain_resilient') &&
+          isCrosschainStrictMode(MODE) &&
           action.category === 'cross_chain_route';
         return {
           actionId: action.id,
@@ -1862,7 +1898,7 @@ async function runSessionPrepare(agent: AgentState): Promise<ActionResult> {
             endpoint,
             status: 'skipped' as const,
             latencyMs: Date.now() - started,
-            error: 'Missing wallet private key or ETH_RPC_URL for session signing',
+            error: 'Missing wallet private key or settlement RPC URL for session signing',
             failureClass: 'unknown' as FailureClass,
           };
         }
@@ -2235,14 +2271,14 @@ function applyWalletRotation(agent: AgentState, sessionIndex: number): AgentStat
 function buildEthereumFallbackAction(action: Action, sessionIndex: number): Action {
   const rewrittenIntent = normalizeStableSymbols(
     String(action.intentText || '')
-      .replace(/\bon\s+hyperliquid\b/gi, 'on Ethereum Sepolia')
-      .replace(/\bhyperliquid\b/gi, 'Ethereum Sepolia')
+      .replace(/\bon\s+hyperliquid\b/gi, `on ${SETTLEMENT_LABEL}`)
+      .replace(/\bhyperliquid\b/gi, SETTLEMENT_LABEL)
   );
   return {
     ...action,
     id: buildActionId(action.category, sessionIndex),
     chain: 'ethereum',
-    intentText: rewrittenIntent || `Execute ${action.category} intent on Ethereum Sepolia`,
+    intentText: rewrittenIntent || `Execute ${action.category} intent on ${SETTLEMENT_LABEL}`,
     metadata: {
       ...(action.metadata || {}),
       fallbackFromChain: action.chain,
@@ -2266,8 +2302,8 @@ async function runExecutionSession(sessionIndex: number, mode: Mode): Promise<Se
   }
 
   const results: ActionResult[] = [];
-  const modeCrosschainStrict = mode === 'tier1_crosschain_required' || mode === 'tier1_crosschain_resilient';
-  const proveMinimalSession = PROVE_MODE && (mode === 'tier1_crosschain_resilient' || mode === 'tier1_crosschain_required');
+  const modeCrosschainStrict = isCrosschainStrictMode(mode);
+  const proveMinimalSession = PROVE_MODE && isCrosschainStrictMode(mode);
 
   if (agent.type === 'human' && !proveMinimalSession) {
     const cacheKey = String(agent.walletAddress || '').toLowerCase();
@@ -2466,7 +2502,7 @@ async function runExecutionSession(sessionIndex: number, mode: Mode): Promise<Se
 
   const finishedAt = Date.now();
   const ok =
-    mode === 'tier1_crosschain_required' || mode === 'tier1_crosschain_resilient'
+    isCrosschainStrictMode(mode)
       ? results.every(r => r.status === 'ok')
       : results.every(r => r.status === 'ok' || r.status === 'skipped');
 
@@ -2695,7 +2731,7 @@ function collectCrossChainProofs(results: SessionResult[]) {
         action.status === 'ok' &&
         action.routeDidRoute === true &&
         String(action.routeType || '').toLowerCase() === 'testnet_credit' &&
-        String(action.routeToChain || '').toLowerCase() === 'sepolia' &&
+        String(action.routeToChain || '').toLowerCase() === SETTLEMENT_CHAIN &&
         !!action.routeTxHash &&
         !!action.txHash &&
         action.creditReceiptConfirmed === true &&
@@ -2739,7 +2775,7 @@ async function hydrateAgentsFromKeys() {
 }
 
 async function runRelayedRequiredPreflight(): Promise<void> {
-  if ((MODE !== 'tier1_relayed_required' && MODE !== 'tier1_crosschain_required' && MODE !== 'tier1_crosschain_resilient') || DRY_RUN) {
+  if ((MODE !== 'tier1_relayed_required' && !isCrosschainStrictMode(MODE)) || DRY_RUN) {
     return;
   }
 
@@ -2748,7 +2784,7 @@ async function runRelayedRequiredPreflight(): Promise<void> {
     headers['X-Ledger-Secret'] = LEDGER_SECRET;
   }
 
-  const res = await fetchJson('/api/relayer/status?chain=sepolia', {
+  const res = await fetchJson(`/api/relayer/status?chain=${encodeURIComponent(SETTLEMENT_CHAIN)}`, {
     method: 'GET',
     headers,
   }, 30_000);
@@ -2757,10 +2793,10 @@ async function runRelayedRequiredPreflight(): Promise<void> {
     throw new Error(`Relayed preflight failed: unable to fetch /api/relayer/status (${res.status})`);
   }
 
-  if (MODE === 'tier1_crosschain_required' || MODE === 'tier1_crosschain_resilient') {
-    if (!ETH_RPC_URL) {
+  if (isCrosschainStrictMode(MODE)) {
+    if (!SETTLEMENT_RPC_URL) {
       throw new Error(
-        `${MODE} preflight failed: missing ETH RPC URL for receipt confirmation and session signing (set STRESS_TEST_ETH_RPC_URL or ETH_TESTNET_RPC_URL)`
+        `${MODE} preflight failed: missing settlement RPC URL for receipt confirmation and session signing`
       );
     }
     const hasWalletSigner = agents.some(agent => !!agent.privateKey) || WALLET_KEYS.length > 0;
@@ -2791,7 +2827,7 @@ async function runRelayedRequiredPreflight(): Promise<void> {
     } else if (fundingBalanceEth < targetEth) {
       // Only block if the relayer itself is already underfunded. If the relayer has >= minEth,
       // the run can proceed deterministically without relying on an auto top-up.
-      if (MODE === 'tier1_crosschain_required' && relayerBalance < minEth) {
+      if (isCrosschainRequiredMode(MODE) && relayerBalance < minEth) {
         throw new Error(
           `tier1_crosschain_required preflight failed: relayer balance ${relayerBalance} ETH < min ${minEth} and funding wallet balance ${fundingBalanceEth} ETH < target ${targetEth} ETH`
         );
@@ -2802,7 +2838,7 @@ async function runRelayedRequiredPreflight(): Promise<void> {
     }
   }
 
-  if (MODE === 'tier1_crosschain_required' && relayerBalance < minEth) {
+  if (isCrosschainRequiredMode(MODE) && relayerBalance < minEth) {
     throw new Error(
       `tier1_crosschain_required preflight failed: relayer balance ${relayerBalance} ETH < min ${minEth} ETH`
     );
@@ -2822,7 +2858,7 @@ async function runSessionByMode(sessionIndex: number): Promise<SessionResult> {
   if (MODE === 'mixed') return runMixedSession(sessionIndex);
   if (MODE === 'tier1') return runExecutionSession(sessionIndex, 'tier1');
   if (MODE === 'tier1_relayed_required') return runExecutionSession(sessionIndex, 'tier1_relayed_required');
-  if (MODE === 'tier1_crosschain_required') return runExecutionSession(sessionIndex, 'tier1_crosschain_required');
+  if (MODE === 'tier1_crosschain_required' || MODE === 'tier1_crosschain_required_base') return runExecutionSession(sessionIndex, MODE);
   if (MODE === 'tier1_crosschain_resilient') return runExecutionSession(sessionIndex, 'tier1_crosschain_resilient');
   if (MODE === 'tier2') return runExecutionSession(sessionIndex, 'tier2');
   return runExecutionSession(sessionIndex, 'full');
@@ -2846,6 +2882,7 @@ async function main() {
     MODE === 'tier1' ||
     MODE === 'tier1_relayed_required' ||
     MODE === 'tier1_crosschain_required' ||
+    MODE === 'tier1_crosschain_required_base' ||
     MODE === 'tier1_crosschain_resilient' ||
     MODE === 'tier2' ||
     (MODE === 'mixed' && ALLOW_EXECUTE);
@@ -2858,25 +2895,26 @@ async function main() {
   log(`   Run ID: ${RUN_ID}`);
   log(`   Sessions: ${COUNT}`);
   log(`   Concurrency: ${CONCURRENCY}`);
+  log(`   Settlement chain: ${SETTLEMENT_CHAIN} (${SETTLEMENT_LABEL})`);
   if (effectiveWorkerConcurrency !== CONCURRENCY) {
     log(`   Adjusted execute concurrency: ${effectiveWorkerConcurrency} (wallets=${rotatedWalletCount || 1}, desired=${DESIRED_HL_WALLETS})`);
   }
   log(`   Dry run: ${DRY_RUN ? 'yes' : 'no'}`);
   log(`   Allow execute: ${ALLOW_EXECUTE ? 'yes' : 'no'}`);
-  if (MODE === 'tier1_relayed_required' || MODE === 'tier1_crosschain_required' || MODE === 'tier1_crosschain_resilient') {
+  if (MODE === 'tier1_relayed_required' || isCrosschainStrictMode(MODE)) {
     log(`   Allow wallet fallback: ${ALLOW_RELAYED_WALLET_FALLBACK ? 'yes' : 'no'}`);
   }
   log(`   Mint chains: ${MINT_CHAINS.join(', ')}`);
   log(`   Swap chains: ${SWAP_CHAINS.join(', ')}`);
-  if (MODE === 'tier1_relayed_required' || MODE === 'tier1_crosschain_required' || MODE === 'tier1_crosschain_resilient') {
+  if (MODE === 'tier1_relayed_required' || isCrosschainStrictMode(MODE)) {
     log(`   Tier1 supported chains: ${TIER1_SUPPORTED_CHAINS.join(', ')}`);
     log(`   Tier1 supported venues: ${TIER1_SUPPORTED_VENUES.join(', ')}`);
   }
-  if (!ETH_RPC_URL) log('   ⚠️  Missing ETH RPC URL (session signing will fail)');
+  if (!SETTLEMENT_RPC_URL) log('   ⚠️  Missing settlement RPC URL (session signing will fail)');
   if (!STRESS_EVM_ADDRESS) log('   ⚠️  Missing STRESS_TEST_EVM_ADDRESS (mint to Ethereum may be skipped)');
   if (!STRESS_SOLANA_ADDRESS) log('   ⚠️  Missing STRESS_TEST_SOLANA_ADDRESS (mint to Solana may be skipped)');
   if (!STRESS_HYPERLIQUID_ADDRESS) log('   ⚠️  Missing STRESS_TEST_HYPERLIQUID_ADDRESS (mint to Hyperliquid may be skipped)');
-    if ((MODE === 'tier1_crosschain_required' || MODE === 'tier1_crosschain_resilient') && !STRESS_SOLANA_ADDRESS) {
+    if (isCrosschainStrictMode(MODE) && !STRESS_SOLANA_ADDRESS) {
       throw new Error(`${MODE} requires STRESS_TEST_SOLANA_ADDRESS`);
   }
 
@@ -2884,7 +2922,7 @@ async function main() {
 
   // Prove warmup: pre-approve stable allowance once to avoid spending an extra tx per session.
   // This is best-effort; if it fails, sessions may still succeed if allowance was already set.
-  if (PROVE_MODE && (MODE === 'tier1_crosschain_resilient' || MODE === 'tier1_crosschain_required')) {
+  if (PROVE_MODE && isCrosschainStrictMode(MODE)) {
     try {
       const warmupAgent = agents.find(a => !!a.privateKey) || agents[0];
       const wallet = await getWalletClient(warmupAgent);
@@ -2948,7 +2986,7 @@ async function main() {
   await Promise.all(workers);
 
   const summary = summarize(results);
-  const crossChainProofs = (MODE === 'tier1_crosschain_required' || MODE === 'tier1_crosschain_resilient')
+  const crossChainProofs = isCrosschainStrictMode(MODE)
     ? collectCrossChainProofs(results)
     : [];
   log('\n=== Summary ===');
@@ -2963,7 +3001,7 @@ async function main() {
   log(`Latency p50/p95: ${summary.latencyMs.p50}ms / ${summary.latencyMs.p95}ms`);
   log(`Routing accuracy: ${summary.routing.accuracyPct}% (${summary.routing.matched}/${summary.routing.checked})`);
   log(`Safety accidental execute payloads in chat-only: ${summary.safety.accidentalExecutePayloadsInChatOnly}`);
-  if (MODE === 'tier1_crosschain_required' || MODE === 'tier1_crosschain_resilient') {
+  if (isCrosschainStrictMode(MODE)) {
     log(`Cross-chain confirmed proofs: ${crossChainProofs.length}`);
     crossChainProofs.slice(0, 5).forEach((proof, idx) => {
       log(
@@ -2977,7 +3015,7 @@ async function main() {
     log(`\nResults saved to ${OUTPUT_FILE}`);
   }
 
-  if ((MODE === 'tier1_crosschain_required' || MODE === 'tier1_crosschain_resilient') && crossChainProofs.length < 3) {
+  if (isCrosschainStrictMode(MODE) && crossChainProofs.length < 3) {
     throw new Error(`${MODE} failed: expected at least 3 confirmed cross-chain proofs, got ${crossChainProofs.length}`);
   }
 }

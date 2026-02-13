@@ -1,14 +1,18 @@
-import { formatUnits } from 'viem';
+import { createPublicClient, formatUnits, http } from 'viem';
 import {
   CROSS_CHAIN_CREDIT_MAX_USD_PER_TX,
   CROSS_CHAIN_CREDIT_ROUTING_ENABLED,
-  DEMO_BUSDC_ADDRESS,
-  DEMO_REDACTED_ADDRESS,
+  DEFAULT_SETTLEMENT_CHAIN,
 } from '../config';
 import { erc20_balanceOfWithMeta } from '../executors/erc20Rpc';
-import { createFailoverPublicClient } from '../providers/rpcProvider';
 import { mintBusdc } from '../utils/demoTokenMinter';
 import { createCrossChainCreditAsync, getCrossChainCreditsByStatusAsync, updateCrossChainCreditAsync } from '../../execution-ledger/db';
+import {
+  getSettlementChainRuntimeConfig,
+  normalizeSettlementChain as normalizeSettlementChainInput,
+  resolveExecutionSettlementChain,
+  type SettlementChain,
+} from '../config/settlementChains';
 
 type CrossChainRouteCode =
   | 'CROSS_CHAIN_ROUTE_DISABLED'
@@ -40,7 +44,7 @@ type RouteStableCreditOk = {
   fromReceiptId: string;
   toTxHash?: string;
   creditStatus?: 'credit_submitted' | 'credited';
-  toChain: 'sepolia';
+  toChain: SettlementChain;
 };
 
 type RouteStableCreditFail = {
@@ -92,6 +96,7 @@ function normalizeChainLabel(chain: string | undefined): string {
   const value = String(chain || '').trim().toLowerCase();
   if (!value) return '';
   if (value.includes('sol')) return 'solana_devnet';
+  if (value.includes('base')) return 'base_sepolia';
   if (value.includes('sep') || value.includes('eth')) return 'sepolia';
   return value;
 }
@@ -105,12 +110,12 @@ function safeJsonParse(input: string | null | undefined): any {
   }
 }
 
-function getStableAddress(): `0x${string}` | null {
-  const stable = DEMO_BUSDC_ADDRESS || DEMO_REDACTED_ADDRESS;
-  if (!stable || !/^0x[a-fA-F0-9]{40}$/.test(stable)) {
+function getStableAddress(chain: SettlementChain): `0x${string}` | null {
+  const stable = getSettlementChainRuntimeConfig(chain).stableTokenAddress;
+  if (!stable) {
     return null;
   }
-  return stable as `0x${string}`;
+  return stable;
 }
 
 function clampUsd(amount: number): number {
@@ -172,15 +177,22 @@ async function getSolanaBalanceForRouting(
   }
 }
 
-async function getSepoliaStableBalanceUsdWithMeta(
+async function getSettlementStableBalanceUsdWithMeta(
+  chain: SettlementChain,
   address: string
 ): Promise<{ balanceUsd: number; debug: { rpcUsed?: string; attempts?: number; lastError?: string } }> {
-  const stableAddress = getStableAddress();
+  const chainConfig = getSettlementChainRuntimeConfig(chain);
+  const stableAddress = getStableAddress(chain);
   if (!stableAddress) {
-    throw new Error('Missing stable token address (DEMO_BUSDC_ADDRESS/DEMO_REDACTED_ADDRESS)');
+    throw new Error(`Missing stable token address for ${chainConfig.label}`);
   }
 
+  const rpcUrls = [
+    ...(chainConfig.rpcUrl ? [chainConfig.rpcUrl] : []),
+    ...chainConfig.rpcFallbackUrls,
+  ].filter(Boolean);
   const { balance: raw, meta } = await erc20_balanceOfWithMeta(stableAddress, address, {
+    ...(rpcUrls.length ? { rpcUrls } : {}),
     retries: 5,
     timeoutMs: parseInt(process.env.CROSS_CHAIN_READ_TIMEOUT_MS || '12000', 10),
     retryBackoffMs: 350,
@@ -197,7 +209,8 @@ async function getSepoliaStableBalanceUsdWithMeta(
   };
 }
 
-async function confirmSepoliaTxReceipt(
+async function confirmSettlementTxReceipt(
+  chain: SettlementChain,
   txHash: string,
   options?: { timeoutMs?: number }
 ): Promise<{ confirmed: boolean; success?: boolean; blockNumber?: number; error?: string }> {
@@ -205,7 +218,14 @@ async function confirmSepoliaTxReceipt(
     return { confirmed: false, error: 'invalid_tx_hash' };
   }
   try {
-    const client = createFailoverPublicClient();
+    const chainConfig = getSettlementChainRuntimeConfig(chain);
+    if (!chainConfig.rpcUrl) {
+      return { confirmed: false, error: `missing_rpc:${chain}` };
+    }
+    const client = createPublicClient({
+      chain: chainConfig.chain,
+      transport: http(chainConfig.rpcUrl),
+    });
     const timeoutMs = options?.timeoutMs ?? parseInt(process.env.CROSS_CHAIN_MINT_RECEIPT_TIMEOUT_MS || '18000', 10);
     const receipt = await client.waitForTransactionReceipt({
       hash: txHash as `0x${string}`,
@@ -227,11 +247,12 @@ async function confirmSepoliaTxReceipt(
 }
 
 async function finalizeCreditRecordIfConfirmed(
+  chain: SettlementChain,
   creditId: string,
   metaJson: string | null | undefined,
   txHash: string
 ): Promise<{ status: 'credit_submitted' | 'credited' | 'failed'; error?: string }> {
-  const receipt = await confirmSepoliaTxReceipt(txHash, {
+  const receipt = await confirmSettlementTxReceipt(chain, txHash, {
     timeoutMs: parseInt(process.env.CROSS_CHAIN_MINT_RECEIPT_TIMEOUT_MS || '18000', 10),
   });
 
@@ -242,6 +263,7 @@ async function finalizeCreditRecordIfConfirmed(
   const mergedMeta = {
     ...(safeJsonParse(metaJson) || {}),
     routeType: 'testnet_credit',
+    toChain: chain,
     toTxHash: txHash,
     receipt: {
       status: receipt.success ? 'success' : 'reverted',
@@ -278,20 +300,22 @@ export async function routeStableCreditForExecution(
   }
 
   const fromChain = normalizeChainLabel(params.fromChain);
-  const toChain = normalizeChainLabel(params.toChain);
+  const requestedToChain = normalizeChainLabel(params.toChain || DEFAULT_SETTLEMENT_CHAIN);
+  const toChain = resolveExecutionSettlementChain(requestedToChain) as SettlementChain;
   const amountUsd = clampUsd(params.amountUsd);
   const userSolanaAddress = params.userSolanaAddress?.trim();
   const userEvmAddress = params.userEvmAddress?.trim().toLowerCase();
+  const toChainConfig = getSettlementChainRuntimeConfig(toChain);
 
   if (!userEvmAddress) {
     return {
       ok: false,
       code: 'CROSS_CHAIN_ROUTE_MISSING_ADDRESS',
-      message: 'Missing EVM address for Sepolia credit routing.',
+      message: `Missing EVM address for ${toChainConfig.label} credit routing.`,
     };
   }
 
-  if (fromChain !== 'solana_devnet' || toChain !== 'sepolia') {
+  if (fromChain !== 'solana_devnet' || (toChain !== 'sepolia' && toChain !== 'base_sepolia')) {
     return {
       ok: false,
       code: 'CROSS_CHAIN_ROUTE_UNSUPPORTED',
@@ -303,7 +327,7 @@ export async function routeStableCreditForExecution(
     return {
       ok: false,
       code: 'CROSS_CHAIN_ROUTE_MISSING_ADDRESS',
-      message: 'Missing Solana address for Solana -> Sepolia credit routing.',
+      message: `Missing Solana address for Solana -> ${toChainConfig.label} credit routing.`,
     };
   }
 
@@ -347,7 +371,7 @@ export async function routeStableCreditForExecution(
             fromReceiptId: String(match.id),
             toTxHash: existingTx,
             creditStatus: 'credit_submitted',
-            toChain: 'sepolia',
+            toChain,
           };
         }
       }
@@ -380,6 +404,7 @@ export async function routeStableCreditForExecution(
     // IMPORTANT: do not mark record as credited until receipt status=success.
     const mint = await mintBusdc(userEvmAddress, amountUsd, {
       waitForReceipt: false,
+      chain: toChain,
     });
     await updateCrossChainCreditAsync(record.id, {
       status: 'credit_submitted',
@@ -398,7 +423,7 @@ export async function routeStableCreditForExecution(
       fromReceiptId: record.id,
       toTxHash: mint.txHash,
       creditStatus: 'credit_submitted',
-      toChain: 'sepolia',
+      toChain,
     };
   } catch (error: any) {
     await updateCrossChainCreditAsync(record.id, {
@@ -412,7 +437,7 @@ export async function routeStableCreditForExecution(
     return {
       ok: false,
       code: 'CROSS_CHAIN_ROUTE_MINT_FAILED',
-      message: error?.message || 'Failed to credit Sepolia bUSDC',
+      message: error?.message || `Failed to credit ${toChainConfig.label} bUSDC`,
     };
   }
 }
@@ -420,15 +445,17 @@ export async function routeStableCreditForExecution(
 export async function ensureExecutionFunding(
   params: EnsureExecutionFundingParams
 ): Promise<EnsureExecutionFundingResult> {
-  const toChain = normalizeChainLabel(params.toChain || 'sepolia');
-  const fromChain = normalizeChainLabel(params.fromChain) || (params.userSolanaAddress ? 'solana_devnet' : 'sepolia');
+  const requestedToChain = normalizeChainLabel(params.toChain || DEFAULT_SETTLEMENT_CHAIN);
+  const toChain = resolveExecutionSettlementChain(requestedToChain) as SettlementChain;
+  const toChainConfig = getSettlementChainRuntimeConfig(toChain);
+  const fromChain = normalizeChainLabel(params.fromChain) || (params.userSolanaAddress ? 'solana_devnet' : toChain);
   const requiredUsd = deriveRequiredUsd(params);
 
-  if (toChain !== 'sepolia') {
+  if (toChain !== 'sepolia' && toChain !== 'base_sepolia') {
     return {
       ok: false,
       code: 'CROSS_CHAIN_ROUTE_UNSUPPORTED',
-      userMessage: "Couldn't route bUSDC to the selected venue yet. Try Ethereum Sepolia for this beta flow.",
+      userMessage: `Couldn't route bUSDC to the selected venue yet. Try ${toChainConfig.label} for this beta flow.`,
     };
   }
 
@@ -447,19 +474,19 @@ export async function ensureExecutionFunding(
   let targetBalanceUsd = 0;
   let initialReadDebug: { rpcUsed?: string; attempts?: number; lastError?: string } | undefined;
   try {
-    const read = await getSepoliaStableBalanceUsdWithMeta(params.userEvmAddress);
+    const read = await getSettlementStableBalanceUsdWithMeta(toChain, params.userEvmAddress);
     targetBalanceUsd = read.balanceUsd;
     initialReadDebug = read.debug;
   } catch (error: any) {
     return {
       ok: false,
       code: 'CROSS_CHAIN_ROUTE_READ_FAILED',
-      userMessage: "Couldn't verify Sepolia bUSDC balance right now. Please retry in a moment.",
+      userMessage: `Couldn't verify ${toChainConfig.label} bUSDC balance right now. Please retry in a moment.`,
       route: {
         didRoute: false,
         fromChain,
         toChain,
-        reason: 'Failed to read Sepolia stable balance before routing.',
+        reason: `Failed to read ${toChainConfig.label} stable balance before routing.`,
         debug: {
           rpcUsed: error?.rpcUsed,
           attempts: Number.isFinite(error?.attempts) ? Number(error.attempts) : undefined,
@@ -476,7 +503,7 @@ export async function ensureExecutionFunding(
         didRoute: false,
         fromChain,
         toChain,
-        reason: 'Execution already funded with bUSDC on Ethereum Sepolia.',
+        reason: `Execution already funded with bUSDC on ${toChainConfig.label}.`,
       },
     };
   }
@@ -485,7 +512,7 @@ export async function ensureExecutionFunding(
     return {
       ok: false,
       code: 'CROSS_CHAIN_ROUTE_UNSUPPORTED',
-      userMessage: "Couldn't route bUSDC from this source chain yet. Try minting bUSDC on Sepolia or reconnect your wallet.",
+      userMessage: `Couldn't route bUSDC from this source chain yet. Try minting bUSDC on ${toChainConfig.label} or reconnect your wallet.`,
       route: {
         didRoute: false,
         fromChain,
@@ -499,7 +526,7 @@ export async function ensureExecutionFunding(
     return {
       ok: false,
       code: 'CROSS_CHAIN_ROUTE_MISSING_ADDRESS',
-      userMessage: "Couldn't route bUSDC from Solana to Sepolia right now. Reconnect your Solana wallet and retry.",
+      userMessage: `Couldn't route bUSDC from Solana to ${toChainConfig.label} right now. Reconnect your Solana wallet and retry.`,
       route: {
         didRoute: false,
         fromChain,
@@ -516,7 +543,7 @@ export async function ensureExecutionFunding(
     return {
       ok: false,
       code: 'CROSS_CHAIN_ROUTE_INSUFFICIENT_FUNDS',
-      userMessage: "Couldn't route bUSDC from Solana -> Sepolia right now. Mint bUSDC on Solana or Sepolia and retry.",
+      userMessage: `Couldn't route bUSDC from Solana -> ${toChainConfig.label} right now. Mint bUSDC on Solana or ${toChainConfig.label} and retry.`,
       route: {
         didRoute: false,
         fromChain,
@@ -551,7 +578,7 @@ export async function ensureExecutionFunding(
     return {
       ok: false,
       code: routeResult.code,
-      userMessage: "Couldn't route bUSDC from Solana -> Sepolia right now. Try minting bUSDC on Sepolia or reconnect your wallet.",
+      userMessage: `Couldn't route bUSDC from Solana -> ${toChainConfig.label} right now. Try minting bUSDC on ${toChainConfig.label} or reconnect your wallet.`,
       route: {
         didRoute: false,
         fromChain,
@@ -571,9 +598,11 @@ export async function ensureExecutionFunding(
   // Gate execution on confirmed credit mint receipt, otherwise fail closed (no proof-only).
   if (routeResult.toTxHash) {
     const finalized = await finalizeCreditRecordIfConfirmed(
+      toChain,
       routeResult.fromReceiptId,
       JSON.stringify({
         routeType: routeResult.routeType,
+        toChain,
         toTxHash: routeResult.toTxHash,
         creditedAmountUsd: routeResult.creditedAmountUsd,
         submittedAt: Date.now(),
@@ -584,7 +613,7 @@ export async function ensureExecutionFunding(
       return {
         ok: false,
         code: 'CROSS_CHAIN_ROUTE_PENDING',
-        userMessage: 'Routing bUSDC is still confirming on Sepolia. Please retry in a few seconds.',
+        userMessage: `Routing bUSDC is still confirming on ${toChainConfig.label}. Please retry in a few seconds.`,
         route: {
           didRoute: true,
           routeType: routeResult.routeType,
@@ -604,7 +633,7 @@ export async function ensureExecutionFunding(
       return {
         ok: false,
         code: 'CROSS_CHAIN_ROUTE_MINT_FAILED',
-        userMessage: "Couldn't route bUSDC from Solana -> Sepolia right now. The credit mint reverted.",
+        userMessage: `Couldn't route bUSDC from Solana -> ${toChainConfig.label} right now. The credit mint reverted.`,
         route: {
           didRoute: true,
           routeType: routeResult.routeType,
@@ -621,18 +650,18 @@ export async function ensureExecutionFunding(
 
   // Re-check balance after confirmed credit to avoid racing downstream execution.
   try {
-    const postRead = await getSepoliaStableBalanceUsdWithMeta(params.userEvmAddress);
+    const postRead = await getSettlementStableBalanceUsdWithMeta(toChain, params.userEvmAddress);
     if (postRead.balanceUsd < requiredUsd) {
       return {
         ok: false,
         code: 'CROSS_CHAIN_ROUTE_INSUFFICIENT_FUNDS',
-        userMessage: "Couldn't verify routed bUSDC on Sepolia yet. Please retry in a moment.",
+        userMessage: `Couldn't verify routed bUSDC on ${toChainConfig.label} yet. Please retry in a moment.`,
         route: {
           didRoute: true,
           routeType: routeResult.routeType,
           fromChain,
           toChain,
-          reason: 'Sepolia stable balance still below required amount after routing confirmation.',
+          reason: `${toChainConfig.label} stable balance still below required amount after routing confirmation.`,
           receiptId: routeResult.fromReceiptId,
           txHash: routeResult.toTxHash,
           creditedAmountUsd: routeResult.creditedAmountUsd,
@@ -644,13 +673,13 @@ export async function ensureExecutionFunding(
     return {
       ok: false,
       code: 'CROSS_CHAIN_ROUTE_READ_FAILED',
-      userMessage: "Couldn't verify routed bUSDC on Sepolia yet. Please retry in a moment.",
+      userMessage: `Couldn't verify routed bUSDC on ${toChainConfig.label} yet. Please retry in a moment.`,
       route: {
         didRoute: true,
         routeType: routeResult.routeType,
         fromChain,
         toChain,
-        reason: 'Failed to re-read Sepolia stable balance after routing.',
+        reason: `Failed to re-read ${toChainConfig.label} stable balance after routing.`,
         receiptId: routeResult.fromReceiptId,
         txHash: routeResult.toTxHash,
         creditedAmountUsd: routeResult.creditedAmountUsd,
@@ -668,8 +697,7 @@ export async function ensureExecutionFunding(
       routeType: routeResult.routeType,
       fromChain,
       toChain,
-      reason:
-        'Routed bUSDC from Solana devnet to Ethereum Sepolia for reliable perp execution and deeper testnet liquidity.',
+      reason: `Routed bUSDC from Solana devnet to ${toChainConfig.label} for reliable perp execution and deeper testnet liquidity.`,
       receiptId: routeResult.fromReceiptId,
       txHash: routeResult.toTxHash,
       creditedAmountUsd: routeResult.creditedAmountUsd,
@@ -691,12 +719,21 @@ async function finalizeSubmittedCreditsOnce(): Promise<void> {
     const meta = safeJsonParse((credit as any).meta_json || (credit as any).metaJson);
     const txHash = String(meta?.toTxHash || meta?.txHash || '');
     if (!txHash) continue;
+    const chain = normalizeSettlementChainInput(
+      String(meta?.toChain || (credit as any).to_chain || (credit as any).toChain || DEFAULT_SETTLEMENT_CHAIN)
+    );
     try {
-      const client = createFailoverPublicClient();
+      const chainConfig = getSettlementChainRuntimeConfig(chain);
+      if (!chainConfig.rpcUrl) continue;
+      const client = createPublicClient({
+        chain: chainConfig.chain,
+        transport: http(chainConfig.rpcUrl),
+      });
       const receipt = await client.getTransactionReceipt({ hash: txHash as `0x${string}` });
       const mergedMeta = {
         ...(meta || {}),
         routeType: 'testnet_credit',
+        toChain: chain,
         toTxHash: txHash,
         receipt: {
           status: receipt?.status === 'success' ? 'success' : 'reverted',

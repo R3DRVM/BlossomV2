@@ -15,7 +15,7 @@
 import { ReactNode, useMemo } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { WagmiProvider, createConfig, http } from 'wagmi';
-import { sepolia } from 'wagmi/chains';
+import { baseSepolia, sepolia } from 'wagmi/chains';
 import {
   RainbowKitProvider,
   lightTheme,
@@ -79,11 +79,22 @@ const connectors = connectorsForWallets(
   }
 );
 
-// Configure wagmi with Sepolia only - no WC calls if no project ID
+const DEFAULT_EVM_TESTNET = String(import.meta.env.VITE_DEFAULT_SETTLEMENT_CHAIN || 'base_sepolia')
+  .toLowerCase()
+  .includes('base')
+  ? baseSepolia
+  : sepolia;
+const EVM_TESTNET_CHAINS =
+  DEFAULT_EVM_TESTNET.id === baseSepolia.id
+    ? ([baseSepolia, sepolia] as const)
+    : ([sepolia, baseSepolia] as const);
+
+// Configure wagmi with Base Sepolia + Sepolia (Base default)
 const wagmiConfig = createConfig({
   connectors,
-  chains: [sepolia],
+  chains: EVM_TESTNET_CHAINS,
   transports: {
+    [baseSepolia.id]: http(),
     [sepolia.id]: http(),
   },
   ssr: false,

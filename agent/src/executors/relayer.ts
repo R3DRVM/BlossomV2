@@ -3,10 +3,10 @@
  * Sends transactions on behalf of users using session permissions.
  */
 
-import { RELAYER_PRIVATE_KEY, ETH_TESTNET_RPC_URL, requireRelayerConfig } from '../config';
+import { DEFAULT_SETTLEMENT_CHAIN } from '../config';
 import { createPublicClient, createWalletClient, formatEther, http, parseEther } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { sepolia } from 'viem/chains';
+import { getSettlementChainRuntimeConfig, normalizeSettlementChain, type SettlementChain } from '../config/settlementChains';
 
 type RelayerErrorBucket =
   | 'relayer_low_balance'
@@ -74,13 +74,17 @@ function withRelayerSendLock<T>(fn: () => Promise<T>): Promise<T> {
     });
 }
 
-export async function withRelayerNonceLock<T>(fn: (accountAddress: `0x${string}`) => Promise<T>): Promise<T> {
-  requireRelayerConfig();
-  if (!RELAYER_PRIVATE_KEY) {
-    throw new Error('RELAYER_PRIVATE_KEY is required for relayer nonce lock');
+export async function withRelayerNonceLock<T>(
+  fn: (accountAddress: `0x${string}`) => Promise<T>,
+  chainInput?: string
+): Promise<T> {
+  const chain = normalizeSettlementChain(chainInput || DEFAULT_SETTLEMENT_CHAIN);
+  const chainConfig = getSettlementChainRuntimeConfig(chain);
+  if (!chainConfig.relayerPrivateKey) {
+    throw new Error(`RELAYER_PRIVATE_KEY is required for relayer nonce lock (${chainConfig.label})`);
   }
-  const account = privateKeyToAccount(RELAYER_PRIVATE_KEY as `0x${string}`);
-  const lockKey = `relayer:sepolia:${account.address.toLowerCase()}`;
+  const account = privateKeyToAccount(chainConfig.relayerPrivateKey as `0x${string}`);
+  const lockKey = `relayer:${chain}:${account.address.toLowerCase()}`;
 
   return withRelayerSendLock(() => withPgAdvisoryLock(lockKey, () => fn(account.address)));
 }
@@ -148,39 +152,41 @@ export async function sendRelayedTx({
   to,
   data,
   value = '0x0',
+  chain: chainInput,
 }: {
   to: string;
   data: string;
   value?: string;
+  chain?: string;
 }): Promise<string> {
+  const chain = normalizeSettlementChain(chainInput || DEFAULT_SETTLEMENT_CHAIN);
+  const chainConfig = getSettlementChainRuntimeConfig(chain);
   return withRelayerNonceLock(async () => {
-    requireRelayerConfig();
-
-    if (!RELAYER_PRIVATE_KEY) {
-      throw new Error('RELAYER_PRIVATE_KEY is required for relayed execution');
+    if (!chainConfig.relayerPrivateKey) {
+      throw new Error(`RELAYER_PRIVATE_KEY is required for relayed execution (${chainConfig.label})`);
     }
 
-    if (!ETH_TESTNET_RPC_URL) {
-      throw new Error('ETH_TESTNET_RPC_URL is required for relayed execution');
+    if (!chainConfig.rpcUrl) {
+      throw new Error(`${chainConfig.label} RPC URL is required for relayed execution`);
     }
 
     const { maybeTopUpRelayer } = await import('../services/relayerTopUp');
-    void maybeTopUpRelayer('sepolia', {
+    void maybeTopUpRelayer(chain, {
       reason: 'before_relayed_send',
       fireAndForget: true,
     });
 
-    const account = privateKeyToAccount(RELAYER_PRIVATE_KEY as `0x${string}`);
+    const account = privateKeyToAccount(chainConfig.relayerPrivateKey as `0x${string}`);
 
     const walletClient = createWalletClient({
       account,
-      chain: sepolia,
-      transport: http(ETH_TESTNET_RPC_URL),
+      chain: chainConfig.chain,
+      transport: http(chainConfig.rpcUrl),
     });
 
     const publicClient = createPublicClient({
-      chain: sepolia,
-      transport: http(ETH_TESTNET_RPC_URL),
+      chain: chainConfig.chain,
+      transport: http(chainConfig.rpcUrl),
     });
 
     const maxGasLimit = getMaxRelayerGasLimit();
@@ -210,7 +216,7 @@ export async function sendRelayedTx({
         const required = estimatedCost + minBuffer;
 
         if (relayerBalance < required) {
-          const topup = await maybeTopUpRelayer('sepolia', {
+          const topup = await maybeTopUpRelayer(chain, {
             reason: 'relayer_low_balance_send_retry',
           });
 
@@ -238,6 +244,7 @@ export async function sendRelayedTx({
           to,
           hash,
           from: account.address,
+          chain,
           attempt: attempt + 1,
         });
 
@@ -262,7 +269,7 @@ export async function sendRelayedTx({
           });
 
           if (bucket === 'relayer_low_balance') {
-            void maybeTopUpRelayer('sepolia', {
+            void maybeTopUpRelayer(chain, {
               reason: 'retry_after_low_balance',
               fireAndForget: true,
             });
@@ -283,5 +290,5 @@ export async function sendRelayedTx({
     }
 
     throw new Error('Relayed transaction failed: exhausted retries');
-  });
+  }, chain);
 }
