@@ -201,11 +201,22 @@ async function main() {
     String(action.error || '').toLowerCase().includes('proof-only')
   ).length;
 
+  // BASE_FALLBACK_VIOLATION check - hard fail if any base-required proof falls back to Sepolia
+  const baseFallbackViolations = results.flatMap(session =>
+    (session.actions || []).filter(action =>
+      action.category === 'cross_chain_route' &&
+      action.status === 'ok' &&
+      STRESS_MODE === 'tier1_crosschain_required_base' &&
+      (action as any).routeToChain !== 'base_sepolia'
+    )
+  ).length;
+
   const checks = {
     processExitZero: runResult.exitCode === 0 && !runResult.timedOut && !runError,
     minimumProofs: proofs.length >= MIN_PROOFS,
     minimumCrossChainProofs: crossChainProofs.length >= MIN_CROSSCHAIN_PROOFS,
     noProofOnly: proofOnlyViolations === 0,
+    noBaseFallback: baseFallbackViolations === 0,
     outputProduced: fs.existsSync(rawOutputPath),
   };
 
@@ -214,6 +225,7 @@ async function main() {
     checks.minimumProofs &&
     checks.minimumCrossChainProofs &&
     checks.noProofOnly &&
+    checks.noBaseFallback &&
     checks.outputProduced;
   const report = {
     ok,
@@ -221,11 +233,17 @@ async function main() {
     baseUrl: BASE_URL,
     mode: STRESS_MODE,
     settlementChain: SETTLEMENT_CHAIN,
+    settlementChainVerification: {
+      target: SETTLEMENT_CHAIN,
+      allProofsMatchTarget: baseFallbackViolations === 0,
+      fallbackViolationCount: baseFallbackViolations,
+    },
     requirements: {
       sessions: COUNT,
       minProofs: MIN_PROOFS,
       minCrossChainProofs: MIN_CROSSCHAIN_PROOFS,
       noProofOnly: true,
+      noBaseFallback: STRESS_MODE === 'tier1_crosschain_required_base',
       allowedFundingModes: ['relayed', 'relayed_after_topup', 'user_pays_gas', 'user_paid_required'],
     },
     checks,

@@ -4296,13 +4296,31 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
     const settlementChain = resolveExecutionSettlementChain(requestedSettlementChain, {
       allowFallback: !baseRequiredMode,
     });
+
+    // FAIL-CLOSED: Hard fail if base required but fallback occurred or not ready
     if (baseRequiredMode && (!isSettlementChainExecutionReady('base_sepolia') || settlementChain !== 'base_sepolia')) {
-      return res.status(422).json({
+      const isReady = isSettlementChainExecutionReady('base_sepolia');
+      const fallbackOccurred = settlementChain !== 'base_sepolia';
+
+      return res.status(409).json({
         ok: false,
         success: false,
-        error: 'Base settlement lane is not configured for execution.',
-        errorCode: 'BASE_LANE_NOT_CONFIGURED',
-        notes: ['Set BUSDC/ExecutionRouter/Perp adapter Base Sepolia addresses before running base-required mode.'],
+        code: 'BASE_REQUIRED_VIOLATION',
+        errorCode: 'BASE_REQUIRED_VIOLATION',
+        message: 'Base Sepolia settlement required but system attempted fallback or lane not ready',
+        attemptedChain: 'base_sepolia',
+        fallbackChain: fallbackOccurred ? settlementChain : null,
+        reason: !isReady
+          ? 'Base lane not configured (missing contract addresses or RPC)'
+          : 'Base lane appears configured but fallback still occurred',
+        notes: [
+          'Request metadata required Base settlement (requireBaseSettlement: true or mode: tier1_crosschain_required_base)',
+          !isReady
+            ? 'Set EXECUTION_ROUTER_ADDRESS_BASE_SEPOLIA, BUSDC_ADDRESS_BASE_SEPOLIA, DEMO_PERP_ADAPTER_ADDRESS_BASE_SEPOLIA'
+            : 'Check relayer balance and RPC connectivity',
+          'Ensure DEFAULT_SETTLEMENT_CHAIN=base_sepolia in environment',
+        ].filter(Boolean),
+        correlationId,
       });
     }
 
@@ -5435,8 +5453,99 @@ app.post('/api/execute/relayed', requireAuth, maybeCheckAccess, async (req, res)
       });
     }
 
+    // Synchronous gas top-up attempt before BLOCKED_NEEDS_GAS
+    if (fundingPolicy.mode === 'blocked_needs_gas' && process.env.RELAYER_TOPUP_ENABLED === 'true') {
+      console.log('[execute/relayed] Relayer balance low, attempting synchronous top-up');
+
+      const { maybeTopUpRelayer, getRelayerStatus } = await import('../services/relayerTopUp');
+
+      // GUARD: 5-second timeout to prevent request hang
+      const topupPromise = maybeTopUpRelayer(settlementChain, {
+        reason: 'pre_execute_low_balance',
+        fireAndForget: false,  // Synchronous
+      });
+
+      // Type-safe timeout: matches maybeTopUpRelayer return type
+      type TopUpResult = Awaited<ReturnType<typeof maybeTopUpRelayer>>;
+      const timeoutPromise = new Promise<TopUpResult>((resolve) =>
+        setTimeout(() => resolve({ toppedUp: false, reason: 'timeout', error: undefined }), 5000)
+      );
+
+      const topupResult = await Promise.race([topupPromise, timeoutPromise]);
+
+      if (topupResult.toppedUp) {
+        console.log('[execute/relayed] Top-up successful, rechecking balance');
+        const recheckStatus = await getRelayerStatus(settlementChain);
+
+        if (recheckStatus.relayer.okToExecute) {
+          // Balance is now sufficient - update funding policy and continue to normal execution
+          console.log('[execute/relayed] Balance now sufficient after top-up, continuing with relayed execution');
+          executionFundingMode = 'relayed_after_topup';
+          executionFundingMeta = {
+            mode: 'relayed_after_topup',
+            reasonCode: 'RELAYER_TOPUP_OK',
+            relayerBalanceEth: recheckStatus.relayer.balanceEth,
+            minEth: recheckStatus.relayer.minEth,
+            didTopup: true,
+            minUserGasEth: parseFloat(process.env.MIN_USER_GAS_ETH || '0.003'),
+          };
+          // Fall through to normal execution flow below
+        } else {
+          // Still insufficient after top-up - if base-required, return BASE_REQUIRED_VIOLATION
+          if (baseRequiredMode) {
+            return res.status(409).json({
+              ok: false,
+              success: false,
+              code: 'BASE_REQUIRED_VIOLATION',
+              errorCode: 'BASE_REQUIRED_VIOLATION',
+              message: 'Base Sepolia required but relayer gas insufficient after top-up attempt',
+              attemptedChain: 'base_sepolia',
+              fallbackChain: null,
+              reason: 'Relayer balance below minimum after top-up',
+              notes: [
+                `Current: ${recheckStatus.relayer.balanceEth} ETH`,
+                `Minimum: ${recheckStatus.relayer.minEth} ETH`,
+                'Request metadata required Base settlement',
+                'Fund relayer wallet or increase funding wallet balance',
+              ],
+              correlationId,
+            });
+          }
+
+          // Non-base-required: continue to normal BLOCKED_NEEDS_GAS flow
+          console.log('[execute/relayed] Balance still insufficient after top-up');
+        }
+      } else {
+        // Top-up failed, timed out, or not attempted - if base-required, fail with BASE_REQUIRED_VIOLATION
+        if (baseRequiredMode) {
+          const relayerStatus = await getRelayerStatus(settlementChain);
+          return res.status(409).json({
+            ok: false,
+            success: false,
+            code: 'BASE_REQUIRED_VIOLATION',
+            errorCode: 'BASE_REQUIRED_VIOLATION',
+            message: 'Base Sepolia required but relayer gas insufficient',
+            attemptedChain: 'base_sepolia',
+            fallbackChain: null,
+            reason: topupResult.reason === 'timeout' ? 'Top-up timed out (5s)' : (topupResult.reason || 'Top-up not attempted'),
+            notes: [
+              `Current: ${relayerStatus.relayer.balanceEth} ETH`,
+              `Minimum: ${relayerStatus.relayer.minEth} ETH`,
+              'Request metadata required Base settlement',
+              topupResult.error || '',
+            ].filter(Boolean),
+            correlationId,
+          });
+        }
+
+        // Non-base-required: continue to normal BLOCKED_NEEDS_GAS flow
+        console.log('[execute/relayed] Top-up failed or timed out, continuing to BLOCKED_NEEDS_GAS');
+      }
+    }
+
     if (fundingPolicy.mode === 'blocked_needs_gas') {
       if (fundingPolicy.sponsorEligible && userAddress) {
+        const { maybeDripUserGas } = await import('../services/relayerTopUp');
         const dripAttempt = await maybeDripUserGas(settlementChain, userAddress, {
           reason: 'execute_relayer_low_balance',
           fireAndForget: false,
@@ -8411,6 +8520,50 @@ app.get('/api/health', async (req, res) => {
     };
   }
 
+  // Base Sepolia readiness check with missing env var diagnostics (actionable ops tool)
+  try {
+    const { isSettlementChainExecutionReady, getSettlementChainRuntimeConfig } =
+      await import('../config/settlementChains');
+
+    const isBaseReady = isSettlementChainExecutionReady('base_sepolia');
+    const baseConfig = getSettlementChainRuntimeConfig('base_sepolia');
+
+    const missing: string[] = [];
+    if (!baseConfig.executionRouterAddress) missing.push('EXECUTION_ROUTER_ADDRESS_BASE_SEPOLIA');
+    if (!baseConfig.stableTokenAddress) missing.push('BUSDC_ADDRESS_BASE_SEPOLIA');
+    if (!baseConfig.perpAdapterAddress) missing.push('DEMO_PERP_ADAPTER_ADDRESS_BASE_SEPOLIA');
+    if (!baseConfig.rpcUrl) missing.push('BASE_SEPOLIA_RPC_URL');
+    if (!baseConfig.relayerPrivateKey) missing.push('RELAYER_PRIVATE_KEY_BASE_SEPOLIA');
+
+    // Read DEFAULT_SETTLEMENT_CHAIN from env directly (might not be exported from module)
+    const defaultSettlementChain = process.env.DEFAULT_SETTLEMENT_CHAIN || 'base_sepolia';
+
+    response.baseSepolia = {
+      ready: isBaseReady,
+      hasRouter: !!baseConfig.executionRouterAddress,
+      hasBusdc: !!baseConfig.stableTokenAddress,
+      hasPerpAdapter: !!baseConfig.perpAdapterAddress,
+      hasRpc: !!baseConfig.rpcUrl,
+      hasRelayerKey: !!baseConfig.relayerPrivateKey,
+      missing,  // Actionable ops diagnostic
+      settlementChain: 'base_sepolia',
+      defaultSettlementChain,  // What prod thinks default is (from env)
+    };
+
+    // OPTIONAL: Set overall ok=false if Base is default but not ready
+    if (defaultSettlementChain === 'base_sepolia' && !isBaseReady) {
+      response.ok = false;
+      response.baseSepoliaDefaultButNotReady = true;
+    }
+  } catch (error) {
+    response.baseSepolia = {
+      ready: false,
+      error: 'config_check_failed',
+      message: error instanceof Error ? error.message : 'unknown',
+      missing: []
+    };
+  }
+
   res.json(response);
 });
 
@@ -10096,16 +10249,32 @@ app.post('/api/ledger/intents/execute', checkLedgerSecret, async (req, res) => {
     const settlementChain = resolveExecutionSettlementChain(requestedToChain, {
       allowFallback: !baseRequiredMode,
     });
+
+    // FAIL-CLOSED: Hard fail if base required but fallback occurred or not ready
     if (baseRequiredMode && (!isSettlementChainExecutionReady('base_sepolia') || settlementChain !== 'base_sepolia')) {
-      return res.status(422).json({
+      const isReady = isSettlementChainExecutionReady('base_sepolia');
+      const fallbackOccurred = settlementChain !== 'base_sepolia';
+
+      return res.status(409).json({
         ok: false,
         intentId: intentId || '',
         status: 'unsupported',
-        error: {
-          stage: 'execute',
-          code: 'BASE_LANE_NOT_CONFIGURED',
-          message: 'Base settlement lane is not configured. Set Base bUSDC/router/perp addresses before running base-required mode.',
-        },
+        code: 'BASE_REQUIRED_VIOLATION',
+        errorCode: 'BASE_REQUIRED_VIOLATION',
+        message: 'Base Sepolia settlement required but system attempted fallback or lane not ready',
+        attemptedChain: 'base_sepolia',
+        fallbackChain: fallbackOccurred ? settlementChain : null,
+        reason: !isReady
+          ? 'Base lane not configured (missing contract addresses or RPC)'
+          : 'Base lane appears configured but fallback still occurred',
+        notes: [
+          'Request metadata required Base settlement (requireBaseSettlement: true or mode: tier1_crosschain_required_base)',
+          !isReady
+            ? 'Set EXECUTION_ROUTER_ADDRESS_BASE_SEPOLIA, BUSDC_ADDRESS_BASE_SEPOLIA, DEMO_PERP_ADAPTER_ADDRESS_BASE_SEPOLIA'
+            : 'Check relayer balance and RPC connectivity',
+          'Ensure DEFAULT_SETTLEMENT_CHAIN=base_sepolia in environment',
+        ].filter(Boolean),
+        correlationId: req.correlationId,
       });
     }
     let fundingPolicySnapshot: any = null;

@@ -3,8 +3,8 @@
  * Serverless-safe connection pooling for Neon/Vercel production deployments
  */
 
-import pkg from 'pg';
-const { Pool } = pkg;
+import * as pg from 'pg';
+const { Pool } = pg;
 import type { Pool as PgPool, PoolClient, QueryResult } from 'pg';
 import { createHash } from 'crypto';
 
