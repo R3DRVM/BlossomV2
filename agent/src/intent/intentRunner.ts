@@ -2485,13 +2485,13 @@ async function executePerpEthereum(
     String(existingMetadata?.mode || '').toLowerCase().includes('crosschain') ||
     String(existingMetadata?.scenario || '').toLowerCase().includes('solana_origin_to_sepolia');
 
-  // Determine settlement chain from metadata
+  // Determine settlement chain from metadata (respects DEFAULT_SETTLEMENT_CHAIN when not specified)
+  const { normalizeSettlementChain, getSettlementChainRuntimeConfig } = await import('../config/settlementChains');
   const routeToChain = existingMetadata?.route?.toChain || existingMetadata?.toChain || '';
-  const settlementChain = routeToChain.toLowerCase().includes('base') ? 'base_sepolia' : 'sepolia';
+  const settlementChain = normalizeSettlementChain(routeToChain); // Uses DEFAULT_SETTLEMENT_CHAIN when empty
 
   // Get chain-specific configuration
-  const { normalizeSettlementChain, getSettlementChainRuntimeConfig } = await import('../config/settlementChains');
-  const chainConfig = getSettlementChainRuntimeConfig(normalizeSettlementChain(settlementChain));
+  const chainConfig = getSettlementChainRuntimeConfig(settlementChain);
 
   // Import config
   const {
@@ -4132,14 +4132,11 @@ async function executeEthereum(
 
   const now = Math.floor(Date.now() / 1000);
 
-  // Detect settlement chain from metadata (default to sepolia for backward compat)
-  const routeToChain = existingMetadata?.route?.toChain || existingMetadata?.toChain || '';
-  const settlementChain = routeToChain.toLowerCase().includes('base') ? 'base_sepolia' : 'sepolia';
-
-  // Load chain-specific config
+  // Detect settlement chain from metadata (respects DEFAULT_SETTLEMENT_CHAIN when empty)
   const { normalizeSettlementChain, getSettlementChainRuntimeConfig } = await import('../config/settlementChains');
-  const normalizedChain = normalizeSettlementChain(settlementChain);
-  const chainConfig = getSettlementChainRuntimeConfig(normalizedChain);
+  const routeToChain = existingMetadata?.route?.toChain || existingMetadata?.toChain || '';
+  const settlementChain = normalizeSettlementChain(routeToChain);
+  const chainConfig = getSettlementChainRuntimeConfig(settlementChain);
 
   // Use chain-specific relayer key and RPC (fallback to global for backward compat)
   const { RELAYER_PRIVATE_KEY: GLOBAL_RELAYER_KEY, ETH_TESTNET_RPC_URL: GLOBAL_RPC } = await import('../config');
