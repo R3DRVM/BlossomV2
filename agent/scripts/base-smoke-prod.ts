@@ -418,8 +418,8 @@ async function runHappyPathTest(): Promise<CheckResult> {
     }
 
     // Extract transaction hashes
-    const creditTxHash = data.executionMeta?.route?.creditTxHash || data.creditTxHash;
-    const executionTxHash = data.executionMeta?.txHash || data.txHash || data.executionTxHash;
+    const creditTxHash = data.executionMeta?.route?.txHash || data.executionMeta?.route?.creditTxHash || data.creditTxHash;
+    const executionTxHash = data.txHash || data.executionMeta?.txHash || data.executionTxHash;
     const executionMeta = data.executionMeta;
 
     // ASSERT: Prevent false "ok" artifacts

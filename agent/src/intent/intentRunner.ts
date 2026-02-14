@@ -4123,21 +4123,35 @@ async function executeEthereum(
   // Get intent's existing metadata to preserve caller info (source, domain, runId)
   const intent = await getIntentAsync(intentId);
   const existingMetadataJson = intent?.metadata_json;
+  let existingMetadata: any = null;
+  try {
+    existingMetadata = existingMetadataJson ? JSON.parse(existingMetadataJson) : null;
+  } catch {
+    existingMetadata = null;
+  }
 
   const now = Math.floor(Date.now() / 1000);
 
-  // Check config
-  const {
-    RELAYER_PRIVATE_KEY,
-    ETH_TESTNET_RPC_URL,
-  } = await import('../config');
+  // Detect settlement chain from metadata (default to sepolia for backward compat)
+  const routeToChain = existingMetadata?.route?.toChain || existingMetadata?.toChain || '';
+  const settlementChain = routeToChain.toLowerCase().includes('base') ? 'base_sepolia' : 'sepolia';
 
-  if (!RELAYER_PRIVATE_KEY || !ETH_TESTNET_RPC_URL) {
+  // Load chain-specific config
+  const { normalizeSettlementChain, getSettlementChainRuntimeConfig } = await import('../config/settlementChains');
+  const normalizedChain = normalizeSettlementChain(settlementChain);
+  const chainConfig = getSettlementChainRuntimeConfig(normalizedChain);
+
+  // Use chain-specific relayer key and RPC (fallback to global for backward compat)
+  const { RELAYER_PRIVATE_KEY: GLOBAL_RELAYER_KEY, ETH_TESTNET_RPC_URL: GLOBAL_RPC } = await import('../config');
+  const rpcUrl = chainConfig.rpcUrl || GLOBAL_RPC;
+  const relayerPrivateKey = chainConfig.relayerPrivateKey || GLOBAL_RELAYER_KEY;
+
+  if (!relayerPrivateKey || !rpcUrl) {
     await updateIntentStatus(intentId, {
       status: 'failed',
       failureStage: 'execute',
       errorCode: 'CONFIG_MISSING',
-      errorMessage: 'Ethereum relayer not configured',
+      errorMessage: `${settlementChain} relayer not configured`,
     });
 
     return {
@@ -4147,16 +4161,17 @@ async function executeEthereum(
       error: {
         stage: 'execute',
         code: 'CONFIG_MISSING',
-        message: 'Ethereum relayer not configured',
+        message: `${settlementChain} relayer not configured`,
       },
     };
   }
 
   // Prepare execution data (will be created in atomic transaction after TX succeeds)
   const mappedKind = parsed.kind === 'unknown' ? 'proof' : parsed.kind;
+  const networkName = settlementChain === 'base_sepolia' ? 'base_sepolia' : 'sepolia';
   const executionData = {
     chain: 'ethereum' as const,
-    network: 'sepolia' as const,
+    network: networkName as any,
     kind: mappedKind as ExecutionKind,
     venue: route.venue as any,
     intent: parsed.rawParams.original || 'Intent execution',
@@ -4171,18 +4186,21 @@ async function executeEthereum(
   try {
     // Attempt real execution via viem
     const { createPublicClient, createWalletClient, http } = await import('viem');
-    const { sepolia } = await import('viem/chains');
+    const { sepolia, baseSepolia } = await import('viem/chains');
     const { privateKeyToAccount } = await import('viem/accounts');
 
-    const account = privateKeyToAccount(RELAYER_PRIVATE_KEY as `0x${string}`);
+    // Use chain-specific viem chain config
+    const viemChain = settlementChain === 'base_sepolia' ? baseSepolia : sepolia;
+
+    const account = privateKeyToAccount(relayerPrivateKey as `0x${string}`);
     const publicClient = createPublicClient({
-      chain: sepolia,
-      transport: http(ETH_TESTNET_RPC_URL),
+      chain: viemChain,
+      transport: http(rpcUrl),
     });
     const walletClient = createWalletClient({
       account,
-      chain: sepolia,
-      transport: http(ETH_TESTNET_RPC_URL),
+      chain: viemChain,
+      transport: http(rpcUrl),
     });
 
     // For demo purposes, send a small ETH transfer to self as proof
@@ -4230,7 +4248,9 @@ async function executeEthereum(
       receiptStatus = 'pending';
     }
 
-    const explorerUrl = `https://sepolia.etherscan.io/tx/${txHash}`;
+    const explorerUrl = settlementChain === 'base_sepolia'
+      ? `https://sepolia.basescan.org/tx/${txHash}`
+      : `https://sepolia.etherscan.io/tx/${txHash}`;
     const latencyMs = Date.now() - (now * 1000);
 
     if (receiptStatus === 'confirmed') {
