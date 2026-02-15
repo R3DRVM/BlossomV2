@@ -138,11 +138,11 @@ export type ExecutionStatus = 'pending' | 'submitted' | 'confirmed' | 'finalized
 export type SessionStatus = 'preparing' | 'active' | 'revoked' | 'expired';
 
 // Kind of execution - categorizes the operation type
-export type ExecutionKind = 'perp' | 'deposit' | 'bridge' | 'swap' | 'proof' | 'relay' | 'transfer';
+export type ExecutionKind = 'perp' | 'perp_create' | 'deposit' | 'bridge' | 'swap' | 'proof' | 'relay' | 'transfer';
 
 // Venue - the protocol/DEX used
 export type ExecutionVenue =
-  | 'drift' | 'hl' | 'hyperliquid' | 'perp_demo'  // perp venues
+  | 'drift' | 'hl' | 'hyperliquid' | 'perp_demo' | 'hip3'  // perp venues
   | 'aave' | 'kamino' | 'deposit_demo'             // deposit/lending venues
   | 'lifi' | 'wormhole' | 'bridge_demo'            // bridge venues
   | 'uniswap' | 'jupiter' | 'swap_demo'            // swap venues
