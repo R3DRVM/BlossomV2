@@ -111,7 +111,8 @@ export default function RightPanel(_props: RightPanelProps) {
 
   const isEthTestnetMode = executionMode === 'eth_testnet' && !forceDemoPortfolio;
   const isSessionMode = executionAuthMode === 'session';
-  const isOnSepolia = chainId === ethTestnetChainId;
+  // Fixed: Support both Base Sepolia (84532) and Eth Sepolia (11155111)
+  const isOnSupportedChain = chainId !== null && SUPPORTED_EVM_CHAIN_IDS.has(chainId);
 
   // Check faucet configuration on mount
   useEffect(() => {
@@ -271,9 +272,9 @@ export default function RightPanel(_props: RightPanelProps) {
         const currentChainId = await getChainId();
         setWalletAddress(address);
         setChainId(currentChainId);
-        
-        // Check network
-        if (currentChainId !== ethTestnetChainId) {
+
+        // Check network - support both Base Sepolia (84532) and Eth Sepolia (11155111)
+        if (!currentChainId || !SUPPORTED_EVM_CHAIN_IDS.has(currentChainId)) {
           setWalletState('WRONG_NETWORK');
           return;
         }
@@ -548,7 +549,7 @@ export default function RightPanel(_props: RightPanelProps) {
   };
   
   const handleRefreshBalances = () => {
-    if (walletAddress && isOnSepolia && isBackendHealthy()) {
+    if (walletAddress && isOnSupportedChain && isBackendHealthy()) {
       setWalletState('CONNECTED_LOADING');
       setBalanceError(null);
       setBalanceFetchCompleted(false);
@@ -917,7 +918,7 @@ export default function RightPanel(_props: RightPanelProps) {
               )}
               
               {/* CONNECTED_LOADING or CONNECTED_READY */}
-              {(walletState === 'CONNECTED_LOADING' || walletState === 'CONNECTED_READY') && walletAddress && isOnSepolia && (
+              {(walletState === 'CONNECTED_LOADING' || walletState === 'CONNECTED_READY') && walletAddress && isOnSupportedChain && (
                 <>
                   {/* Wallet Connection Status - Shows both EVM and Solana */}
                   <ConnectWalletButton />
@@ -959,7 +960,9 @@ export default function RightPanel(_props: RightPanelProps) {
                       </button>
                     </div>
                     <div className="mt-1 flex items-center gap-2 flex-wrap">
-                      <span className="text-[10px] text-slate-500">Sepolia</span>
+                      <span className="text-[10px] text-slate-500">
+                        {chainId === baseSepolia.id ? 'Base Sepolia' : 'Sepolia'}
+                      </span>
                       {balanceError && (
                         <span className="text-[9px] text-amber-600" title={balanceErrorFix || balanceError}>
                           (sync issue)

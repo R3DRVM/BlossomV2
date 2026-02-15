@@ -947,7 +947,7 @@ async function applyDeterministicFallback(
     lowerMessage.match(/sell.*sol/i) !== null;
 
   const targetChain = isSolanaIntent ? 'solana' : 'sepolia';
-  const chainDisplay = isSolanaIntent ? 'Solana Devnet' : 'Sepolia';
+  const chainDisplay = isSolanaIntent ? 'Solana Devnet' : 'Base Sepolia';
 
   if (isEventPrompt) {
     // Extract event details
@@ -1077,7 +1077,7 @@ async function applyDeterministicFallback(
           `• Risk: ${riskPct}% of account\n` +
           `• Margin: $${marginUsd.toLocaleString()}\n` +
           `• Notional: $${notionalUsd.toLocaleString()}\n\n` +
-          `**Venue:** Demo Perp Adapter (Sepolia Testnet)\n\n` +
+          `**Venue:** Demo Perp Adapter (Base Sepolia)\n\n` +
           `This is a demo execution - no real funds at risk.\n\n` +
           `Type "execute" or "confirm" to proceed with this trade.`,
         actions: [],
@@ -2319,8 +2319,8 @@ app.post('/api/chat', maybeCheckAccess, async (req, res) => {
           isClosed: false,
           createdAt: new Date().toISOString(),
           // Task B: Add routing fields for rich card UI
-          routingVenue: 'Sepolia Testnet', // Will be updated from executionRequest if available
-          routingChain: 'Sepolia',
+          routingVenue: 'Base Sepolia', // Will be updated from executionRequest if available
+          routingChain: 'Base Sepolia',
           routingSlippage: perpReq.slippageBps ? `${(perpReq.slippageBps / 100).toFixed(2)}%` : '0.5%',
         };
         
@@ -10448,6 +10448,8 @@ app.post('/api/ledger/intents/execute', checkLedgerSecret, async (req, res) => {
       source,
       domain,
       timestamp: Date.now(),
+      toChain: requestedToChain,         // Pass settlement chain to intent runner for cross-chain routing
+      settlementChain: settlementChain,   // Resolved settlement chain
     };
 
     // Validate intentText - record failure if missing

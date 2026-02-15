@@ -1375,7 +1375,8 @@ function tryInferIntent(text: string, rawParams: Record<string, any>): ParsedInt
  */
 export function routeIntent(
   parsed: ParsedIntent,
-  preferredChain?: ChainTarget
+  preferredChain?: ChainTarget,
+  metadata?: Record<string, any>
 ): RouteDecision | { error: { stage: IntentFailureStage; code: string; message: string } } {
   const { kind, venue, sourceChain, destChain, rawParams } = parsed;
 
@@ -1388,8 +1389,17 @@ export function routeIntent(
     rawParams?.venue === 'hyperliquid' ||
     kind === 'perp_create';
 
+  // Check if the caller explicitly requests EVM settlement (Base Sepolia / Sepolia).
+  // When toChain is an EVM settlement chain, route non-EVM chains through the
+  // Ethereum demo adapters so Solana/HL intents execute on Base Sepolia.
+  const requestedSettlement = String(metadata?.toChain || metadata?.settlementChain || '').toLowerCase();
+  const settleOnEvm = ['base_sepolia', 'sepolia', 'ethereum_sepolia'].includes(requestedSettlement);
+
   let targetChain: 'ethereum' | 'solana' | 'hyperliquid' = 'ethereum';
-  if (preferredChain === 'hyperliquid' || wantsHyperliquid) {
+  if (settleOnEvm) {
+    // Override: route through EVM demo adapters for cross-chain settlement
+    targetChain = 'ethereum';
+  } else if (preferredChain === 'hyperliquid' || wantsHyperliquid) {
     targetChain = 'hyperliquid';
   } else if (preferredChain === 'solana') {
     targetChain = 'solana';
@@ -1929,7 +1939,7 @@ export async function runIntent(
       metadataJson: buildMetadata({ options: { ...options, metadata: undefined } }),
     });
 
-    const route = routeIntent(parsed, options.chain);
+    const route = routeIntent(parsed, options.chain, callerMeta);
 
     // Check for routing error
     if ('error' in route) {

@@ -42,7 +42,8 @@
     "prove:devnet:rpc:health": "tsx scripts/prove-devnet-stats.ts rpc-health",
     "prove:devnet:all": "tsx scripts/prove-devnet-stats.ts all",
     "devnet:campaign": "tsx scripts/devnet-campaign.ts",
-    "prove:devnet:campaign:smoke": "tsx scripts/devnet-campaign.ts --stages=50:20:15"
+    "prove:devnet:campaign:smoke": "tsx scripts/devnet-campaign.ts --stages=50:20:15",
+    "human-qa": "tsx scripts/human-qa-runner.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.20.0",
